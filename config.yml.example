@@ -18,6 +18,11 @@ sync:
   inventories_upload: false
   tasks_download: false
   tasks_upload: false
+  task_download_types:
+    - maintenance
+  task_archive_filter: true
+  task_download_status:
+    - done
   tickets_download: false
   tickets_upload: false
   trainings: false

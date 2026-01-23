@@ -67,6 +67,9 @@ namespace SamedisExternalSync
     public bool InventoriesUpload { get; set; } = false;
     public bool TasksDownload { get; set; } = false;
     public bool TasksUpload { get; set; } = false;
+    public List<string>? TaskDownloadTypes { get; set; } = null;
+    public bool TaskArchiveFilter { get; set; } = true;
+    public List<string> TaskDownloadStatus { get; set; } = ["done"];
     public bool TicketsDownload { get; set; } = false;
     public bool TicketsUpload { get; set; } = false;
     public bool Trainings { get; set; } = false;

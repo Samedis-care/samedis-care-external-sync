@@ -10,6 +10,42 @@ namespace SamedisExternalSync
 {
   public class Helper
   {
+    public static string SanitizeFileName(string value)
+    {
+      if (string.IsNullOrEmpty(value)) return string.Empty;
+      var invalidChars = Path.GetInvalidFileNameChars();
+      var sanitized = new string(value.Select(ch => invalidChars.Contains(ch) ? '_' : ch).ToArray());
+      return sanitized.Replace(" ", "_");
+    }
+
+    public static string GetExtension(string? name, string? mimeType, string? url)
+    {
+      var ext = !string.IsNullOrEmpty(name) ? Path.GetExtension(name) : string.Empty;
+      if (string.IsNullOrEmpty(ext) && !string.IsNullOrEmpty(url))
+      {
+        if (Uri.TryCreate(url, UriKind.Absolute, out var uri))
+          ext = Path.GetExtension(uri.AbsolutePath);
+      }
+
+      if (string.IsNullOrEmpty(ext) && !string.IsNullOrEmpty(mimeType))
+      {
+        if (mimeType.Equals("application/pdf", StringComparison.OrdinalIgnoreCase))
+          ext = ".pdf";
+      }
+
+      return string.IsNullOrEmpty(ext) ? ".pdf" : ext;
+    }
+
+    public static string? ToIsoDate(params string?[] values)
+    {
+      foreach (var value in values)
+      {
+        if (string.IsNullOrWhiteSpace(value)) continue;
+        if (DateTime.TryParse(value, out var dt))
+          return dt.ToString("yyyy-MM-dd");
+      }
+      return null;
+    }
     /// <summary>
     /// LogLevel 0: turned off
     /// LogLevel 1: normal output
