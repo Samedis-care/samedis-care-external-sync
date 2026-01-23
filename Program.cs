@@ -62,6 +62,160 @@ internal class Program
     Directory.CreateDirectory("data");
     #endregion
 
+    #region Tasks Upload
+    if (!config.Sync.TasksUpload)
+    {
+      helper.Message("Tasks Upload sync disabled in config.yml", 1);
+    }
+    else
+    {
+      helper.Message("Tasks Upload sync enabled but not implemented.", 1, "WARN");
+    }
+    #endregion
+
+    #region Tasks Download
+    if (!config.Sync.TasksDownload)
+    {
+      helper.Message("Tasks Download sync disabled in config.yml", 1);
+    }
+    else
+    {
+      helper.Message("Tasks Download sync starting.");
+      var urlResource = $"/api/{config.Samedis.ApiVersion}/tenants/{config.Samedis.TenantId}/issues";
+      helper.CanDo(samedisClient, urlResource);
+
+      var filterBuilder = new FilterBuilder();
+      filterBuilder.Clear();
+      // filterBuilder.Add("updated_at", FilterBuilder.FilterType.GreaterThan, FilterBuilder.Type.Date, lastRun);
+
+      var taskTypeFilter = config.Sync.TaskDownloadTypes != null && config.Sync.TaskDownloadTypes.Count > 0
+        ? $"&filter[issue_type]={string.Join(",", config.Sync.TaskDownloadTypes)}"
+        : "";
+      var archiveFilter = $"&filter[archive]={config.Sync.TaskArchiveFilter.ToString().ToLower()}";
+      var statusValues = (config.Sync.TaskDownloadStatus != null && config.Sync.TaskDownloadStatus.Count > 0)
+        ? config.Sync.TaskDownloadStatus
+        : ["done"];
+      var statusFilter = statusValues.Count > 0
+        ? $"&filter[status]={string.Join(",", statusValues)}"
+        : "";
+
+      var requestResource = urlResource + $"?page[number]=1&page[limit]=0&quickfilter=&gridfilter={filterBuilder.Get()}{archiveFilter}{taskTypeFilter}{statusFilter}";
+      var response = samedisClient.Get(requestResource);
+      var taskList = JsonConvert.DeserializeObject<Tasks.Root>(response);
+      var totalRecords = taskList == null ? 0 : taskList.Meta.Total;
+      var pages = totalRecords % pageSize != 0 ? totalRecords / pageSize + 1 : totalRecords / pageSize;
+
+      helper.Message($"Status Code: {samedisClient.StatusCode} {samedisClient.Status}", 2);
+      helper.Message($"Total: {totalRecords} Pages: {pages}", 2);
+
+      for (var page = 1; page <= pages; page++)
+      {
+        requestResource = urlResource + $"?page[number]={page}&page[limit]={pageSize}&quickfilter=&gridfilter={filterBuilder.Get()}{archiveFilter}{taskTypeFilter}{statusFilter}";
+        response = samedisClient.Get(requestResource);
+        helper.Message($"Page {page}", 2);
+        helper.Message($"Status Code: {samedisClient.StatusCode} {samedisClient.Status}", 2);
+
+        if (string.IsNullOrEmpty(response)) continue;
+        var taskRoot = JsonConvert.DeserializeObject<Tasks.Root>(response);
+        var tDs = Tasks.CreateTaskDataSet();
+        Tasks.FillTaskDataSet(tDs, response);
+        Helper.ExportDataSetToCsv(tDs, "data/tasks.csv", "Tasks");
+
+        if (taskRoot?.Data == null || taskRoot.Data.Count == 0)
+          continue;
+
+        var documentsRoot = Path.Combine("data", "task_documents");
+        Directory.CreateDirectory(documentsRoot);
+
+        foreach (var task in taskRoot.Data)
+        {
+          var attr = task.Attributes;
+          var taskId = attr?.Id ?? task.Id;
+          if (string.IsNullOrEmpty(taskId)) continue;
+
+          var inventoryDeviceNumber = attr?.InventoryDeviceNumber ?? "unknown";
+          var issueNumber = attr?.IssueNumber?.ToString() ?? taskId;
+          var dateIso = Helper.ToIsoDate(attr?.Date, attr?.DoneAt, attr?.UpdatedAt, attr?.CreatedAt) ?? DateTime.Now.ToString("yyyy-MM-dd");
+
+          var docRequest = $"{urlResource}/{taskId}/uploads?page[number]=1&page[limit]={pageSize}&quickfilter=&gridfilter={{}}";
+          var docResponse = samedisClient.Get(docRequest);
+          var docRoot = JsonConvert.DeserializeObject<Tasks.TaskDocuments.Root>(docResponse);
+          var docTotal = docRoot?.Meta?.Total ?? 0;
+          var docPages = docTotal % pageSize != 0 ? docTotal / pageSize + 1 : docTotal / pageSize;
+
+          for (var docPage = 1; docPage <= Math.Max(1, docPages); docPage++)
+          {
+            if (docPage > 1)
+            {
+              docRequest = $"{urlResource}/{taskId}/uploads?page[number]={docPage}&page[limit]={pageSize}&quickfilter=&gridfilter={{}}";
+              docResponse = samedisClient.Get(docRequest);
+              docRoot = JsonConvert.DeserializeObject<Tasks.TaskDocuments.Root>(docResponse);
+            }
+
+            if (docRoot?.Data == null || docRoot.Data.Count == 0)
+              continue;
+
+            var multipleDocs = docRoot.Data.Count > 1 || docTotal > 1;
+
+            foreach (var doc in docRoot.Data)
+            {
+              var docUrl = doc.Links?.Document;
+              if (string.IsNullOrEmpty(docUrl)) continue;
+
+              var ext = Helper.GetExtension(doc.Attributes?.Name, doc.Attributes?.MimeType, docUrl);
+              var safeTaskId = Helper.SanitizeFileName(issueNumber);
+              var safeInventoryId = Helper.SanitizeFileName(inventoryDeviceNumber);
+              var fileName = $"task_{safeTaskId}_inventory_{safeInventoryId}_{dateIso}";
+              if (multipleDocs && !string.IsNullOrEmpty(doc.Id))
+                fileName += $"_doc_{Helper.SanitizeFileName(doc.Id)}";
+              fileName += ext;
+
+              var outputPath = Path.Combine(documentsRoot, fileName);
+              if (File.Exists(outputPath)) continue;
+
+              try
+              {
+                samedisClient.DownloadAsync(docUrl, outputPath).GetAwaiter().GetResult();
+                helper.Message($"Downloaded task document: {fileName}", 2);
+              }
+              catch (Exception ex)
+              {
+                helper.Message($"Failed to download task document for task {taskId}: {ex.Message}", 1, "ERROR");
+              }
+            }
+          }
+
+          var detailResponse = samedisClient.Get(urlResource + "/" + taskId);
+          var detailRoot = JsonConvert.DeserializeObject<Tasks.Root>(detailResponse);
+          var detailAttr = detailRoot?.Data?.FirstOrDefault()?.Attributes;
+          var protocolUrl = detailAttr?.TestProtocolUrl;
+
+          if (!string.IsNullOrEmpty(protocolUrl))
+          {
+            var protocolExt = Helper.GetExtension(null, "application/pdf", protocolUrl);
+            var safeTaskId = Helper.SanitizeFileName(issueNumber);
+            var safeInventoryId = Helper.SanitizeFileName(inventoryDeviceNumber);
+            var protocolFileName = $"task_{safeTaskId}_inventory_{safeInventoryId}_{dateIso}_protocol{protocolExt}";
+            var protocolPath = Path.Combine(documentsRoot, protocolFileName);
+
+            if (!File.Exists(protocolPath))
+            {
+              try
+              {
+                samedisClient.DownloadAsync(protocolUrl, protocolPath).GetAwaiter().GetResult();
+                helper.Message($"Downloaded task protocol: {protocolFileName}", 2);
+              }
+              catch (Exception ex)
+              {
+                helper.Message($"Failed to download task protocol for task {taskId}: {ex.Message}", 1, "ERROR");
+              }
+            }
+          }
+        }
+      }
+    }
+    #endregion
+
     //helper.MessageAndExit("we stop here");
 
     #region DeviceTypes
