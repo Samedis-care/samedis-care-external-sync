@@ -63,7 +63,7 @@ namespace SamedisExternalSync
       if (client.StatusCode >= 400)
       {
         var record = string.IsNullOrEmpty(check) ? null : JsonConvert.DeserializeObject<JsonGeneric.Root>(check);
-        MessageAndExit($"Sync stopped. {client.StatusCode} {record?.Meta?.Msg?.Message}");
+        MessageAndExit($"Sync stopped. {client.StatusCode} {record?.Meta?.Msg?.Message} for {requestResource}");
       }
     }
 

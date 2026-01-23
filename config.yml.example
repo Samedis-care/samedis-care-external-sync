@@ -6,6 +6,21 @@ samedis:
   uri: "https://sync.samedis.care"
   api_version: "v4"
   tenant_id: "63f5c0491b57cc000df2b2c7"
+sync:
+  device_types: false
+  contacts: false
+  device_models: true
+  departments_download: false
+  departments_upload: false
+  locations_download: false
+  locations_upload: false
+  inventories_download: false
+  inventories_upload: false
+  tasks_download: false
+  tasks_upload: false
+  tickets_download: false
+  tickets_upload: false
+  trainings: false
 logging:
   # 0: off 1: on 2: debug
   level: 1
