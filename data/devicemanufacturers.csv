@@ -1,0 +1,541 @@
+﻿id;name;type;street;zip;town;country;phone;mobile;email;website;public;trust_level;categories
+64b653c8f5fc38000e51c98a;Wissner-Bosserhoff GmbH;company;Hauptstraße 4-6;58739;Wickede (Ruhr);DE;+49(0)2377/784-0;;info@wi-bo.de;https://www.wi-bo.com/de;Ja;community;manufacturer
+64b653b8f5fc38000e51c773;SYNTHES GmbH;company;Eimattstrasse 3;4436;Oberdorf;CH;+41 61 965 61 11;;EUDAMED_Enquiries@its.jnj.com;http://emea.depuysynthes.com/;Ja;community;manufacturer
+64b653b5f5fc38000e51c6f8;Rehder / Partner GmbH;company;;;;DE;;;;;Ja;community;manufacturer
+64b653c7f5fc38000e51c95e;Waldemar Link GmbH & Co. KG;company;;22339;Hamburg;DE;+49 40 53995 0;;info@linkhh.de;;Ja;community;manufacturer
+64b653a5f5fc38000e51c4b6;MAQUET GmbH & Co.KG Inland;company;Kehler Strasse 31;76437;Rastatt;DE;+49 7222 932 0;;info.vertrieb@getinge.com;www.getinge.com;Ja;community;manufacturer
+5d3ae84aa159c577fd9b72c6;Stiegelmeyer GmbH & Co. KG;company;Ackerstraße 42;32051;Herford;DE;+49 (0) 5221 185 - 0;;info@stiegelmeyer.com;www.stiegelmeyer.com;Ja;community;manufacturer
+64b6cd7016691d0024550968;Stryker Howmedica GmbH;company;Professor-Küntscher-Straße 1;24232;Kreis Plön;DE;+49 4348 7020;;;https://www.stryker.com/;Ja;community;manufacturer
+64b653a3f5fc38000e51c478;Liebherr-International Deutschland GmbH;company;Memminger Straße 120;88400;Biberach an der Riß;DE;+49 7351 41-0;;info.lho@liebherr.com;https://www.liebherr.com/de-de/firmengruppe/startseite-3705202;Ja;community;manufacturer
+64b6d01016691d0024550d71;Stryker Medical;company;East Centre Avenue 3800;49002;E Centre Ave Portage MI USA;US;+1 269-329-2100;;;https://www.stryker.com/;Ja;community;manufacturer
+68e90932aa7e4768740f0fc2;GETINGE Vertrieb und Service GmbH;company;;;;DE;;;;;Ja;community;manufacturer
+64b6cd7716691d0024550975;D.O.R.C. Dutch Ophthalmic Research Center (International) B.V.;company;Scheijdelveweg 2;3214 VN;Zuidland;NL;+31 181 458080;;dl.med-ra-dorc.nl@zeiss.com;www.dorcglobal.com;Ja;community;manufacturer
+5d3ae85ca159c577fd9b7375;GE Healthcare Ultraschall Deutschland GmbH;company;Beethovenstraße 239;42655;Kreisfreie Stadt Solingen;DE;+49 211 73744400;;;http://www.gehealthcare.com/;Ja;community;manufacturer
+5d3ae809a159c577ac4b826e;KARL STORZ GmbH & Co. KG;company;Dr.-Karl-Storz-Straße 34;78532;Tuttlingen;DE;+49 7461 7080;;info@karlstorz.com;https://www.karlstorz.com/;Ja;community;manufacturer
+67a478038cdddcff0fbc1c23;KARL STORZ SE & Co. KG;company;Dr.-Karl-Storz-Straße 34;78532;Tuttlingen;DE;+49 7461 708 0;;info@karlstorz.com;www.karlstorz.com;Ja;community;manufacturer
+64b65384f5fc38000e51bfa6;Baxter Medical Systems GmbH & Co. KG;company;Carl-Zeiss-Straße 7-9;07318;Saalfeld;DE;+49 3671 586-0;;hrc_trumpf_info@baxter.com;https://www.baxter.de/de;Ja;community;manufacturer
+5d3ae807a159c577ac4b8254;Dräger Medical AG & Co. KGaA;company;Moislinger Allee 53-55;23558;Lübeck;DE;+49 451-882 0;;info@draeger.com;https://www.draeger.com/de_de/Home;Ja;community;manufacturer
+64b6cd8016691d0024550985;Völker GmbH;company;Wullener Feld 79;58454;Witten;DE;+49 (0)2302 960 960;;info@voelker.de;https://www.voelker.de/de/;Ja;community;manufacturer
+64b6ce0916691d0024550a58;Smiths Medical;company;Nathan Lane North 6000;55442;Nathan Ln N Plymouth MN USA;US;+1 763-383-3000;;;https://www.icumed.com/;Ja;community;manufacturer
+690509bd4d75c5fda9fa0083;Taylor Wharton Germany GmbH;company;Mildstedter Landstraße 1;25866;Mildstedt;DE;+49 4841 985 0;;info@taylorwharton.com;https://twcryo.com;Ja;community;manufacturer
+64b65390f5fc38000e51c189;ELCAT GmbH;company;Bgm.-Finsterwalder-Ring 27;82515;Wolfratshausen;DE;+ 49 08171 4214-0;;kontakt@elcat.de;https://www.elcat.de/;Ja;community;manufacturer
+64b653bbf5fc38000e51c7dd;Shenzhen Mindray Bio-Medical Electronics Co., Ltd.;company;Mindray Building, Keji 12th Road South, High-tech industrial park;518057;Nanshan, Shenzhen;CN;+86 755 81888998;;service@mindray.com;www.mindray.com;Ja;community;manufacturer
+5d3ae807a159c577ac4b825b;Siemens Healthcare GmbH;company;Henkestraße 127;91052;Erlangen;DE;+49 800 188 188 5;;contact@siemens-healthineers.com;https://www.siemens-healthineers.com;Ja;community;manufacturer
+64b653a1f5fc38000e51c43c;LG Electronics Deutschland GmbH;company;Alfred-Herrhausen-Allee 3-5;65760;Kreisfreie Stadt Frankfurt am Main;DE;+49 6196 7883000;;;http://www.lg.com/de;Ja;community;manufacturer
+5d3ae80aa159c577ac4b8273;B. Braun Melsungen AG;company;Carl-Braun-Straße 1;34212;Melsungen;DE;+49 56 61-71-0;;info@bbraun.com;www.bbraun.de;Ja;community;manufacturer
+64b6cd9416691d0024550998;Sechrist Industries Inc.;company;East La Palma Avenue 4225;928 07;Anaheim, CA;US;+1 714 579 8400;;info@sechristusa.com;https://sechristusa.com/;Ja;community;manufacturer
+68d54392601d97bf604a3179;Lexmark International, Inc.;company;740 W. New Circle Road;40550;Lexington, KY;US;+1 859 232 2000;;;www.lexmark.com;Ja;community;manufacturer
+64b6539af5fc38000e51c327;Heyer Aerotech GmbH;company;Nieverner Straße 30-34;56132;Nievern;DE;+49 2603 507070;;office@heyer-aerotech.de;http://www.heyer-aerotech.de/;Ja;community;manufacturer
+64b653bdf5fc38000e51c838;Stryker Corporation;company;Airview Boulevard 2825;49002;Airview Blvd Portage MI USA;US;+1 269-385-2600;;;https://www.stryker.com/us/en/about/contact.html;Ja;community;manufacturer
+5d3ae875a159c577fd9b746c;BK Ultrasound Medizinische Systeme GmbH;company;Pascalkehre 13;25451;Pinneberg;DE;+49 4106 99550;;;https://bkultrasound.com/;Ja;community;manufacturer
+6852cb6bc100cb4cb720369c;P.J. Dahlhausen & Co. GmbH;company;Adam-Riese-Str. 4;50996;Köln;DE;+49 2236 3913 0;;info@dahlhausen.de;www.dahlhausen.de;Ja;community;manufacturer
+64b65392f5fc38000e51c1e3;Envitec-Wismar GmbH;company;;;;DE;;;;;Ja;community;manufacturer
+5d3ae8b5a159c577fd9b76d9;Dräger Medical Deutschland GmbH;company;Moislinger Allee 53-55;23542;Lübeck;DE;0800 882 882 0;;info@draeger.com;https://www.draeger.com/de_de/Hospital;Ja;community;manufacturer
+64b653c8f5fc38000e51c970;Welch Allyn GmbH & Co. KG;company;Zollerstraße 2-4;72417;Jungingen;DE;+49 7477 9271-0;;info@welchallyn.de;www.welchallyn.de;Ja;community;manufacturer
+64b6538ff5fc38000e51c169;Dräger Medical AG;company;;;;DE;;;;;Ja;community;manufacturer
+64b6537df5fc38000e51bea5;Abbott GmbH;company;Max-Planck-Ring 2;65205;Wiesbaden;DE;+49 6122 580;;ADDEOWiesbaden@abbott.com;https://www.de.abbott/;Ja;community;manufacturer
+66d9c78a4ee4d203e39ca4d2;Wisap Medical Technology GmbH;company;Fichtenstraße 27;85629;Brunnthal/Hofolding;DE;+49 8104 89 08 0;;info@wisap.de;https://wisap.de;Ja;community;manufacturer
+68ef5792102ce7983fe22580;Schnitzler Rettungsprodukte GmbH und Co. KG;company;;;;DE;;;;;Ja;community;manufacturer
+679895933b3e52059494d1b9;Philips Medizin Systeme Böblingen GmbH;company;Hewlett-Packard-Straße 2;71034;Böblingen;DE;+49 7031 463-0;;medizin.infoline@philips.com;http://www.philips.de/healthcare;Ja;community;manufacturer
+64b653c9f5fc38000e51c9ad;Zimmer Biomet Deutschland GmbH;company;Merzhauser Straße 112;79100;Kreisfreie Stadt Freiburg im Breisgau;DE;+49 761 458401;;;http://www.zimmerbiomet.de/;Ja;community;manufacturer
+5d3ae80aa159c577ac4b8271;Richard Wolf GmbH;company;Pforzheimer Straße 32;75438;Knittlingen;DE;+49 7043 350;;info@richard-wolf.com;https://www.richard-wolf.com/;Ja;community;manufacturer
+5d3ae8e8a159c577fd9b78ca;Spacelabs Healthcare GmbH;company;Südwestpark 40;90449;Nürnberg;DE;+49 911 234210;;germany@spacelabs.com;https://spacelabshealthcare.com/de/;Ja;community;manufacturer
+64b6537df5fc38000e51bea9;Ace Medical Co., Ltd.;company;30, Godeokbizvalley-ro 4-gil;05248;Gangdong-gu;KR;+82 2 920 0001;;;https://ace-medical.com/;Ja;community;manufacturer
+64b653bcf5fc38000e51c801;Soehnle-Waagen GmbH & Co. KG;company;Wilhelm-Soehnle-Str 2;71535;Murrhardt;DE;+49 71 92 28 1;;industriewaagen@soehnle.com;www.soehnle-professional.com;Ja;community;manufacturer
+64b6537ef5fc38000e51beaf;AD Analog Digital Elektronik GmbH;company;Blumberger Str. 3;84166;Adlkofen;DE;+49 8707 9384185;;mail@ad-elektronik.de;www.ad-elektronik.de;Ja;community;manufacturer
+64b653caf5fc38000e51c9b3;Zoll Medical Corporation;company;269 Mill Road;01824;Chelmsford, MA;US;+1 978 421 9655;;;http://www.zoll.com;Ja;community;manufacturer
+687c112f5c3947286838f0a5;NIDEK Co., Ltd.;company;34-14 Maehama, Hiroishi-cho;443-0038;Gamagori, Aichi;JP;+81 533 67 6611;;;www.nidek-intl.com;Ja;community;manufacturer
+64b653c7f5fc38000e51c94f;WILAmed GmbH;company;Aurachhöhe 5-7;91126;Kammerstein;DE;+49 9178 9969990;;info@wilamed.com;http://www.wilamed.de/;Ja;community;manufacturer
+64b653a8f5fc38000e51c4f6;MT.DERM GmbH;company;Blohmstraße 37-61;12307;Berlin;DE;+49 30 76766220 0;;INFO@MTDERM.DE;https://mtderm.de/kontakt/;Ja;community;manufacturer
+64b65380f5fc38000e51bf15;AirSystems Medizinische Produkte GmbH;company;Siemensstraße 1;46325;Borken;DE;+49 2861 80990 0;;info@airsystems.de;http://air-systems.eu/;Ja;community;manufacturer
+64b653c7f5fc38000e51c957;WRG Werkstätten für Röntgen-u.elektr.med.Geräte;company;;;;DE;;;;;Ja;community;manufacturer
+64b6cddc16691d0024550a08;Arthrex Inc.;company;Arthrex Way 1;34108;Naples FL 3408 USA;US;+1 800-934-4404;;;https://www.arthrex.com/;Ja;community;manufacturer
+5d3ae84fa159c577fd9b72fb;Arthrex GmbH;company;Erwin-Hielscher-Str. 9;81249;München;DE;+49 89 90 90 05 0;;info@arthrex.de;https://www.arthrex.com/de;Ja;community;manufacturer
+64b653c6f5fc38000e51c948;W.O.M. World of Medicine AG;company;Alte Poststraße 11;96337;Kronach;DE;+49 9263 8770;;;https://www.wom.group/;Ja;community;manufacturer
+65290b5f294295000eb94a2f;BOWA-electronic GmbH & Co. KG;company;Heinrich-Hertz-Straße 4-10;72810;Gomaringen;DE;+49 (0) 7072 6002 0;;info@bowa.de;www.bowa-medical.com;Ja;community;manufacturer
+64b653ccf5fc38000e51ca10;Schwa-Medico, Medizinische Apparate, Vertriebsgesellschaft mbH;company;Wetzlarer Straße 41-43;35630;Ehringshausen;DE;+49 6443 83330;;info@schwa-medico.de;http://www.schwa-medico.de/;Ja;community;manufacturer
+64b6537ff5fc38000e51bee5;ASSKEA GmbH;company;Haßlocher Straße 9;99189;Gebesee;DE;+49 36201 57970;;info@asskea.de;www.asskea.de;Ja;community;manufacturer
+64b6cfe716691d0024550d22;Reichert, Inc.;company;Walden Avenue 3362;14043;Lancaster;US;+1 716-686-4500;;;http://reichert.com/;Ja;community;manufacturer
+67920008c017c7ba4e84ea14;ATMOS MedizinTechnik GmbH & Co. KG;company;Ludwig-Kegel-Str. 16;79853;Lenzkirch;DE;+49 7653 689 - 0;;atmos@atmosmed.de;www.atmosmed.de;Ja;community;manufacturer
+64b653bbf5fc38000e51c7e2;Shimadzu Deutschland GmbH;company;Keniastraße 38;47269;Duisburg;DE;+49 203 76870;;;https://www.shimadzu.de/;Ja;community;manufacturer
+64b653bbf5fc38000e51c7d5;Shenzhen Comen Medical Instruments Co., Ltd.;company;No.2 FIYTA Timepiece Building, Nanhuan Avenue;518106;Shenzhen, Guangdong;CN;+86 400 700 9488;;info@szcomen.com;https://en.comen.com/;Ja;community;manufacturer
+5d3ae84da159c577fd9b72e2;Roche Diagnostics Deutschland GmbH;company;Sandhofer Straße;68305;Mannheim;DE;+49 621 759 0;;;https://www.roche.de/;Ja;community;manufacturer
+64b6cdbb16691d00245509d4;AccuVein, Inc.;company;Goose Hill Road 40;11724;Huntington;US;;;;https://www.accuvein.com/;Ja;community;manufacturer
+65bcb43b4b60dd0e34d897a3;WEINMANN Emergency Medical Technology GmbH + Co. KG;company;Frohbösestraße 12;22525;Hamburg;DE;+49 40 88 18 96 - 0;;info@weinmann-emt.de;www.weinmann-emergency.de;Ja;community;manufacturer
+64b6cdc216691d00245509df;Aerogen Limited;company;Galway Business Park;H91 HE94;Dangan, Galway;IE;+353 91 540 400;;info@aerogen.com;info@aerogen.com;Ja;community;manufacturer
+64b6cd7916691d002455097a;Agilent Technologies Inc.;company;Stevens Creek Boulevard 5301;95051;Stevens Creek Blvd Santa Clara CA USA;US;+1 800-227-9770;;;https://www.agilent.com/;Ja;community;manufacturer
+5d3ae888a159c577fd9b7525;Fresenius Kabi AG;company;Else-Kröner-Straße 1;61352;Bad Homburg;DE;+49 6172 686 0;;kundenberatung@fresenius-kabi.de;https://www.fresenius-kabi.com/;Ja;community;manufacturer
+64b65380f5fc38000e51bf14;AirMed Prophylaxe+Therapie Systeme GmbH;company;;;;DE;;;;;Ja;community;manufacturer
+64b653b5f5fc38000e51c703;ResMed GmbH & Co. KG;company;Augustaanlage 50;68165;Kreisfreie Stadt Mannheim;DE;+49 621 39991792;;;https://www.resmed-healthcare.de/patienten/resmed-healthcare-filialen#!/l/mannheim/augustaanlage-50/1375776;Ja;community;manufacturer
+64b6cdc916691d00245509ec;GE Healthcare Finland Oy;company;Kuortaneenkatu 2;FI-00510;Helsinki;FI;+358 10 39411;;eudamed@gehealthcare.com;www.gehealthcare.com;Ja;community;manufacturer
+64b6cdcc16691d00245509f1;Cardinal Health - Alaris Products;company;Morkels Close 918;1685;Morkels Cl Halfway House Midrand;ZA;+27 11 315 7437;;;;Ja;community;manufacturer
+64b65384f5fc38000e51bfae;Becton Dickinson GmbH;company;Tullastr. 8-12;69126;Heidelberg;DE;+49 6221 305-0;;bd.de@bd.com;https://www.bd.com/de-de;Ja;community;manufacturer
+64b65381f5fc38000e51bf29;Ambu A/S;company;Baltorpbakken 13;2750;Ballerup;DK;+49 60 32 92 50-0;;ambu@ambu.com;https://www.ambu.com;Ja;community;manufacturer
+64b65385f5fc38000e51bfd3;Biochrom Ltd.;company;Unit 7, Enterprise Zone 3970 Cambridge Research Park, Beach Drive;CB25 9PE;Cambridge;GB;+44 1223 228500;;enquiries@biochrom.co.uk;http://www.biochrom.co.uk;Ja;community;manufacturer
+64b653bff5fc38000e51c872;TOSHIBA Medical Systems GmbH;company;Hellersbergstr. 4;41460;Neuss;DE;+49 2131 1809 0;;info@toshiba-medical.de;www.toshiba-medical.de;Ja;community;manufacturer
+64b6539af5fc38000e51c331;Hitachi Medical Systems Deutschland GmbH;company;Otto-von-Guericke-Ring 3;65205;Kreisfreie Stadt Wiesbaden;DE;+49 6122 70360;;;http://www.fujifilm.com/hcge;Ja;community;manufacturer
+64b653aff5fc38000e51c61a;ORMED GmbH;company;Bötzinger Straße 90;79111;Freiburg im Breisgau;DE;+49 761 / 45 66 01;;kundenservice@enovis.com;https://www.enovis-medtech.de/;Ja;community;manufacturer
+5d3ae85aa159c577fd9b7367;Stihler Electronic GmbH;company;Gaußstraße 4;70771;Leinfelden-Echterdingen;DE;+49 711 720670;;moritz.freimut@gentherm.com;http://www.stihlerelectronic.de/;Ja;community;manufacturer
+67619eb30f8bebd633a8d6fd;Drägerwerk AG & Co. KGaA;company;Moislinger Allee 53–55;23542;Lübeck;DE;+49 451 882 0;;info@draeger.com;https://www.draeger.com/de_de/Home;Ja;community;manufacturer
+64b6ce0e16691d0024550a5e;Weinmann Geräte für Medizin GmbH & Co. KG;company;;;;DE;;;;;Ja;community;manufacturer
+64b6cdd016691d00245509f4;HemoCue GmbH;company;Europark Fichtenhain A 4;47807;Krefeld;DE;+49 2151 8933100;;;http://www.radiometer.de/?utm_source=google&utm_medium=myplaces&utm_campaign=rdeu;Ja;community;manufacturer
+5d3ae808a159c577ac4b825d;GE Healthcare Technologies GmbH;company;Bleichstraße 64-66;60313;Kreisfreie Stadt Frankfurt am Main;DE;+49 761 45430;;;;Ja;community;manufacturer
+68ea4cffdef5110cd5c6ccf0;SP Industries, Inc.;company;2982 22nd St.;49328;Hopkins, Michigan;US;+1 800 592 5959;;info@sp-industries.com;https://bestcompactors.com;Ja;community;manufacturer
+64b653adf5fc38000e51c5b7;NDS Surgical Imaging, LLC.;company;Hellyer Avenue 5750;95138;San Jose, CA;US;+ 1 408 776 0085;;info@ndssi.com;www.ndssi.com;Ja;community;manufacturer
+64b65382f5fc38000e51bf6d;BDK Luft- und Reinraumtechnik GmbH;company;Pfullinger Straße 57;72820;Sonnenbühl-Genkingen;DE;+49 71 28 92 67 0;;bdk-s@t-online.de;www.bdk-online.de;Ja;community;manufacturer
+64b653bff5fc38000e51c85c;TANITA Corporation;company;;;;;;;;;Ja;community;manufacturer
+64b6537ef5fc38000e51bec3;Glen Dimplex Deutschland GmbH;company;Am Goldenen Feld 18;95326;Kulmbach;DE;+ 49 9221 709 100;;info@glendimplex.de;https://www.glendimplex.de/en-de;Ja;community;manufacturer
+64b653c2f5fc38000e51c8db;UFSK-International OSYS GmbH;company;Kirchhoffstraße 1;93055;Regensburg;DE;+49 941 78862 15;;info@ufsk-osys.com;www.ufsk-osys.com;Ja;community;manufacturer
+64b6ce0316691d0024550a4b;BTL zdravotnická technika, a.s.;company;Šantrochova 1883;162 00;16 Praha 6-Břevnov;CZ;+420 777 920 288;;;https://www.btl.cz/;Ja;community;manufacturer
+64b65384f5fc38000e51bfb6;Beijing Choice Electronic Technology Co., Ltd;company;Building No. 2 (2nd floor), 9 Shuangyuan Road;100041;Beijing;CN;+86-10-88204630/31;;market@choicemmed.com;;Ja;community;manufacturer
+5d3ae807a159c577ac4b8254;Dräger Medical AG & Co. KGaA;company;Moislinger Allee 53-55;23558;Lübeck;DE;+49 451-882 0;;info@draeger.com;https://www.draeger.com/de_de/Home;Ja;community;manufacturer
+689af73215be9882d092ab05;Organon Teknika N.V.;company;Veedijk 58;2300;Turnhout;BE;;;;;Ja;community;manufacturer
+64b6cdea16691d0024550a22;Arizant Deutschland GmbH;company;;;;DE;;;;;Ja;community;manufacturer
+65bcb43b4b60dd0e34d897a3;WEINMANN Emergency Medical Technology GmbH + Co. KG;company;Frohbösestraße 12;22525;Hamburg;DE;+49 40 88 18 96 - 0;;info@weinmann-emt.de;www.weinmann-emergency.de;Ja;community;manufacturer
+64b653aff5fc38000e51c60d;OHMEDA MEDICAL;company;;;;;;;;;Ja;community;manufacturer
+66a3bc0c728b0e4345e3c565;Advantech Co., Ltd.;company;;;;TW;;;;https://www.advantech.com/en-eu;Ja;community;manufacturer
+5d3ae982a159c577fd9b7e66;Mindray Medical Germany GmbH;company;Goebelstraße 21;64293;Darmstadt;DE;+49 6151 3910 0;;info@mindray.de;http://www.mindray.com/de;Ja;community;manufacturer
+64b653bbf5fc38000e51c7dd;Shenzhen Mindray Bio-Medical Electronics Co., Ltd.;company;Mindray Building, Keji 12th Road South, High-tech industrial park;518057;Nanshan, Shenzhen;CN;+86 755 81888998;;service@mindray.com;www.mindray.com;Ja;community;manufacturer
+64b653ccf5fc38000e51ca10;Schwa-Medico, Medizinische Apparate, Vertriebsgesellschaft mbH;company;Wetzlarer Straße 41-43;35630;Ehringshausen;DE;+49 6443 83330;;info@schwa-medico.de;http://www.schwa-medico.de/;Ja;community;manufacturer
+64b65399f5fc38000e51c2f6;Hangzhou Bioer Co. Ltd.;company;;;;CN;;;;;Ja;community;manufacturer
+64b6539af5fc38000e51c31e;Hersteller unbekannt / Manufacturer unknown;company;;;;DE;;;;;Ja;community;manufacturer
+64b65388f5fc38000e51c063;Caesarea Medical Electronics Ltd.;company;;;;US;;;;;Ja;community;manufacturer
+68768ee7120a22619988743f;Given Imaging;company;3950 Shackleford Road, Suite 500;30096;Duluth GA;US;770‑662‑0870;;supportUS@givenimaging.com;;Ja;community;manufacturer
+5d3ae8e8a159c577fd9b78ca;Spacelabs Healthcare GmbH;company;Südwestpark 40;90449;Nürnberg;DE;+49 911 234210;;germany@spacelabs.com;https://spacelabshealthcare.com/de/;Ja;community;manufacturer
+67920008c017c7ba4e84ea14;ATMOS MedizinTechnik GmbH & Co. KG;company;Ludwig-Kegel-Str. 16;79853;Lenzkirch;DE;+49 7653 689 - 0;;atmos@atmosmed.de;www.atmosmed.de;Ja;community;manufacturer
+5d3ae809a159c577ac4b826e;KARL STORZ GmbH & Co. KG;company;Dr.-Karl-Storz-Straße 34;78532;Tuttlingen;DE;+49 7461 7080;;info@karlstorz.com;https://www.karlstorz.com/;Ja;community;manufacturer
+5d3ae849a159c577fd9b72bb;custo med GmbH;company;Maria-Merian-Straße 6;85521;Ottobrunn;DE;+49 89 710 98 00;;info@customed.de;http://www.customed.de/;Ja;community;manufacturer
+5d3ae85ca159c577fd9b7375;GE Healthcare Ultraschall Deutschland GmbH;company;Beethovenstraße 239;42655;Kreisfreie Stadt Solingen;DE;+49 211 73744400;;;http://www.gehealthcare.com/;Ja;community;manufacturer
+64b653cbf5fc38000e51c9ec;inomed Medizintechnik GmbH;company;Im Hausgrün 29;79312;Emmendingen;DE;+49 7641 94140;;info@inomed.com;http://www.inomed.com/;Ja;community;manufacturer
+64b6539af5fc38000e51c331;Hitachi Medical Systems Deutschland GmbH;company;Otto-von-Guericke-Ring 3;65205;Kreisfreie Stadt Wiesbaden;DE;+49 6122 70360;;;http://www.fujifilm.com/hcge;Ja;community;manufacturer
+5d3ae86aa159c577fd9b7400;ConMed Linvatec Deutschland GmbH;company;Frankfurter Straße 74;64521;Groß-Gerau;DE;+49 6152 9370;;;https://www.conmed.com/de;Ja;community;manufacturer
+64b653b8f5fc38000e51c77e;Samsung Medison Co., Ltd.;company;;06176;1003 Daechi-dong Gangnam District Seoul;KR;;;;;Ja;community;manufacturer
+64b6ce0916691d0024550a58;Smiths Medical;company;Nathan Lane North 6000;55442;Nathan Ln N Plymouth MN USA;US;+1 763-383-3000;;;https://www.icumed.com/;Ja;community;manufacturer
+5d3ae844a159c577fd9b728d;GE Healthcare GmbH;company;Bleichstraße 64-66;80807;Munchen;DE;+49 211 73744400;;eudamed@gehealthcare.com;http://www.gehealthcare.com/;Ja;community;manufacturer
+67c094a75f266a1bc3687e1e;GE Medical Systems Information Technologies, Inc.;company;8200 West Tower Avenue;53223;Milwaukee, WI;US;+ 1 414 355 5000;;;https://www.gehealthcare.com/;Ja;community;manufacturer
+5d3ae86aa159c577fd9b7403;Schiller Medizintechnik GmbH;company;Korbacher Straße 43A;85622;Feldkirchen;DE;+49 5601 4913;;info@schillermed.de;https://www.schillermed.de/;Ja;community;manufacturer
+64b6cdc916691d00245509ec;GE Healthcare Finland Oy;company;Kuortaneenkatu 2;FI-00510;Helsinki;FI;+358 10 39411;;eudamed@gehealthcare.com;www.gehealthcare.com;Ja;community;manufacturer
+64b653bff5fc38000e51c872;TOSHIBA Medical Systems GmbH;company;Hellersbergstr. 4;41460;Neuss;DE;+49 2131 1809 0;;info@toshiba-medical.de;www.toshiba-medical.de;Ja;community;manufacturer
+687c112f5c3947286838f0a5;NIDEK Co., Ltd.;company;34-14 Maehama, Hiroishi-cho;443-0038;Gamagori, Aichi;JP;+81 533 67 6611;;;www.nidek-intl.com;Ja;community;manufacturer
+64b653b0f5fc38000e51c62c;Olympus Medical Systems Corp.;company;2951 Ishikawa-cho;192-8507;Hachioji-shi, Tokyo;JP;+81 42 642 2111;;;www.olympus-global.com;Ja;community;manufacturer
+5d3ae807a159c577ac4b825b;Siemens Healthcare GmbH;company;Henkestraße 127;91052;Erlangen;DE;+49 800 188 188 5;;contact@siemens-healthineers.com;https://www.siemens-healthineers.com;Ja;community;manufacturer
+68a5e70bde8a1bb0b94604c2;Angiodroid Srl;company;;;;FR;;;;;Ja;community;manufacturer
+68d6a34580e67aacf6703424;Care Essentials Pty Ltd.;company;;;;AU;;;;;Ja;community;manufacturer
+5d3ae95aa159c577fd9b7cf4;Stryker GmbH & Co. KG;company;Dr. - Homer-Stryker-Platz 1;47228;Duisburg;DE;+49 2065 8370;;;https://www.stryker.com/;Ja;community;manufacturer
+64b653a3f5fc38000e51c478;Liebherr-International Deutschland GmbH;company;Memminger Straße 120;88400;Biberach an der Riß;DE;+49 7351 41-0;;info.lho@liebherr.com;https://www.liebherr.com/de-de/firmengruppe/startseite-3705202;Ja;community;manufacturer
+67bdef6b87b107ff53cc6947;Rexxam Co., Ltd.;company;958 Ikeuchi, Konan-cho;761-1494;Takamatsu-shi, Kagawa-ken;JP;;;;https://www.rexxam.co.jp;Ja;community;manufacturer
+68ef81fc6583c9357826ba09;Reach Surgical.Inc.;company;;;;CN;;;;;Ja;community;manufacturer
+64b653bbf5fc38000e51c7e2;Shimadzu Deutschland GmbH;company;Keniastraße 38;47269;Duisburg;DE;+49 203 76870;;;https://www.shimadzu.de/;Ja;community;manufacturer
+64b6cfde16691d0024550d09;Olympus Corporation;company;2-3-1 Nishi-Shinjuku, Shinjuku-ku;163-0914;Tokyo;JP;;;;https://www.olympus-global.com;Ja;community;manufacturer
+66ce23e5d38ef6b4f45eba5f;Sprintex Trainingsgeräte GmbH;company;Hebelstraße 2a, Halle 3;79692;Kleines Wiesental;DE;+49 7622 6733722;;info@sprintex-treadmills.com;https://sprintex-treadmills.com;Ja;community;manufacturer
+64b65384f5fc38000e51bfa6;Baxter Medical Systems GmbH & Co. KG;company;Carl-Zeiss-Straße 7-9;07318;Saalfeld;DE;+49 3671 586-0;;hrc_trumpf_info@baxter.com;https://www.baxter.de/de;Ja;community;manufacturer
+64b65393f5fc38000e51c21c;Fukuda Denshi Co., Ltd.;company;2-35-8 Hongo;113-8420;Bunkyo-ku, Tokyo;JP;81 3 5684 1455;;;https://fukuda.com;Ja;community;manufacturer
+64b65395f5fc38000e51c260;GETEMED Medizin- und Informationstechnik AG;company;Oderstr. 77;14513;Teltow;DE;+49 3328 3942 0;;info@getemed.de;www.getemed.de;Ja;community;manufacturer
+64b6537ef5fc38000e51beaf;AD Analog Digital Elektronik GmbH;company;Blumberger Str. 3;84166;Adlkofen;DE;+49 8707 9384185;;mail@ad-elektronik.de;www.ad-elektronik.de;Ja;community;manufacturer
+64b653aef5fc38000e51c5f2;Nihon Kohden Corporation;company;;161-0031;1-chōme-31-4 Nishiochiai Shinjuku City Tokyo;JP;+81 3-5996-8000;;;http://www.nihonkohden.co.jp/;Ja;community;manufacturer
+64b65395f5fc38000e51c25d;GE Medical Systems Information Technologies GmbH;company;Munzinger Straße 5A;79111;Freiburg;DE;+49 761 45430;;eudamed@gehealthcare.com;https://www.gehealthcare.de/;Ja;community;manufacturer
+68d6a33b80e67aacf670341b;Weinkauf Medizintechnik;company;;91322;Gräfenberg;DE;;;info@weinkauf-medizintechnik.de;;Ja;community;manufacturer
+64b653c8f5fc38000e51c97e;Weyer GmbH;company;Herrenhöhe 4;51515;Kürten;DE;+49 2207 96980;;info@weyermed.com;https://www.weyermed.com/home;Ja;community;manufacturer
+64b653aff5fc38000e51c61a;ORMED GmbH;company;Bötzinger Straße 90;79111;Freiburg im Breisgau;DE;+49 761 / 45 66 01;;kundenservice@enovis.com;https://www.enovis-medtech.de/;Ja;community;manufacturer
+64b6cd9516691d0024550999;Berchtold GmbH & Co. KG;company;Ludwigstaler Straße 25;78532;Tuttlingen;DE;+49 7461 1810;;Info@BERCHTOLD.biz;http://www.stryker.de/;Ja;community;manufacturer
+64b6538af5fc38000e51c0a3;Clean Air GmbH;company;;;;DE;;;;;Ja;community;manufacturer
+64b6538ff5fc38000e51c175;E & L medical systems GmbH;company;Wetterkreuz 19;91052;Erlangen;DE;+49 9131 810 33 0;;lehmann@eundl.de;https://de-de.eundl.de;Ja;community;manufacturer
+5d3ae84da159c577fd9b72e2;Roche Diagnostics Deutschland GmbH;company;Sandhofer Straße;68305;Mannheim;DE;+49 621 759 0;;;https://www.roche.de/;Ja;community;manufacturer
+64b6539cf5fc38000e51c375;ITD GmbH;company;Jahnstrasse 1;84347;Pfarrkirchen;DE;+49 89 6144250;;sales@itd-cart.com;http://www.itd-cart.com/;Ja;community;manufacturer
+64b6cd8016691d0024550985;Völker GmbH;company;Wullener Feld 79;58454;Witten;DE;+49 (0)2302 960 960;;info@voelker.de;https://www.voelker.de/de/;Ja;community;manufacturer
+64b653adf5fc38000e51c5b7;NDS Surgical Imaging, LLC.;company;Hellyer Avenue 5750;95138;San Jose, CA;US;+ 1 408 776 0085;;info@ndssi.com;www.ndssi.com;Ja;community;manufacturer
+64b653c8f5fc38000e51c970;Welch Allyn GmbH & Co. KG;company;Zollerstraße 2-4;72417;Jungingen;DE;+49 7477 9271-0;;info@welchallyn.de;www.welchallyn.de;Ja;community;manufacturer
+5d3ae859a159c577fd9b735d;VBM Medizintechnik GmbH;company;Einsteinstraße 1;72172;Sulz a.N.;DE;+49 7454 95960;;info@vbm-medical.de;https://www.vbm-medical.de/;Ja;community;manufacturer
+64b6cf5216691d0024550c2c;EIZO Nanao Corporation;company;;924-0038;153 Shimokashiwanomachi Hakusan Ishikawa;JP;+81 76-274-0035;;;https://www.eizo.co.jp/company/information/group/;Ja;community;manufacturer
+64b65390f5fc38000e51c182;EIZO Europe GmbH;company;;;;DE;;;;;Ja;community;manufacturer
+64b653abf5fc38000e51c55d;Medtronic - Sofamor Danek Deggendorf GmbH;company;Ulrichsberger Straße 17;94469;Deggendorf;DE;+49 991 38930;;;https://www.medtronic.com/de-de/ueber/standorte/medtronic-deggendorf.html;Ja;community;manufacturer
+64b6537ef5fc38000e51bece;Amann Girrbach AG;company;Gewerbestraße 10;6841;Mäder;AT;+43 59 301;;austria@amanngirrbach.com;https://www.amanngirrbach.com/de-de/;Ja;community;manufacturer
+64b65388f5fc38000e51c051;CONMED Corporation;company;French Road 525;13502;French Rd Utica NY USA;US;+1 315-797-8375;;;https://www.conmed.com/en;Ja;community;manufacturer
+64b655c8f5fc38000e51cdbc;Digisystems Laboratory Instruments Inc.;company;No.1, Lane 393, Fu De 1 Road;22151;Xizhi District, New Taipei City;TW;+886 2 2694 1738;;digilab@ms23.hinet.net;www.digisystemlab.com;Ja;community;manufacturer
+64b655b4f5fc38000e51ccb4;FIOCCHETTI SCIENTIFIC S.R.L.;company;Via Panagulis, 48;42045;Luzzara (RE);IT;+ 39 0522 976232;;info@fiocchetti.it;www.fiocchetti.com;Ja;community;manufacturer
+64b65390f5fc38000e51c189;ELCAT GmbH;company;Bgm.-Finsterwalder-Ring 27;82515;Wolfratshausen;DE;+ 49 08171 4214-0;;kontakt@elcat.de;https://www.elcat.de/;Ja;community;manufacturer
+64b65395f5fc38000e51c24f;Fujitsu Technology Solutions GmbH;company;Mies-van-der-Rohe-Straße 8;80807;Kreisfreie Stadt München;DE;+49 89 620600;;;https://global.fujitsu/de-de;Ja;community;manufacturer
+64b6537df5fc38000e51be94;3Gen Inc.;company;;;;US;;;;;Ja;community;manufacturer
+64b6537ef5fc38000e51beb3;ADL GmbH;company;Im Flürchen 1;99334;Amt Wachsenburg;DE;+ 49 36202 7519 0;;info@adl-gmbh.de;www.adl-gmbh.de;Ja;community;manufacturer
+64b6538ef5fc38000e51c140;Distelkamp-Electronic;company;Ernst Christmann Str. 8;67659;Kaiserslautern;DE;+49 631 78319;;info@loetdampf.de;http://www.distelkamp-electronic.de/;Ja;community;manufacturer
+64b65393f5fc38000e51c208;FAZZINI S.R.L., Italy;company;S.S.Padana Superiore, 317;20055;Vimodrone (MI);IT;+39 02.2651521;;;www.fazzini.it/index.php/en/;Ja;community;manufacturer
+64b65399f5fc38000e51c2fe;Happersberger otopront GmbH;company;Langgasse 90;65329;Hohenstein;DE;+49 6120 92170;;info@otopront.de;www.otopront.de;Ja;community;manufacturer
+64b653b2f5fc38000e51c68b;Philips International B.V.;company;High Tech Campus 52;5656 AG;Eindhoven;NL;+31 20 597 7777;;;https://www.philips.com;Ja;community;manufacturer
+64b6cdd916691d0024550a02;Jaeger GmbH & Co.KG - VIASYS Healthcare;company;Leibnizstraße 7;97204;Würzburg;DE;+49 931 49720;;;https://www.vyaire.com/;Ja;community;manufacturer
+64b653b9f5fc38000e51c791;Scanditronix Wellhöfer GmbH;company;Bahnhofstraße 5;90592;Landkreis Nürnberger Land;DE;;;;;Ja;community;manufacturer
+64b655d3f5fc38000e51ce52;BenQ Medical Technology Corporation;company;7th Floor No.46, Zhou-Z St.;114;Nei-hu, Taipei;TW;+886 2 8797 5533;;Info@BenQMedicalTech.com;www.benqmedicaltech.com;Ja;community;manufacturer
+64b653c6f5fc38000e51c944;W. Söhngen GmbH;company;Platter Straße 84;65232;Taunusstein;DE;+49 6128 873 0;;info@soehngen.com;www.aluderm.de;Ja;community;manufacturer
+64b65395f5fc38000e51c25b;GE Healthcare Technologies;company;Munzinger Straße 5A;79111;Kreisfreie Stadt Freiburg im Breisgau;DE;+49 761 45430;;;;Ja;community;manufacturer
+64b65383f5fc38000e51bf82;BK Medical ApS;company;Mileparken 34;2730;Herlev;DK;+45 4452 8100;;eudamed@gehealthcare.com;http://www.bkmedical.com/;Ja;community;manufacturer
+68e38329def5110cd5c624ca;Somo International Co., Ltd;company;UNIT 04, 7/F, BRIGHT WAY TOWER, NO. 33 MONG KOK ROAD;;KOWLOON, HK;CN;+852 2763 6779;;info@somo-med.com;www.somo-med.com;Ja;community;manufacturer
+5d3ae852a159c577fd9b7310;PENTAX GmbH;company;Julius-Vosseler-Straße 104;22527;Hamburg;DE;+49 40 561920;;;https://www.pentaxmedical.com/de/;Ja;community;manufacturer
+68624ada6f3ce1c23ca8854d;MiE medical imaging electronics GmbH;company;Hauptstrasse 112;23845;Seth;DE;+49 4194 9977 0;;mie@miegermany.de;https://mie-scintron.com/de/;Ja;community;manufacturer
+64b6539bf5fc38000e51c354;I.E.M GmbH;company;Cockerillstraße 69;52222;Aachen;DE;+49 2402 95000;;;https://www.iem.de/;Ja;community;manufacturer
+5d3ae847a159c577fd9b72a6;Aesculap AG & Co. KG;company;;78532;Landkreis Tuttlingen;DE;+49 7461 950;;;http://www.aesculap.de/;Ja;community;manufacturer
+64b653c6f5fc38000e51c949;WALDNER Laboreinrichtungen GmbH & Co. KG;company;Haidösch 1;88239;Ravensburg;DE;+49 7522 9860;;;http://www.waldner.de/;Ja;community;manufacturer
+64b6539ff5fc38000e51c3f9;Kern & Sohn GmbH;company;Ziegelei 1;72336;Balingen-Frommern;DE;+49-[0]7433- 9933-0;;info@kern-sohn.com;https://www.kern-sohn.com/;Ja;community;manufacturer
+5d3ae80aa159c577ac4b8271;Richard Wolf GmbH;company;Pforzheimer Straße 32;75438;Knittlingen;DE;+49 7043 350;;info@richard-wolf.com;https://www.richard-wolf.com/;Ja;community;manufacturer
+64b653a6f5fc38000e51c4cc;MEDIVATORS Inc.;company;28th Avenue North 14605;55447;28th Ave N Minneapolis MN USA;US;+1 800-328-3340;;;https://www.steris.com/;Ja;community;manufacturer
+64b6ce4c16691d0024550ac8;FUJIFILM Corporation;company;26-30, Nishiazabu 2-chome;106-8620;Tokyo;JP;+81 3 3406 2111;;;https://healthcaresolutions-us.fujifilm.com;Ja;community;manufacturer
+64b6ce7216691d0024550b08;Vidacare Corporation;company;Isom Road 722;78216;Isom Rd San Antonio TX USA;US;;;;;Ja;community;manufacturer
+64b653a4f5fc38000e51c48a;L I N E T spol. s.r.o.;company;Želevčice 5;274 01;Slaný;CZ;+420 312 576 400;;obchodcr@linet.cz;https://www.linet.com/en;Ja;community;manufacturer
+5d3ae807a159c577ac4b8253;Eltest Pre;company;Bornheimer Straße 33;53111;Bonn;DE;;;;;Ja;community;
+67a478038cdddcff0fbc1c23;KARL STORZ SE & Co. KG;company;Dr.-Karl-Storz-Straße 34;78532;Tuttlingen;DE;+49 7461 708 0;;info@karlstorz.com;www.karlstorz.com;Ja;community;manufacturer
+5d3ae84ea159c577fd9b72e9;Ergoline GmbH;company;Lindenstraße 5;72475;Bitz;DE;+49 7431 9894 0;;info@ergoline.com;www.ergoline.com;Ja;community;manufacturer
+64b65390f5fc38000e51c1a3;ERKA.;company;Kaiserstraße 100;60329;Frankfurt am Main;DE;+49 69 12345678;;info@erka.org;https://www.erka.org/en;Ja;community;manufacturer
+64b65380f5fc38000e51bf10;Ahrens Elektroanlagen GmbH;company;Telgenkamp 12;48249;Dülmen;DE;02594 81816;;info@elektroahrens.de;http://www.elektroahrens.de/;Ja;community;manufacturer
+64b6cd9516691d002455099a;Datex-Ohmeda GmbH;company;Munzinger Straße 3-5;79111;Kreisfreie Stadt Freiburg im Breisgau;DE;;;;;Ja;community;manufacturer
+5d3ae8e9a159c577fd9b78cc;GE Medical Systems Deutschland GmbH & Co. KG;company;Peter-Müller-Straße 24 - 26;40468;Düsseldorf;DE;+49 211 73744400;;;https://www.gehealthcare.de/;Ja;community;manufacturer
+64b6539bf5fc38000e51c342;HuBDIC CO., LTD.;company;B-301, Taekwang-Industrial Building, 191-1, Anyang 7-dong;14084;Manan-gu, Anyang-si, Gyeonggi-do;KR;+82 31 389 9023;;sales@hubdic.com;hubdic.com;Ja;community;manufacturer
+64b65391f5fc38000e51c1be;Echosens SA;company;6, rue Ferrus;75014;Paris;FR;+33 1 44 82 78 50;;contact@echosens.com;https://www.echosens.com;Ja;community;manufacturer
+5d3ae875a159c577fd9b746c;BK Ultrasound Medizinische Systeme GmbH;company;Pascalkehre 13;25451;Pinneberg;DE;+49 4106 99550;;;https://bkultrasound.com/;Ja;community;manufacturer
+5d3ae97ea159c577fd9b7e49;Nihon Kohden Deutschland GmbH;company;Raiffeisenstraße 10;61191;Wetteraukreis;DE;+49 6003 8270;;;https://eu.nihonkohden.com/;Ja;community;manufacturer
+64b65381f5fc38000e51bf41;ArjoHuntleigh AB International;company;Hans Michelsensgatan 10;201 20;Box 48 Malmö;SE;+46 10 335 45 00;;;https://www.arjo.com/sv-se/;Ja;community;manufacturer
+64b653bdf5fc38000e51c839;Stryker Instruments;company;1941 Stryker Way;49002;Portage, Michigan;US;+1 269 323 7700;;;https://www.stryker.com/;Ja;community;manufacturer
+5d3ae807a159c577ac4b8259;Fresenius AG;company;Else-Kröner-Straße 1;61352;Hochtaunuskreis;DE;+49 6172 6080;;;http://www.freseniusmedicalcare.com/;Ja;community;
+64b65393f5fc38000e51c21a;FUJIFILM Europe GmbH;company;Balcke-Dürr-Allee 6;40882;Ratingen;DE;+49 2102 53640;;eudamed_feg@fujifilm.com;https://www.fujifilm.com/de;Ja;community;manufacturer
+5d3ae847a159c577fd9b72a6;Aesculap AG & Co. KG;company;;78532;Landkreis Tuttlingen;DE;+49 7461 950;;;http://www.aesculap.de/;Ja;community;manufacturer
+64b653a3f5fc38000e51c478;Liebherr-International Deutschland GmbH;company;Memminger Straße 120;88400;Biberach an der Riß;DE;+49 7351 41-0;;info.lho@liebherr.com;https://www.liebherr.com/de-de/firmengruppe/startseite-3705202;Ja;community;manufacturer
+64b653b0f5fc38000e51c62c;Olympus Medical Systems Corp.;company;2951 Ishikawa-cho;192-8507;Hachioji-shi, Tokyo;JP;+81 42 642 2111;;;www.olympus-global.com;Ja;community;manufacturer
+64b655d3f5fc38000e51ce52;BenQ Medical Technology Corporation;company;7th Floor No.46, Zhou-Z St.;114;Nei-hu, Taipei;TW;+886 2 8797 5533;;Info@BenQMedicalTech.com;www.benqmedicaltech.com;Ja;community;manufacturer
+64b653bff5fc38000e51c872;TOSHIBA Medical Systems GmbH;company;Hellersbergstr. 4;41460;Neuss;DE;+49 2131 1809 0;;info@toshiba-medical.de;www.toshiba-medical.de;Ja;community;manufacturer
+687c112f5c3947286838f0a5;NIDEK Co., Ltd.;company;34-14 Maehama, Hiroishi-cho;443-0038;Gamagori, Aichi;JP;+81 533 67 6611;;;www.nidek-intl.com;Ja;community;manufacturer
+64b65385f5fc38000e51bfd3;Biochrom Ltd.;company;Unit 7, Enterprise Zone 3970 Cambridge Research Park, Beach Drive;CB25 9PE;Cambridge;GB;+44 1223 228500;;enquiries@biochrom.co.uk;http://www.biochrom.co.uk;Ja;community;manufacturer
+64b65380f5fc38000e51bf06;Adac Laboratories GmbH;company;;;San Jose;US;;;;;Ja;community;manufacturer
+64b65389f5fc38000e51c071;CardinalHealth;company;7000 Cardinal Place;43017;Dublin, OH;US;+1 614.757.5000;;;https://www.cardinalhealth.com/en.html;Ja;community;manufacturer
+64b65380f5fc38000e51bf26;Alpine Biomed GmbH;company;Elisabeth-Selbert-Straße 11;40764;Mettmann;DE;+49 2173 917107;;;https://www.octapharmaplasma.de/;Ja;community;manufacturer
+67920008c017c7ba4e84ea14;ATMOS MedizinTechnik GmbH & Co. KG;company;Ludwig-Kegel-Str. 16;79853;Lenzkirch;DE;+49 7653 689 - 0;;atmos@atmosmed.de;www.atmosmed.de;Ja;community;manufacturer
+64b653b5f5fc38000e51c6f8;Rehder / Partner GmbH;company;;;;DE;;;;;Ja;community;manufacturer
+5d3ae8e8a159c577fd9b78ca;Spacelabs Healthcare GmbH;company;Südwestpark 40;90449;Nürnberg;DE;+49 911 234210;;germany@spacelabs.com;https://spacelabshealthcare.com/de/;Ja;community;manufacturer
+64b65384f5fc38000e51bfa6;Baxter Medical Systems GmbH & Co. KG;company;Carl-Zeiss-Straße 7-9;07318;Saalfeld;DE;+49 3671 586-0;;hrc_trumpf_info@baxter.com;https://www.baxter.de/de;Ja;community;manufacturer
+64b653aff5fc38000e51c60d;OHMEDA MEDICAL;company;;;;;;;;;Ja;community;manufacturer
+64b65385f5fc38000e51bfc3;Berner International GmbH;company;Werner-von-Siemens-Str. 19;25337;Elmshorn;DE;+49 41 21 43 56 0;;info@berner-safety.de;www.berner-safety.de;Ja;community;manufacturer
+64b65394f5fc38000e51c23c;Jiangsu Folee Medical Equipment Cc., Ltd.;company;No.16 Xingmao Road;212000;Zhenjiang City, Jiangsu Province;CN;+86 511 8533 3007;;hr@folee.com;www.folee.com/en/;Ja;community;manufacturer
+64b65391f5fc38000e51c1c2;EDAN Instruments, Inc.;company;Jinsha Shequ Jinhui Road 15;518122;Shenzhen;CN;+86 755 2689 8326;;info@edan.com.cn;www.edan.com.cn;Ja;community;manufacturer
+64b6ceee16691d0024550bb0;HAMILTON MEDICAL AG;company;Via Crusch 8;7402;Bonaduz;CH;+41 58 610 10 20;;regulatory.med.global@hamilton-medical.com;http://www.hamilton-medical.com/;Ja;community;manufacturer
+64b65399f5fc38000e51c2f1;Hamilton Deutschland GmbH;company;;;;DE;;;;;Ja;community;manufacturer
+64b6537ef5fc38000e51beaf;AD Analog Digital Elektronik GmbH;company;Blumberger Str. 3;84166;Adlkofen;DE;+49 8707 9384185;;mail@ad-elektronik.de;www.ad-elektronik.de;Ja;community;manufacturer
+64b65390f5fc38000e51c1ac;ETHICON Endo-Surgery;company;Hummelsbütteler Steindamm 71;22851;Segeberg;DE;+49 40 52973200;;;https://jnjinstitute.com/;Ja;community;manufacturer
+64b6539af5fc38000e51c325;Hewlett Packard GmbH;company;Herrenberger Straße 140;71034;Böblingen;DE;07031 - 450 7000;;firmen.kunden@hp.com;www.hp.com/de;Ja;community;manufacturer
+64b6539af5fc38000e51c324;Heuser Apparatebau GmbH;company;Am Schlagbaum 10;42781;Haan;DE;+49 2129 94030;;info@heuser-haan.de;www.heuser-haan.de;Ja;community;manufacturer
+659c0e5e64a257000f907f7e;Derungs Medical GmbH;company;;78239;Rielasingen-Worblingen;DE;+49-7731-909717-0;;info@derungsmedical.com;;Ja;community;manufacturer
+5d3ae807a159c577ac4b8257;Heraeus Med GmbH;company;Philipp-Reis-Str. 8-13;61273;Wehrheim;DE;+49 (0) 6181 35-3399;;contact.medical@heraeus.com;http://www.heraeus.com/;Ja;community;manufacturer
+64b65390f5fc38000e51c189;ELCAT GmbH;company;Bgm.-Finsterwalder-Ring 27;82515;Wolfratshausen;DE;+ 49 08171 4214-0;;kontakt@elcat.de;https://www.elcat.de/;Ja;community;manufacturer
+64b65395f5fc38000e51c260;GETEMED Medizin- und Informationstechnik AG;company;Oderstr. 77;14513;Teltow;DE;+49 3328 3942 0;;info@getemed.de;www.getemed.de;Ja;community;manufacturer
+5d3ae80aa159c577ac4b8271;Richard Wolf GmbH;company;Pforzheimer Straße 32;75438;Knittlingen;DE;+49 7043 350;;info@richard-wolf.com;https://www.richard-wolf.com/;Ja;community;manufacturer
+64b6cfec16691d0024550d2c;Drucker Diagnostics;company;168 Bradford Drive;PA 16870;Port Matilda;US;+1-866-265-1486;;customerservice@druckerdiagnostics.com;https://druckerdiagnostics.com;Ja;community;manufacturer
+64b653aff5fc38000e51c607;OCULUS Optikgeräte GmbH;company;Münchholzhäuser Straße 29 ·;35582;Wetzlar;DE;+49 641 2005 0;;info@oculus.de;www.oculus.de;Ja;community;manufacturer
+64b653aef5fc38000e51c5db;Neomed Medizintechnik GmbH;company;;;;DE;;;;;Ja;community;manufacturer
+64b65383f5fc38000e51bf82;BK Medical ApS;company;Mileparken 34;2730;Herlev;DK;+45 4452 8100;;eudamed@gehealthcare.com;http://www.bkmedical.com/;Ja;community;manufacturer
+64b65395f5fc38000e51c25e;GE Medical Systems Kretztechnik GmbH & Co.OHG;company;Tiefenbach 15;4871;Tiefenbach;AT;+43 7682 38000;;;http://www.gehealthcare.com/;Ja;community;manufacturer
+64b6537ff5fc38000e51bef6;Abbott Laboratories;company;Abbott Park 100;60064;Libertyville Township;US;+1 224-667-6100;;;http://www.abbott.com/;Ja;community;manufacturer
+64b653bbf5fc38000e51c7e2;Shimadzu Deutschland GmbH;company;Keniastraße 38;47269;Duisburg;DE;+49 203 76870;;;https://www.shimadzu.de/;Ja;community;manufacturer
+64b65385f5fc38000e51bfc8;Beurer GmbH;company;Söflinger Straße 218;89077;Ulm;DE;+49 731 3989 0;;kd@beurer.de;https://www.beurer.com;Ja;community;manufacturer
+5d3ae809a159c577ac4b826e;KARL STORZ GmbH & Co. KG;company;Dr.-Karl-Storz-Straße 34;78532;Tuttlingen;DE;+49 7461 7080;;info@karlstorz.com;https://www.karlstorz.com/;Ja;community;manufacturer
+640b4b2d5ba3690010e63ab8;Samedis.care GmbH;company;;;;DE;;;info@samedis.care;https://www.samedis.care;Ja;community;
+64b6539cf5fc38000e51c36d;IONTO-COMED GmbH;company;;;;DE;;;;;Ja;community;manufacturer
+64b6539cf5fc38000e51c36f;IRADIMED;company;;;;US;;;;;Ja;community;manufacturer
+64b653a4f5fc38000e51c48a;L I N E T spol. s.r.o.;company;Želevčice 5;274 01;Slaný;CZ;+420 312 576 400;;obchodcr@linet.cz;https://www.linet.com/en;Ja;community;manufacturer
+64b6cea816691d0024550b57;Draeger Medical Systems, Inc.;company;Quarry Road 3135;18969-1042;Telford, PA;US;+1 800 437 2437;;;https://draeger.com/;Ja;community;manufacturer
+64b6538ff5fc38000e51c169;Dräger Medical AG;company;;;;DE;;;;;Ja;community;manufacturer
+64b653b4f5fc38000e51c6c6;Pulsion Medical system;company;Hans-Riedl-Straße 21;85622;München;DE;+49 89 4599140;;;http://www.pulsion.com/;Ja;community;manufacturer
+5d3ae80aa159c577ac4b8273;B. Braun Melsungen AG;company;Carl-Braun-Straße 1;34212;Melsungen;DE;+49 56 61-71-0;;info@bbraun.com;www.bbraun.de;Ja;community;manufacturer
+65bcb43b4b60dd0e34d897a3;WEINMANN Emergency Medical Technology GmbH + Co. KG;company;Frohbösestraße 12;22525;Hamburg;DE;+49 40 88 18 96 - 0;;info@weinmann-emt.de;www.weinmann-emergency.de;Ja;community;manufacturer
+679895933b3e52059494d1b9;Philips Medizin Systeme Böblingen GmbH;company;Hewlett-Packard-Straße 2;71034;Böblingen;DE;+49 7031 463-0;;medizin.infoline@philips.com;http://www.philips.de/healthcare;Ja;community;manufacturer
+64b653b2f5fc38000e51c68b;Philips International B.V.;company;High Tech Campus 52;5656 AG;Eindhoven;NL;+31 20 597 7777;;;https://www.philips.com;Ja;community;manufacturer
+67c4b84406b0f9f2c2ff9169;Philips GmbH Market DACH;company;Röntgenstr. 22;22335;Hamburg;DE;+49 40 - 28 99 0;;Unternehmenskommunikation@philips.com;https://www.philips.de;Ja;community;manufacturer
+68d1a924cb2882f619cbd591;TRUMPF Medizin Systeme GmbH + Co. KG;company;;;;DE;;;;;Ja;community;manufacturer
+5d3ae8d0a159c577fd9b77df;MEIKO Maschinenbau GmbH & Co. KG;company;Englerstraße 3;77652;Offenburg;DE;+49 (781) 203 0;;info@meiko-global.com;https://www.meiko.com/en/;Ja;community;manufacturer
+64b6539cf5fc38000e51c375;ITD GmbH;company;Jahnstrasse 1;84347;Pfarrkirchen;DE;+49 89 6144250;;sales@itd-cart.com;http://www.itd-cart.com/;Ja;community;manufacturer
+686f8ccf0f6bc8df20f94f9c;ADE Germany GmbH;company;Neuer Höltigbaum 15;22143;Hamburg;DE;+49 40 432776 0;;info@ade-germany.de;https://ade-germany.de;Ja;community;manufacturer
+64b653b6f5fc38000e51c73d;SCHOTT AG;company;Hüttenstraße 1;31073;Holzminden;DE;+49 5187 7710;;;http://www.schott.com/;Ja;community;manufacturer
+64b6539ff5fc38000e51c3fd;Kinetec S.A.;company;;;;FR;;;;;Ja;community;manufacturer
+64b6537ff5fc38000e51beea;ATL-Advanced Technology Laboratories GmbH;company;Untere Waldplätze 14;70569;Stuttgart;DE;;;;;Ja;community;manufacturer
+64b65395f5fc38000e51c24e;Fujitsu Siemens Computers GmbH;company;Lyoner Straße 9;60528;Kreisfreie Stadt Frankfurt am Main;DE;+49 69 9210100;;;https://global.fujitsu/de-de;Ja;community;manufacturer
+5d3ae85ca159c577fd9b7375;GE Healthcare Ultraschall Deutschland GmbH;company;Beethovenstraße 239;42655;Kreisfreie Stadt Solingen;DE;+49 211 73744400;;;http://www.gehealthcare.com/;Ja;community;manufacturer
+5d3ae844a159c577fd9b728d;GE Healthcare GmbH;company;Bleichstraße 64-66;80807;Munchen;DE;+49 211 73744400;;eudamed@gehealthcare.com;http://www.gehealthcare.com/;Ja;community;manufacturer
+64b6539af5fc38000e51c331;Hitachi Medical Systems Deutschland GmbH;company;Otto-von-Guericke-Ring 3;65205;Kreisfreie Stadt Wiesbaden;DE;+49 6122 70360;;;http://www.fujifilm.com/hcge;Ja;community;manufacturer
+64b653b7f5fc38000e51c75d;SONY Corporation;company;1-7-1 Konan, Minato-ku;108-0075;Tokyo;JP;+81 3 6748 2111;;;http://www.sony.com/;Ja;community;manufacturer
+64b6cebb16691d0024550b72;GE Healthcare - Global Headquarters;company;Nightingales Lane;HP8 4SP;Pollards Wood Nightingales Ln Chalfont Saint Giles UK;GB;;;;;Ja;community;manufacturer
+64b65632f5fc38000e51d356;Huntleigh Healthcare Ltd.;company;35 Portmanmoor Road;CF24 5HN;Cardiff;GB;+44 29 2048 5885;;sales@huntleigh-diagnostics.co.uk;https://www.huntleigh-diagnostics.com;Ja;community;manufacturer
+64b6cd8b16691d002455098f;MEDAP GmbH;company;Heraeusstraße 12-14;63450;Main-Kinzig-Kreis;DE;;;;;Ja;community;manufacturer
+64b6cd7716691d0024550975;D.O.R.C. Dutch Ophthalmic Research Center (International) B.V.;company;Scheijdelveweg 2;3214 VN;Zuidland;NL;+31 181 458080;;dl.med-ra-dorc.nl@zeiss.com;www.dorcglobal.com;Ja;community;manufacturer
+65b905c66d3c490011066980;Löwenstein Medical SE & Co. KG;company;Arzbacherstr. 80;56130;Bad Ems;DE;02603 9600-4465;;klinik@loewensteinmedical.com;https://loewensteinmedical.de;Ja;manufacturer;manufacturer
+64b6539cf5fc38000e51c371;ISKO Koch GmbH;company;Egerländer Straße 28;95448;Bayreuth;DE;+49 921 1508450;;info@iskomed.de;http://www.iskomed.de/;Ja;community;manufacturer
+64b6cff216691d0024550d37;Diasorin S.p.A.;company;Via Crescentino snc;13040;Saluggia;IT;+39 0161 487093;;DSI_QARA_contacts@diasorin.it;;Ja;community;manufacturer
+64b6cec116691d0024550b7c;VIVISOL Deutschland GmbH;company;Werner-von-Siemens-Straße 1;85375;Freising;DE;+49 3628 92110;;;https://www.vivisol.de/;Ja;community;manufacturer
+64b653caf5fc38000e51c9b3;Zoll Medical Corporation;company;269 Mill Road;01824;Chelmsford, MA;US;+1 978 421 9655;;;http://www.zoll.com;Ja;community;manufacturer
+64b653adf5fc38000e51c5b7;NDS Surgical Imaging, LLC.;company;Hellyer Avenue 5750;95138;San Jose, CA;US;+ 1 408 776 0085;;info@ndssi.com;www.ndssi.com;Ja;community;manufacturer
+5d3ae84aa159c577fd9b72c8;Löwenstein Medical GmbH & Co. KG;company;Mühlenstraße 39;55543;Bad Kreuznach;DE;+49 671 48316975;;;https://loewensteinmedical.com/;Ja;community;manufacturer
+64b65392f5fc38000e51c1d7;Embru-Werke Mantel & Cie.;company;;;;DE;;;;;Ja;community;manufacturer
+64b6cd8016691d0024550985;Völker GmbH;company;Wullener Feld 79;58454;Witten;DE;+49 (0)2302 960 960;;info@voelker.de;https://www.voelker.de/de/;Ja;community;manufacturer
+5d3ae888a159c577fd9b7525;Fresenius Kabi AG;company;Else-Kröner-Straße 1;61352;Bad Homburg;DE;+49 6172 686 0;;kundenberatung@fresenius-kabi.de;https://www.fresenius-kabi.com/;Ja;community;manufacturer
+65e889dc3f4a90000e1c2117;MEDIKAN Co., LTD.;company;502, 217 Heojun-ro;07500;Gangseo-gu, Seoul;KR;+82 2 2668 6070;;marketing@medikan.com;https://medikan.co.kr;Ja;community;manufacturer
+64b653baf5fc38000e51c7ab;Schupp GmbH & Co. KG;company;Glattalstr. 78;72280;Dornstetten-Aach;DE;+40 7443 / 243 0;;info@schupp-gmbh.de;https://www.schupp.shop;Ja;community;manufacturer
+64b6cd7016691d0024550968;Stryker Howmedica GmbH;company;Professor-Küntscher-Straße 1;24232;Kreis Plön;DE;+49 4348 7020;;;https://www.stryker.com/;Ja;community;manufacturer
+64b6cecb16691d0024550b8c;Parallel Design SAS;company;Route des Crêtes 1090;06560;Valbonne;FR;+33 4 97 23 25 50;;eudamed@gehealthcare.com;http://www.parallel-design.ch/;Ja;community;manufacturer
+67c094a75f266a1bc3687e1e;GE Medical Systems Information Technologies, Inc.;company;8200 West Tower Avenue;53223;Milwaukee, WI;US;+ 1 414 355 5000;;;https://www.gehealthcare.com/;Ja;community;manufacturer
+5d3ae8eba159c577fd9b78e1;STORZ MEDICAL AG;company;Lohstampfestrasse 8;8274;Tägerwilen;CH;+41 71 677 45 45;;info@storzmedical.com;https://www.storzmedical.com/;Ja;community;manufacturer
+64b653b0f5fc38000e51c62b;Olympus Europa SE & Co. KG;company;Wendenstraße 20;20097;Hamburg;DE;+49 40 237730;;info@olympus-europa.com;http://www.olympus-europa.com/;Ja;community;manufacturer
+64b6539ff5fc38000e51c3f9;Kern & Sohn GmbH;company;Ziegelei 1;72336;Balingen-Frommern;DE;+49-[0]7433- 9933-0;;info@kern-sohn.com;https://www.kern-sohn.com/;Ja;community;manufacturer
+5d3ae86ba159c577fd9b740e;Ziehm Imaging GmbH;company;Lina-Ammon-Straße 10;90471;Nürnberg;DE;+49 911 66067 0;;info@ziehm.com;www.ziehm.com;Ja;community;manufacturer
+64b653adf5fc38000e51c5ba;Sharp NEC Display Solutions Europe GmbH;company;Landshuter Allee 12-14;80637;München;DE;+49 89 99699 0;;infomail.sndse@sharp.eu;www.sharpnecdisplays.eu;Ja;community;manufacturer
+64b65384f5fc38000e51bfb6;Beijing Choice Electronic Technology Co., Ltd;company;Building No. 2 (2nd floor), 9 Shuangyuan Road;100041;Beijing;CN;+86-10-88204630/31;;market@choicemmed.com;;Ja;community;manufacturer
+64b65384f5fc38000e51bfb6;Beijing Choice Electronic Technology Co., Ltd;company;Building No. 2 (2nd floor), 9 Shuangyuan Road;100041;Beijing;CN;+86-10-88204630/31;;market@choicemmed.com;;Ja;community;manufacturer
+64b653bff5fc38000e51c872;TOSHIBA Medical Systems GmbH;company;Hellersbergstr. 4;41460;Neuss;DE;+49 2131 1809 0;;info@toshiba-medical.de;www.toshiba-medical.de;Ja;community;manufacturer
+68f78cd676b0b84e18991399;UNITRONIC GmbH;company;;;;DE;;;;;Ja;community;manufacturer
+65bcb43b4b60dd0e34d897a3;WEINMANN Emergency Medical Technology GmbH + Co. KG;company;Frohbösestraße 12;22525;Hamburg;DE;+49 40 88 18 96 - 0;;info@weinmann-emt.de;www.weinmann-emergency.de;Ja;community;manufacturer
+5d3ae807a159c577ac4b8254;Dräger Medical AG & Co. KGaA;company;Moislinger Allee 53-55;23558;Lübeck;DE;+49 451-882 0;;info@draeger.com;https://www.draeger.com/de_de/Home;Ja;community;manufacturer
+64b653a3f5fc38000e51c478;Liebherr-International Deutschland GmbH;company;Memminger Straße 120;88400;Biberach an der Riß;DE;+49 7351 41-0;;info.lho@liebherr.com;https://www.liebherr.com/de-de/firmengruppe/startseite-3705202;Ja;community;manufacturer
+5d3ae807a159c577ac4b825b;Siemens Healthcare GmbH;company;Henkestraße 127;91052;Erlangen;DE;+49 800 188 188 5;;contact@siemens-healthineers.com;https://www.siemens-healthineers.com;Ja;community;manufacturer
+64b6539ff5fc38000e51c3f9;Kern & Sohn GmbH;company;Ziegelei 1;72336;Balingen-Frommern;DE;+49-[0]7433- 9933-0;;info@kern-sohn.com;https://www.kern-sohn.com/;Ja;community;manufacturer
+678f76e521b864da99517717;Fisher & Paykel Healthcare Corporation Limited;company;15 Maurice Paykel Place;2013;East Tāmaki, Auckland;NZ;+64 9 574 0100;;info@fphcare.com;https://www.fphcare.com;Ja;community;manufacturer
+64b6539cf5fc38000e51c36f;IRADIMED;company;;;;US;;;;;Ja;community;manufacturer
+64b653baf5fc38000e51c7be;Sedlbauer AG;company;Wilhelm-Sedlbauer-Str. 2;94481;Grafenau;DE;+49 8552 41 0;;mailmaster@sedlbauer.de;www.sedlbauer.de;Ja;community;manufacturer
+5d3ae850a159c577fd9b72ff;Dr. Mach GmbH & Co. KG;company;Am Brucker Feld 4;85567;Grafing;DE;+49 8092 2093 0;;info@dr-mach.de;www.dr-mach.com;Ja;community;manufacturer
+673e27ed25c9e2ab217fdb8e;Shenzhen New Industries Biomedical Engineering Co., Ltd. Snibe Co.,Ltd.;company;No.23, Jinxiu East Road, Pingshan District;518122;Shenzhen;CN;+86 755 26501514;;sales@snibe.com;www.snibe.com;Ja;community;manufacturer
+5d3ae86aa159c577fd9b7403;Schiller Medizintechnik GmbH;company;Korbacher Straße 43A;85622;Feldkirchen;DE;+49 5601 4913;;info@schillermed.de;https://www.schillermed.de/;Ja;community;manufacturer
+64b65392f5fc38000e51c1e1;Enraf-Nonius B.V.;company;Delftechpark 39;3047 AT;Rotterdam;NL;+31 15 270 1100;;info@enraf-nonius.nl;https://www.honeywellprocess.com/en-US/explore/products/terminal-operations/Pages/default.aspx;Ja;community;manufacturer
+64b65384f5fc38000e51bfa6;Baxter Medical Systems GmbH & Co. KG;company;Carl-Zeiss-Straße 7-9;07318;Saalfeld;DE;+49 3671 586-0;;hrc_trumpf_info@baxter.com;https://www.baxter.de/de;Ja;community;manufacturer
+64b6cdd916691d0024550a02;Jaeger GmbH & Co.KG - VIASYS Healthcare;company;Leibnizstraße 7;97204;Würzburg;DE;+49 931 49720;;;https://www.vyaire.com/;Ja;community;manufacturer
+64b6cd7116691d002455096b;ARJO Systeme für Rehabilitation GmbH;company;;;;DE;;;;;Ja;community;manufacturer
+64b6ceda16691d0024550b92;Aircraft Medical Limited;company;Saint Andrew Square 9-10;EH2 2AF;Edinburgh;GB;+44 131 718 6042;;rs.eudamedinquiries@medtronic.com;;Ja;community;manufacturer
+67920008c017c7ba4e84ea14;ATMOS MedizinTechnik GmbH & Co. KG;company;Ludwig-Kegel-Str. 16;79853;Lenzkirch;DE;+49 7653 689 - 0;;atmos@atmosmed.de;www.atmosmed.de;Ja;community;manufacturer
+66aa51ed069d4ed350cf8f0f;Beurer GmbH & Co.;company;Söflinger Straße 218;89077;Kreisfreie Stadt Ulm;DE;+49 731 39890;;;http://www.beurer-shop.de/;Ja;community;manufacturer
+64b6cee416691d0024550b9f;Gaymar Industries, Inc.;company;Centre Drive 10;14127;Orchard Park, NY;US;+1 800-327-0770;;;;Ja;community;manufacturer
+5d3ae87ca159c577fd9b74b2;Dantschke Medizintechnik GmbH & Co. KG;company;Apelsteinallee 3;04416;Markkleeberg;DE;+49 34297 6600;;info@dantschke-med.de;https://www.dantschke-med.de/;Ja;community;manufacturer
+64b6539af5fc38000e51c31e;Hersteller unbekannt / Manufacturer unknown;company;;;;DE;;;;;Ja;community;manufacturer
+5d3ae8d0a159c577fd9b77df;MEIKO Maschinenbau GmbH & Co. KG;company;Englerstraße 3;77652;Offenburg;DE;+49 (781) 203 0;;info@meiko-global.com;https://www.meiko.com/en/;Ja;community;manufacturer
+64b653bdf5fc38000e51c823;Stein Therapiegeräte GmbH;company;Kesselgasse 8;97990;Weikersheim;DE;+49 79 34 37 61;;info@stein-therapiegeraete.de;www.stein-therapiegeraete.de;Ja;community;manufacturer
+67bdd26abe2c48ed32af6292;DLAB Scientific Co., Ltd.;company;No.31, Yu'an Road, Beijing Airport Economic Core Zone, Shunyi District,;101318;Beijing;CN;86-10-85653451;;info@dlabsci.com;www.dlabsci.com;Ja;community;manufacturer
+64b653abf5fc38000e51c57f;Microlife AG Swiss Corporation;company;Espenstrasse 139;9443;Widnau;CH;+41 71 727 70 00;;;;Ja;community;manufacturer
+64b6539bf5fc38000e51c34a;Huntleigh Diagnostics Ltd.;company;Portmanmoor Road 35;CF24 5HN;Portmanmoor Rd Cardiff UK;GB;+44 29 2048 5885;;;http://www.huntleigh-diagnostics.com/;Ja;community;manufacturer
+64b653b5f5fc38000e51c6f8;Rehder / Partner GmbH;company;;;;DE;;;;;Ja;community;manufacturer
+64b6cdc916691d00245509ec;GE Healthcare Finland Oy;company;Kuortaneenkatu 2;FI-00510;Helsinki;FI;+358 10 39411;;eudamed@gehealthcare.com;www.gehealthcare.com;Ja;community;manufacturer
+679895933b3e52059494d1b9;Philips Medizin Systeme Böblingen GmbH;company;Hewlett-Packard-Straße 2;71034;Böblingen;DE;+49 7031 463-0;;medizin.infoline@philips.com;http://www.philips.de/healthcare;Ja;community;manufacturer
+64b653bbf5fc38000e51c7e2;Shimadzu Deutschland GmbH;company;Keniastraße 38;47269;Duisburg;DE;+49 203 76870;;;https://www.shimadzu.de/;Ja;community;manufacturer
+64b65390f5fc38000e51c1a3;ERKA.;company;Kaiserstraße 100;60329;Frankfurt am Main;DE;+49 69 12345678;;info@erka.org;https://www.erka.org/en;Ja;community;manufacturer
+66ce23e5d38ef6b4f45eba5f;Sprintex Trainingsgeräte GmbH;company;Hebelstraße 2a, Halle 3;79692;Kleines Wiesental;DE;+49 7622 6733722;;info@sprintex-treadmills.com;https://sprintex-treadmills.com;Ja;community;manufacturer
+5d3ae847a159c577fd9b72a6;Aesculap AG & Co. KG;company;;78532;Landkreis Tuttlingen;DE;+49 7461 950;;;http://www.aesculap.de/;Ja;community;manufacturer
+64b653b1f5fc38000e51c66d;Pajunk Medical Produkte GmbH;company;Karl-Hall-Straße 1;78187;Landkreis Tuttlingen;DE;+49 7704 92910;;;https://pajunk.com/;Ja;community;manufacturer
+64b653adf5fc38000e51c5ba;Sharp NEC Display Solutions Europe GmbH;company;Landshuter Allee 12-14;80637;München;DE;+49 89 99699 0;;infomail.sndse@sharp.eu;www.sharpnecdisplays.eu;Ja;community;manufacturer
+64b65394f5fc38000e51c245;Fresenius Medical Care Deutschland GmbH;company;Eduard-Fresenius-Straße 1;61352;Bad Homburg;DE;+49 6172 6090;;eudamed@freseniusmedicalcare.com;http://www.freseniusmedicalcare.com/;Ja;community;manufacturer
+64b65596f5fc38000e51caf5;ArjoHuntleigh AB;company;Hans Michelsensgatan 10;211 20;Malmö;SE;+46 10 335 4500;;info@arjo.com;www.arjohuntleigh.se;Ja;community;manufacturer
+67b8be4daab5649b95002953;CA-MI S.R.L.;company;Via Ugo La Malfa 13 Fraz. Pilastro;43013;Langhirano (PR);IT;+39 0521 637133;;vendite@ca-mi.it;https://www.ca-mi.eu/en/company/;Ja;community;manufacturer
+64b65398f5fc38000e51c2d3;HNE Healthcare GmbH;company;Peter-Sander-Straße 10;55252;Kreisfreie Stadt Wiesbaden;DE;+49 6134 1860;;;https://www.arjo.com/de-de/;Ja;community;manufacturer
+64b6cf0e16691d0024550bd5;Aerocrine AB;company;;;;SE;;;;;Ja;community;manufacturer
+5d3ae97ea159c577fd9b7e49;Nihon Kohden Deutschland GmbH;company;Raiffeisenstraße 10;61191;Wetteraukreis;DE;+49 6003 8270;;;https://eu.nihonkohden.com/;Ja;community;manufacturer
+64b653adf5fc38000e51c5ca;NONIN Medical Inc.;company;13700 1st Ave N;55441;Plymouth, MN;US;+31 13 45 87 130;;info@nonin.com;https://www.nonin.com/contact/;Ja;community;manufacturer
+687c112f5c3947286838f0a5;NIDEK Co., Ltd.;company;34-14 Maehama, Hiroishi-cho;443-0038;Gamagori, Aichi;JP;+81 533 67 6611;;;www.nidek-intl.com;Ja;community;manufacturer
+64b653bdf5fc38000e51c838;Stryker Corporation;company;Airview Boulevard 2825;49002;Airview Blvd Portage MI USA;US;+1 269-385-2600;;;https://www.stryker.com/us/en/about/contact.html;Ja;community;manufacturer
+64b653bbf5fc38000e51c7e4;Siare Engineering International Group S.p.A.;company;Via Giulio Pastore 18;40053;Crespellano-Valsamoggia (BO);IT;+39 051 969802;;mail@siare.it;www.siare.it;Ja;community;manufacturer
+5d3ae80aa159c577ac4b8273;B. Braun Melsungen AG;company;Carl-Braun-Straße 1;34212;Melsungen;DE;+49 56 61-71-0;;info@bbraun.com;www.bbraun.de;Ja;community;manufacturer
+64b6569af5fc38000e51d72d;AirSep Corporation;company;260 Creekside Dr.;14228-2075;Buffalo, NY;US;+1 716 691 0202;;info@airsep.com;https://www.caireinc.com/commercial/;Ja;community;manufacturer
+64b65399f5fc38000e51c30b;Heine Optotechnik GmbH & Co. KG;company;Dornierstr. 6;82205;Gilching;DE;+49 8105 7728 0;;info@heine.com;www.heine.com;Ja;community;manufacturer
+64b6ce0e16691d0024550a5e;Weinmann Geräte für Medizin GmbH & Co. KG;company;;;;DE;;;;;Ja;community;manufacturer
+64b6539cf5fc38000e51c375;ITD GmbH;company;Jahnstrasse 1;84347;Pfarrkirchen;DE;+49 89 6144250;;sales@itd-cart.com;http://www.itd-cart.com/;Ja;community;manufacturer
+5d3ae809a159c577ac4b826e;KARL STORZ GmbH & Co. KG;company;Dr.-Karl-Storz-Straße 34;78532;Tuttlingen;DE;+49 7461 7080;;info@karlstorz.com;https://www.karlstorz.com/;Ja;community;manufacturer
+64b653a3f5fc38000e51c47e;Lifescan Inc. USA;company;;;;US;;;;;Ja;community;manufacturer
+64b653baf5fc38000e51c7ab;Schupp GmbH & Co. KG;company;Glattalstr. 78;72280;Dornstetten-Aach;DE;+40 7443 / 243 0;;info@schupp-gmbh.de;https://www.schupp.shop;Ja;community;manufacturer
+64b65390f5fc38000e51c189;ELCAT GmbH;company;Bgm.-Finsterwalder-Ring 27;82515;Wolfratshausen;DE;+ 49 08171 4214-0;;kontakt@elcat.de;https://www.elcat.de/;Ja;community;manufacturer
+64b6cf1f16691d0024550bf2;OrthoScan. Inc;company;;;;;;;;;Ja;community;manufacturer
+64b6ce6516691d0024550aeb;Masimo Corporation;company;52 Discovery;92618;Irvine, CA;US;+1 949 297 7000;;;https://www.masimo.com/;Ja;community;manufacturer
+64b653acf5fc38000e51c598;Mitsubishi Electric Corporation;company;Tokyo Building, 2-7-3 Marunouchi;100-8310;Chiyoda-ku, Tokyo;JP;+81 33218 2111;;;www.mitsubishielectric.com;Ja;community;manufacturer
+6810b34ca52596e6ab0a249e;GE Vingmed Ultrasound AS;company;Strandpromenaden 45;3191;Horten;NO;;;eudamed@gehealthcare.com;;Ja;community;manufacturer
+64b653bbf5fc38000e51c7d7;Shenzhen Creative Industry Co. Ltd.;company;深大西路;518056;Guang Dong Sheng Shen Zhen Shi Nan Shan Qu GWJJ+CP6 邮政编码:;CN;;;;http://ici.szu.edu.cn/;Ja;community;manufacturer
+64b65399f5fc38000e51c310;Helmer Scientific Inc.;company;Bergen Boulevard 14400;46060;Noblesville, IN;US;+1 317 773 9073;;;www.helmerinc.com;Ja;community;manufacturer
+64b65395f5fc38000e51c25d;GE Medical Systems Information Technologies GmbH;company;Munzinger Straße 5A;79111;Freiburg;DE;+49 761 45430;;eudamed@gehealthcare.com;https://www.gehealthcare.de/;Ja;community;manufacturer
+64b6cd7616691d0024550973;MEDAX Nagel GmbH;company;;;;DE;;;;;Ja;community;manufacturer
+64b653ccf5fc38000e51ca10;Schwa-Medico, Medizinische Apparate, Vertriebsgesellschaft mbH;company;Wetzlarer Straße 41-43;35630;Ehringshausen;DE;+49 6443 83330;;info@schwa-medico.de;http://www.schwa-medico.de/;Ja;community;manufacturer
+64b6cde616691d0024550a19;Covidien llc;company;Hampshire Street 15;02048;Mansfield MA;US;+1 508-261-8000;;;http://www.medtronic.com/;Ja;community;manufacturer
+64b65385f5fc38000e51bfc8;Beurer GmbH;company;Söflinger Straße 218;89077;Ulm;DE;+49 731 3989 0;;kd@beurer.de;https://www.beurer.com;Ja;community;manufacturer
+66a3bc0c728b0e4345e3c565;Advantech Co., Ltd.;company;;;;TW;;;;https://www.advantech.com/en-eu;Ja;community;manufacturer
+64b6cf4d16691d0024550c24;Breas Medical AB;company;Företagsvägen 1;43533;MÖLNLYCKE;SE;+46 31 86 88 00;;breas@breas.com;https://breas.com/;Ja;community;manufacturer
+64b653b7f5fc38000e51c75d;SONY Corporation;company;1-7-1 Konan, Minato-ku;108-0075;Tokyo;JP;+81 3 6748 2111;;;http://www.sony.com/;Ja;community;manufacturer
+64b653bdf5fc38000e51c822;Steelco S.p.A.;company;via Balegante, 27;31039;RIESE PIO X;IT;+39-04237561;;info@steelcogroup.com;https://www.steelcogroup.com/;Ja;community;manufacturer
+64b6538ef5fc38000e51c163;Osypka AG;company;Earl-H.-Wood-Straße 1;79618;Rheinfelden;DE;+49 7623 74050;;regulatory@osypka.de;https://osypka.de/;Ja;community;manufacturer
+64b6539ff5fc38000e51c412;Konica Minolta Medical & Graphic Imaging Europe GmbH;company;Einsteinring 1;85609;München;DE;+49 89 748310;;;https://www.konicaminolta.de/de-de;Ja;community;manufacturer
+68d6a33b80e67aacf670341b;Weinkauf Medizintechnik;company;;91322;Gräfenberg;DE;;;info@weinkauf-medizintechnik.de;;Ja;community;manufacturer
+5d3aece6a159c5793f62f1f3;PARI GmbH;company;Moosstrasse 3;82319;Starnberg;DE;+49 8151 279-0;;info@pari.de;https://www.pari.com/holding-de/produktion/;Ja;community;manufacturer
+64b65380f5fc38000e51bf06;Adac Laboratories GmbH;company;;;San Jose;US;;;;;Ja;community;manufacturer
+64b653b2f5fc38000e51c679;Penumbra Europe GmbH;company;Am Borsigturm 44;13507;Berlin;DE;+49 30 20056760;;EC-Rep@penumbrainc.com;http://www.penumbrainc.com/;Ja;community;manufacturer
+678f7dbfc017c7ba4e84d2e9;Fisher & Paykel Healthcare GmbH & Co. KG;company;Wiesenstrasse 49;73614;Schorndorf;DE;+49 7181 98599-0;;info@fphcare.de;https://www.fphcare.com/de/;Ja;community;manufacturer
+64b653caf5fc38000e51c9af;Zimmer Elektromedizin GmbH;company;Junkersstraße 9;89231;Neu-Ulm;DE;+49 731 97610;;;http://www.zimmer.de/;Ja;community;manufacturer
+6762cab5b89414866a65448b;Acteon Group;company;;;;DE;;;;;Ja;community;manufacturer
+64b65396f5fc38000e51c292;Given Imaging GmbH;company;;;;DE;;;;;Ja;community;manufacturer
+64b65386f5fc38000e51c004;Brain Products GmbH;company;Zeppelinstraße 7;82205;Landkreis Starnberg;DE;+49 8105 733840;;;https://brainproducts.com/;Ja;community;manufacturer
+64b653c4f5fc38000e51c916;Vapotherm Inc;company;Domain Drive 100;03833;Domain Dr STE 102 Exeter NH USA;US;+1 844-381-8276;;;http://www.vapotherm.com/;Ja;community;manufacturer
+64b653c8f5fc38000e51c970;Welch Allyn GmbH & Co. KG;company;Zollerstraße 2-4;72417;Jungingen;DE;+49 7477 9271-0;;info@welchallyn.de;www.welchallyn.de;Ja;community;manufacturer
+68ffa1a43dc3bf85ffbca816;Microlife Corporation;company;9F, 431, RuiGuang Road, NeiHu;114;Taipei;TW;+886 2 8797-1288;;;www.microlife-asiapacific.com;Ja;community;manufacturer
+64b653ccf5fc38000e51ca05;nt medical GmbH;company;Dahlerdyk 100;47803;Krefeld;DE;+49 2151 747 797 7;;;www.nt-medical.de;Ja;community;manufacturer
+64b6cf4c16691d0024550c22;SPO Medical Equipment Ltd.;company;Ha-Gavish Street 3;;Ha-Gavish St Kefar Sava;IL;;;;;Ja;community;manufacturer
+64b653caf5fc38000e51c9b3;Zoll Medical Corporation;company;269 Mill Road;01824;Chelmsford, MA;US;+1 978 421 9655;;;http://www.zoll.com;Ja;community;manufacturer
+64b653b6f5fc38000e51c727;Rudolf Riester GmbH;company;Bruckstraße 31;72417;Jungingen;DE;+49 7477 92700;;pfister@riester.de;https://www.riester.de/;Ja;community;manufacturer
+64b653bcf5fc38000e51c80e;Sorvall Products L.P.;company;Derby Avenue 600;06483;Derby Ave Seymour CT USA;US;+1 203-888-0030;;;https://www.spdionline.com/;Ja;community;manufacturer
+6891eb9152aec207c9f995b1;GE HealthCare Austria GmbH & Co OG;company;Tiefenbach 15;4871;ZIPF;AT;+43 (0) 7682 38000;;eudamed@gehealthcare.com;https://www.gehealthcare.com/de;Ja;community;manufacturer
+5d3ae85ca159c577fd9b7375;GE Healthcare Ultraschall Deutschland GmbH;company;Beethovenstraße 239;42655;Kreisfreie Stadt Solingen;DE;+49 211 73744400;;;http://www.gehealthcare.com/;Ja;community;manufacturer
+64b65394f5fc38000e51c247;Friedrich Bosch GmbH & Co. KG;company;Hohenlaienstraße 30;72406;Zollernalbkreis;DE;+49 7476 3554;;;https://www.fbosch.de/;Ja;community;manufacturer
+64b6cf5216691d0024550c2c;EIZO Nanao Corporation;company;;924-0038;153 Shimokashiwanomachi Hakusan Ishikawa;JP;+81 76-274-0035;;;https://www.eizo.co.jp/company/information/group/;Ja;community;manufacturer
+64b653adf5fc38000e51c5b7;NDS Surgical Imaging, LLC.;company;Hellyer Avenue 5750;95138;San Jose, CA;US;+ 1 408 776 0085;;info@ndssi.com;www.ndssi.com;Ja;community;manufacturer
+5d3ae84aa159c577fd9b72c6;Stiegelmeyer GmbH & Co. KG;company;Ackerstraße 42;32051;Herford;DE;+49 (0) 5221 185 - 0;;info@stiegelmeyer.com;www.stiegelmeyer.com;Ja;community;manufacturer
+64b6539af5fc38000e51c322;Hesto-Med GmbH;company;Am Eichenwald 13;09356;Zwickau;DE;+49 37204 6380;;info@hesto-med.de;https://www.hestomed.de/;Ja;community;manufacturer
+64b6cfe716691d0024550d22;Reichert, Inc.;company;Walden Avenue 3362;14043;Lancaster;US;+1 716-686-4500;;;http://reichert.com/;Ja;community;manufacturer
+64b65385f5fc38000e51bfe6;Biotronik GmbH SE & Co. KG;company;;;;DE;;;;;Ja;community;manufacturer
+5d3ae857a159c577fd9b7347;Smith & Nephew GmbH;company;Friesenweg 30;22763;Hamburg;DE;+49 40 87 97 44 0;;info@smith-nephew.com;https://www.smith-nephew.com/de-de/contact-us;Ja;community;manufacturer
+68ffa70876b0b84e189a16d8;Apyx Bulgaria Ltd.;company;Boul. Tsarigradsko shoes No133, Building 3f;1784;Sofia;BG;+359 2 9813650;;info@apyxmedical.com;https://apyxmedical.com;Ja;community;manufacturer
+64b6cfa016691d0024550c9f;xltek;company;Bristol Circle 3000;L6H 6P9;Oakville;CA;+1 905-829-1570;;;http://ultratech-labs.com/;Ja;community;manufacturer
+64b65383f5fc38000e51bf82;BK Medical ApS;company;Mileparken 34;2730;Herlev;DK;+45 4452 8100;;eudamed@gehealthcare.com;http://www.bkmedical.com/;Ja;community;manufacturer
+64b6539af5fc38000e51c323;Andreas Hettich GmbH;company;Föhrenstraße 12;78532;Tuttlingen;DE;+49 7461 7050;;info@hettichlab.com;https://www.hettichlab.com/;Ja;community;manufacturer
+64b6cf5d16691d0024550c3f;Pentapharm GmbH;company;;;;DE;;;;;Ja;community;manufacturer
+64b653bcf5fc38000e51c801;Soehnle-Waagen GmbH & Co. KG;company;Wilhelm-Soehnle-Str 2;71535;Murrhardt;DE;+49 71 92 28 1;;industriewaagen@soehnle.com;www.soehnle-professional.com;Ja;community;manufacturer
+64b6cd8016691d0024550985;Völker GmbH;company;Wullener Feld 79;58454;Witten;DE;+49 (0)2302 960 960;;info@voelker.de;https://www.voelker.de/de/;Ja;community;manufacturer
+67ea45b72cc6aaf1d8a94cbc;Hitachi, Ldt.;company;;;Tokyo;JP;+81-3-3258-1111;;;;Ja;community;manufacturer
+64b653b8f5fc38000e51c77d;Samsung Electronic GmbH;company;Frankfurter Straße 2;65760;Eschborn;DE;+49 6196 7755577;;kundenbetreuung@samsung.de;www.samsung.com/de;Ja;community;manufacturer
+64b6ce0516691d0024550a50;Philips Bothell;company;Bothell Everett Highway 22100;98021;Bothell Everett Hwy Bothell WA USA;US;+1 888-744-5477;;;http://www.healthcare.philips.com/main?link_origin=global_en_HC%3Amain%3Aheader-healthcare;Ja;community;manufacturer
+67920008c017c7ba4e84ea14;ATMOS MedizinTechnik GmbH & Co. KG;company;Ludwig-Kegel-Str. 16;79853;Lenzkirch;DE;+49 7653 689 - 0;;atmos@atmosmed.de;www.atmosmed.de;Ja;community;manufacturer
+64b6538ff5fc38000e51c175;E & L medical systems GmbH;company;Wetterkreuz 19;91052;Erlangen;DE;+49 9131 810 33 0;;lehmann@eundl.de;https://de-de.eundl.de;Ja;community;manufacturer
+64b653adf5fc38000e51c5b7;NDS Surgical Imaging, LLC.;company;Hellyer Avenue 5750;95138;San Jose, CA;US;+ 1 408 776 0085;;info@ndssi.com;www.ndssi.com;Ja;community;manufacturer
+64b653bbf5fc38000e51c7e2;Shimadzu Deutschland GmbH;company;Keniastraße 38;47269;Duisburg;DE;+49 203 76870;;;https://www.shimadzu.de/;Ja;community;manufacturer
+64b653acf5fc38000e51c598;Mitsubishi Electric Corporation;company;Tokyo Building, 2-7-3 Marunouchi;100-8310;Chiyoda-ku, Tokyo;JP;+81 33218 2111;;;www.mitsubishielectric.com;Ja;community;manufacturer
+64b653b6f5fc38000e51c73f;SCHREIBER GmbH;company;Unterer Damm 15;78567;Landkreis Tuttlingen;DE;+49 7463 307;;;;Ja;community;manufacturer
+65bcb43b4b60dd0e34d897a3;WEINMANN Emergency Medical Technology GmbH + Co. KG;company;Frohbösestraße 12;22525;Hamburg;DE;+49 40 88 18 96 - 0;;info@weinmann-emt.de;www.weinmann-emergency.de;Ja;community;manufacturer
+64b6537ff5fc38000e51bef6;Abbott Laboratories;company;Abbott Park 100;60064;Libertyville Township;US;+1 224-667-6100;;;http://www.abbott.com/;Ja;community;manufacturer
+68e51f129bb9f01aff48e6e0;Jiangsu Saikang Medical Equipment Co., Ltd.;company;No. 35 Lehong Road, Modern Agriculture Demonstration Park;215600;Zhangjiagang City, Jiangsu Province;CN;+86 512 58525850;;export@saikangmedical.com;https://m.saikangmedical.com;Ja;community;manufacturer
+687c112f5c3947286838f0a5;NIDEK Co., Ltd.;company;34-14 Maehama, Hiroishi-cho;443-0038;Gamagori, Aichi;JP;+81 533 67 6611;;;www.nidek-intl.com;Ja;community;manufacturer
+64b6539af5fc38000e51c327;Heyer Aerotech GmbH;company;Nieverner Straße 30-34;56132;Nievern;DE;+49 2603 507070;;office@heyer-aerotech.de;http://www.heyer-aerotech.de/;Ja;community;manufacturer
+64b655c8f5fc38000e51cdbc;Digisystems Laboratory Instruments Inc.;company;No.1, Lane 393, Fu De 1 Road;22151;Xizhi District, New Taipei City;TW;+886 2 2694 1738;;digilab@ms23.hinet.net;www.digisystemlab.com;Ja;community;manufacturer
+64b6cf7716691d0024550c5a;Tripp-Lite;company;1111 W. 35th Street;60609;Chicago, IL;US;+1 773 869 1111;;;www.tripplite.com;Ja;community;manufacturer
+64b653b7f5fc38000e51c75b;SOMNOmedics GmbH;company;Am Sonnenstuhl 63;97236;Würzburg;DE;+49 931 3590940;;;http://www.somnomedics.de/;Ja;community;manufacturer
+5d3ae87ba159c577fd9b74a8;Fresenius Kabi Deutschland GmbH;company;Else-Kröner-Straße 1;61352;Hochtaunuskreis;DE;+49 6172 6860;;;https://www.fresenius-kabi.com/;Ja;community;manufacturer
+64b653bbf5fc38000e51c7d7;Shenzhen Creative Industry Co. Ltd.;company;深大西路;518056;Guang Dong Sheng Shen Zhen Shi Nan Shan Qu GWJJ+CP6 邮政编码:;CN;;;;http://ici.szu.edu.cn/;Ja;community;manufacturer
+64b65388f5fc38000e51c052;CONTEC MEDICAL SYSTEMS CO., LTD;company;No. 112 Qinhuang West Street;066004;Qinhuangdao,Hebei Province;CN;0086-335-8015430;;cms@contecmed.com.cn;https://www.contecmed.com/sy;Ja;community;manufacturer
+64b653a3f5fc38000e51c478;Liebherr-International Deutschland GmbH;company;Memminger Straße 120;88400;Biberach an der Riß;DE;+49 7351 41-0;;info.lho@liebherr.com;https://www.liebherr.com/de-de/firmengruppe/startseite-3705202;Ja;community;manufacturer
+64b6cf8616691d0024550c6c;SD Biosensor, Inc.;company;Deogyeong-daero 1556-beon-gil, Nr. 16, C-4 & 5 Floor;16690;Suwon-si, Yeongtong-gu, Gyeonggi-do;KR;+82 31 300 0400;;sales@sdbiosensor.com;www.sdbiosensor.com;Ja;community;manufacturer
+64b656ccf5fc38000e51d979;Gima S.p.A.;company;Via Marconi, 1;20060;Gessate (MI);IT;+39 02 953854209;;gima@gimaitaly.com;www.gimaitaly.com;Ja;community;manufacturer
+64b653bdf5fc38000e51c839;Stryker Instruments;company;1941 Stryker Way;49002;Portage, Michigan;US;+1 269 323 7700;;;https://www.stryker.com/;Ja;community;manufacturer
+64b653b8f5fc38000e51c77b;Salvia medical GmbH & Co. KG;company;Niederhöchstädter Str. 62;61476;Kronberg;DE;+49 6173 9333 0;;info@salvia-medical.de;www.salvia-medical.de;Ja;community;manufacturer
+64b65384f5fc38000e51bfa6;Baxter Medical Systems GmbH & Co. KG;company;Carl-Zeiss-Straße 7-9;07318;Saalfeld;DE;+49 3671 586-0;;hrc_trumpf_info@baxter.com;https://www.baxter.de/de;Ja;community;manufacturer
+5d3ae807a159c577ac4b8254;Dräger Medical AG & Co. KGaA;company;Moislinger Allee 53-55;23558;Lübeck;DE;+49 451-882 0;;info@draeger.com;https://www.draeger.com/de_de/Home;Ja;community;manufacturer
+64b6539af5fc38000e51c31e;Hersteller unbekannt / Manufacturer unknown;company;;;;DE;;;;;Ja;community;manufacturer
+64b6538cf5fc38000e51c0f6;Dade Diagnostika GmbH;company;Feldkirchener Straße 7c;85551;München;DE;;;;http://www.diagnosticgreen.com/;Ja;community;manufacturer
+67bdef6b87b107ff53cc6947;Rexxam Co., Ltd.;company;958 Ikeuchi, Konan-cho;761-1494;Takamatsu-shi, Kagawa-ken;JP;;;;https://www.rexxam.co.jp;Ja;community;manufacturer
+64b653b7f5fc38000e51c74d;SIGMA Laborzentrifugen GmbH;company;An der Unteren Söse 50;37520;Osterode am Harz;DE;+49 5522 5007 0;;info@sigma-zentrifugen.de;www.sigma-zentrifugen.de;Ja;community;manufacturer
+5d3ae807a159c577ac4b825b;Siemens Healthcare GmbH;company;Henkestraße 127;91052;Erlangen;DE;+49 800 188 188 5;;contact@siemens-healthineers.com;https://www.siemens-healthineers.com;Ja;community;manufacturer
+65b905c66d3c490011066980;Löwenstein Medical SE & Co. KG;company;Arzbacherstr. 80;56130;Bad Ems;DE;02603 9600-4465;;klinik@loewensteinmedical.com;https://loewensteinmedical.de;Ja;manufacturer;manufacturer
+64b653bbf5fc38000e51c7e4;Siare Engineering International Group S.p.A.;company;Via Giulio Pastore 18;40053;Crespellano-Valsamoggia (BO);IT;+39 051 969802;;mail@siare.it;www.siare.it;Ja;community;manufacturer
+64b6537ef5fc38000e51beb3;ADL GmbH;company;Im Flürchen 1;99334;Amt Wachsenburg;DE;+ 49 36202 7519 0;;info@adl-gmbh.de;www.adl-gmbh.de;Ja;community;manufacturer
+64b653c2f5fc38000e51c8d3;TuR Elektromedizin GmbH;company;;;;DE;;;;;Ja;community;manufacturer
+5d3ae80aa159c577ac4b8273;B. Braun Melsungen AG;company;Carl-Braun-Straße 1;34212;Melsungen;DE;+49 56 61-71-0;;info@bbraun.com;www.bbraun.de;Ja;community;manufacturer
+5d3ae8e8a159c577fd9b78ca;Spacelabs Healthcare GmbH;company;Südwestpark 40;90449;Nürnberg;DE;+49 911 234210;;germany@spacelabs.com;https://spacelabshealthcare.com/de/;Ja;community;manufacturer
+68f3dd2f5c2785263bf32e64;SPS-Europe B.V.;company;Midden Engweg 41;3882;TS Putten;NL;+31 341 360 590;;sales@sps-international.com;www.sps-international.com;Ja;community;manufacturer
+64b65393f5fc38000e51c21c;Fukuda Denshi Co., Ltd.;company;2-35-8 Hongo;113-8420;Bunkyo-ku, Tokyo;JP;81 3 5684 1455;;;https://fukuda.com;Ja;community;manufacturer
+64b65380f5fc38000e51bf10;Ahrens Elektroanlagen GmbH;company;Telgenkamp 12;48249;Dülmen;DE;02594 81816;;info@elektroahrens.de;http://www.elektroahrens.de/;Ja;community;manufacturer
+5d3ae84fa159c577fd9b72f9;Baxter Deutschland GmbH;company;Edisonstraße 4;85716;Unterschleissheim;DE;+49 89 317 010;;info_de@baxter.com;https://www.baxter.de/de;Ja;community;manufacturer
+5d3ae8d0a159c577fd9b77e4;Nova Biomedical GmbH;company;Hessenring 13 A, Gebäude G;64546;Mörfelden-Walldorf;DE;+49-6105 4505-0;;de-info@novabio.com;https://www.novabiomedical.com/de/;Ja;community;
+64b6539cf5fc38000e51c375;ITD GmbH;company;Jahnstrasse 1;84347;Pfarrkirchen;DE;+49 89 6144250;;sales@itd-cart.com;http://www.itd-cart.com/;Ja;community;manufacturer
+64b653a1f5fc38000e51c43c;LG Electronics Deutschland GmbH;company;Alfred-Herrhausen-Allee 3-5;65760;Kreisfreie Stadt Frankfurt am Main;DE;+49 6196 7883000;;;http://www.lg.com/de;Ja;community;manufacturer
+64b65394f5fc38000e51c247;Friedrich Bosch GmbH & Co. KG;company;Hohenlaienstraße 30;72406;Zollernalbkreis;DE;+49 7476 3554;;;https://www.fbosch.de/;Ja;community;manufacturer
+64b653bdf5fc38000e51c823;Stein Therapiegeräte GmbH;company;Kesselgasse 8;97990;Weikersheim;DE;+49 79 34 37 61;;info@stein-therapiegeraete.de;www.stein-therapiegeraete.de;Ja;community;manufacturer
+68ed0b0c7470e579b471aae6;Biomedical Srl;company;;;;FR;;;;;Ja;community;manufacturer
+64b653bff5fc38000e51c872;TOSHIBA Medical Systems GmbH;company;Hellersbergstr. 4;41460;Neuss;DE;+49 2131 1809 0;;info@toshiba-medical.de;www.toshiba-medical.de;Ja;community;manufacturer
+64b6cee416691d0024550b9f;Gaymar Industries, Inc.;company;Centre Drive 10;14127;Orchard Park, NY;US;+1 800-327-0770;;;;Ja;community;manufacturer
+5d3ae845a159c577fd9b7295;Carl Zeiss Surgical GmbH;company;Rudolf-Eber-Straße 11;73447;Ostalbkreis;DE;+49 7364 200;;;https://www.zeiss.de/meditec/home.html;Ja;community;manufacturer
+64b653a8f5fc38000e51c50b;Mammendorfer Institut - MIPM GmbH;company;Oskar-von-Miller-Straße 6-7;82291;Fürstenfeldbruck;DE;+49 8145 92090;;;https://mipm.com/;Ja;community;manufacturer
+5d3ae809a159c577ac4b826e;KARL STORZ GmbH & Co. KG;company;Dr.-Karl-Storz-Straße 34;78532;Tuttlingen;DE;+49 7461 7080;;info@karlstorz.com;https://www.karlstorz.com/;Ja;community;manufacturer
+5d3ae808a159c577ac4b825d;GE Healthcare Technologies GmbH;company;Bleichstraße 64-66;60313;Kreisfreie Stadt Frankfurt am Main;DE;+49 761 45430;;;;Ja;community;manufacturer
+64b6cd9516691d002455099a;Datex-Ohmeda GmbH;company;Munzinger Straße 3-5;79111;Kreisfreie Stadt Freiburg im Breisgau;DE;;;;;Ja;community;manufacturer
+64b653baf5fc38000e51c7ab;Schupp GmbH & Co. KG;company;Glattalstr. 78;72280;Dornstetten-Aach;DE;+40 7443 / 243 0;;info@schupp-gmbh.de;https://www.schupp.shop;Ja;community;manufacturer
+67a478038cdddcff0fbc1c23;KARL STORZ SE & Co. KG;company;Dr.-Karl-Storz-Straße 34;78532;Tuttlingen;DE;+49 7461 708 0;;info@karlstorz.com;www.karlstorz.com;Ja;community;manufacturer
+64b6cdb116691d00245509c3;delmar Reynolds GmbH;company;Schwabacher Straße 34;90537;Feucht;DE;+49 9128 9160;;;;Ja;community;manufacturer
+5d3ae80ba159c577ac4b827a;ERBE Elektromedizin GmbH;company;Waldhoernlestr. 17;72072;Tübingen;DE;+49 7071 / 755-0;;info@erbe-med.com;https://de.erbe-med.com/;Ja;community;manufacturer
+66ce23e5d38ef6b4f45eba5f;Sprintex Trainingsgeräte GmbH;company;Hebelstraße 2a, Halle 3;79692;Kleines Wiesental;DE;+49 7622 6733722;;info@sprintex-treadmills.com;https://sprintex-treadmills.com;Ja;community;manufacturer
+64b6cf9716691d0024550c92;KAZ Europe Sàrl;company;Place Chauderon 18;CH-1030;Bussigny, Vaud;CH;;;Quality_EMEA@helenoftroy.com;;Ja;community;manufacturer
+64b6cff316691d0024550d39;Welch Allyn, Inc.;company;State Street 4341;13153;Skaneateles Falls, NY;US;+1 800-535-6663;;;;Ja;community;manufacturer
+64b65386f5fc38000e51c008;Braun GmbH;company;Frankfurter Straße 145;61476;Kronberg;DE;+49 6173 300;;;https://www.braun.de/de-de;Ja;community;manufacturer
+64b6ce3016691d0024550a96;Alsius Corporation;company;;;;US;;;;;Ja;community;manufacturer
+64b653c1f5fc38000e51c8b6;Thomas Hilfen für Körperbehinderte GmbH & Co. Medico KG;company;Walkmühlenstraße 1;27432;Bremervörde;DE;+49 4761 8860;;info@thomashilfen.de;http://www.thomashilfen.de/;Ja;community;manufacturer
+64b653bef5fc38000e51c83c;Störk Hausgeräte GmbH;company;Karl-Carstens-Straße 19;26419;Friesland;DE;;;;;Ja;community;manufacturer
+64b653a4f5fc38000e51c48a;L I N E T spol. s.r.o.;company;Želevčice 5;274 01;Slaný;CZ;+420 312 576 400;;obchodcr@linet.cz;https://www.linet.com/en;Ja;community;manufacturer
+5d3ae859a159c577fd9b735d;VBM Medizintechnik GmbH;company;Einsteinstraße 1;72172;Sulz a.N.;DE;+49 7454 95960;;info@vbm-medical.de;https://www.vbm-medical.de/;Ja;community;manufacturer
+64b6537df5fc38000e51be9c;Andreas Fahl Medizintechnik-Vertrieb GmbH;company;August-Horch-Straße 4A;51149;Köln;DE;+49 2203 29800;;vertrieb@fahl.de;https://www.fahl.com/;Ja;community;manufacturer
+64b6cdcc16691d00245509f1;Cardinal Health - Alaris Products;company;Morkels Close 918;1685;Morkels Cl Halfway House Midrand;ZA;+27 11 315 7437;;;;Ja;community;manufacturer
+64b6cdbd16691d00245509d8;Respironics Inc.;company;Murry Ridge Lane 1001;15668;Murry Ridge Ln Murrysville PA USA;US;;;;;Ja;community;manufacturer
+64b653b0f5fc38000e51c62b;Olympus Europa SE & Co. KG;company;Wendenstraße 20;20097;Hamburg;DE;+49 40 237730;;info@olympus-europa.com;http://www.olympus-europa.com/;Ja;community;manufacturer
+64b653c3f5fc38000e51c8ed;UniEquip Laborgerätebau und Vertriebs GmbH;company;Ammerseestr. 61a;82061;Neuried / München;DE;+49 157 874 80 888;;info@uniequip.com;www.uniequip.com;Ja;community;manufacturer
+64b653b0f5fc38000e51c62c;Olympus Medical Systems Corp.;company;2951 Ishikawa-cho;192-8507;Hachioji-shi, Tokyo;JP;+81 42 642 2111;;;www.olympus-global.com;Ja;community;manufacturer
+64b653b8f5fc38000e51c773;SYNTHES GmbH;company;Eimattstrasse 3;4436;Oberdorf;CH;+41 61 965 61 11;;EUDAMED_Enquiries@its.jnj.com;http://emea.depuysynthes.com/;Ja;community;manufacturer
+64b653b7f5fc38000e51c75d;SONY Corporation;company;1-7-1 Konan, Minato-ku;108-0075;Tokyo;JP;+81 3 6748 2111;;;http://www.sony.com/;Ja;community;manufacturer
+5d3ae807a159c577ac4b825c;Aloka Deutschland GmbH;company;Halskestraße 23;47877;Kreis Viersen;DE;+49 2154 954560;;;;Ja;community;manufacturer
+68ea2a35aa7e4768740f35cb;Abbott Vascular International BVBA;company;Park Lane Culliganlaan 2B;1831;´Diegem;BE;+32 2 714 14 11;;;www.abbott.com;Ja;community;manufacturer
+64b65385f5fc38000e51bfd3;Biochrom Ltd.;company;Unit 7, Enterprise Zone 3970 Cambridge Research Park, Beach Drive;CB25 9PE;Cambridge;GB;+44 1223 228500;;enquiries@biochrom.co.uk;http://www.biochrom.co.uk;Ja;community;manufacturer
+64b6cda816691d00245509b3;Marquette Hellige GmbH;company;;;;DE;;;;;Ja;community;manufacturer
+64b6539af5fc38000e51c323;Andreas Hettich GmbH;company;Föhrenstraße 12;78532;Tuttlingen;DE;+49 7461 7050;;info@hettichlab.com;https://www.hettichlab.com/;Ja;community;manufacturer
+64b6ce0416691d0024550a4e;Will;company;Talbahnstraße 1;57562;Altenkirchen;DE;;;;;Ja;community;manufacturer
+64b65390f5fc38000e51c189;ELCAT GmbH;company;Bgm.-Finsterwalder-Ring 27;82515;Wolfratshausen;DE;+ 49 08171 4214-0;;kontakt@elcat.de;https://www.elcat.de/;Ja;community;manufacturer
+64b65387f5fc38000e51c027;Becton Dickinson GmbH;company;Tullastr. 8-12;69126;Heidelberg;DE;+49 6221 305 0;;bd.de@bd.com;https://www.bd.com/de-de;Ja;community;manufacturer
+64b65391f5fc38000e51c1b4;EWALD Innovationstechnik AG;company;Am Eichenhain 2;31552;Rodenberg;DE;0 57 23 – 7496-0;;info@ewald-medilab.de;https://www.ewald-medilab.de/;Ja;community;manufacturer
+67c519721e2bbc7b9c5c7a8e;Sharp Corporation;company;1 Takumi-cho, Sakai-ku,;590-8522;Sakai City, Osaka;JP;+81 72 282 1221;;;https://ph.sharp/;Ja;community;manufacturer
+6762cab5b89414866a65448b;Acteon Group;company;;;;DE;;;;;Ja;community;manufacturer
+679895933b3e52059494d1b9;Philips Medizin Systeme Böblingen GmbH;company;Hewlett-Packard-Straße 2;71034;Böblingen;DE;+49 7031 463-0;;medizin.infoline@philips.com;http://www.philips.de/healthcare;Ja;community;manufacturer
+64b653aef5fc38000e51c5f2;Nihon Kohden Corporation;company;;161-0031;1-chōme-31-4 Nishiochiai Shinjuku City Tokyo;JP;+81 3-5996-8000;;;http://www.nihonkohden.co.jp/;Ja;community;manufacturer
+5d3ae85ca159c577fd9b7375;GE Healthcare Ultraschall Deutschland GmbH;company;Beethovenstraße 239;42655;Kreisfreie Stadt Solingen;DE;+49 211 73744400;;;http://www.gehealthcare.com/;Ja;community;manufacturer
+64b6ce4916691d0024550ac4;GE Medical Systems Israel Ltd.;company;;;;IL;;;;;Ja;community;manufacturer
+64b653c5f5fc38000e51c92b;Vision Engineering Ltd;company;Anton-Pendele-Straße 3;82275;Emmering;DE;+49 8141 40167-0;;info@visioneng.de;https://www.visioneng.de/;Ja;community;manufacturer
+64b65398f5fc38000e51c2d3;HNE Healthcare GmbH;company;Peter-Sander-Straße 10;55252;Kreisfreie Stadt Wiesbaden;DE;+49 6134 1860;;;https://www.arjo.com/de-de/;Ja;community;manufacturer
+64b653bbf5fc38000e51c7dd;Shenzhen Mindray Bio-Medical Electronics Co., Ltd.;company;Mindray Building, Keji 12th Road South, High-tech industrial park;518057;Nanshan, Shenzhen;CN;+86 755 81888998;;service@mindray.com;www.mindray.com;Ja;community;manufacturer
+5d3ae807a159c577ac4b8257;Heraeus Med GmbH;company;Philipp-Reis-Str. 8-13;61273;Wehrheim;DE;+49 (0) 6181 35-3399;;contact.medical@heraeus.com;http://www.heraeus.com/;Ja;community;manufacturer
+6697baac657e813ae6292a03;Heraeus Medical GmbH;company;Philipp-Reis-Str. 8-13;61273;Wehrheim;DE;+496181352958;;prrc-hme@heraeus.com;;Ja;community;manufacturer
+68f8db30ef04ab932759505f;adeor medical AG;company;;;;DE;;;;;Ja;community;manufacturer
+5d3ae844a159c577fd9b728d;GE Healthcare GmbH;company;Bleichstraße 64-66;80807;Munchen;DE;+49 211 73744400;;eudamed@gehealthcare.com;http://www.gehealthcare.com/;Ja;community;manufacturer
+64b6569af5fc38000e51d72d;AirSep Corporation;company;260 Creekside Dr.;14228-2075;Buffalo, NY;US;+1 716 691 0202;;info@airsep.com;https://www.caireinc.com/commercial/;Ja;community;manufacturer
+64b653c8f5fc38000e51c98a;Wissner-Bosserhoff GmbH;company;Hauptstraße 4-6;58739;Wickede (Ruhr);DE;+49(0)2377/784-0;;info@wi-bo.de;https://www.wi-bo.com/de;Ja;community;manufacturer
+64b653c5f5fc38000e51c933;Vitalograph GmbH;company;;;;DE;;;;;Ja;community;manufacturer
+5d3ae85ca159c577fd9b7375;GE Healthcare Ultraschall Deutschland GmbH;company;Beethovenstraße 239;42655;Kreisfreie Stadt Solingen;DE;+49 211 73744400;;;http://www.gehealthcare.com/;Ja;community;manufacturer
+64b6cffb16691d0024550d46;GE Ultrasound Korea, Ltd.;company;;13204;9 Sunhwan-ro 214beon-gil Jungwon-gu Seongnam-si Gyeonggi-do;KR;+82 31-740-6112;;;http://www.aicom.univer.se/;Ja;community;manufacturer
+64b653ccf5fc38000e51ca01;neoLab Migge Laborbedarf-Vertriebs GmbH;company;Rischerstraße 7-9;69123;Heidelberg;DE;+49 6221 844255;;info@neolab.de;www.neolab.de;Ja;community;manufacturer
+64b6cebb16691d0024550b72;GE Healthcare - Global Headquarters;company;Nightingales Lane;HP8 4SP;Pollards Wood Nightingales Ln Chalfont Saint Giles UK;GB;;;;;Ja;community;manufacturer
+64b653b2f5fc38000e51c68b;Philips International B.V.;company;High Tech Campus 52;5656 AG;Eindhoven;NL;+31 20 597 7777;;;https://www.philips.com;Ja;community;manufacturer
+64b653bff5fc38000e51c85c;TANITA Corporation;company;;;;;;;;;Ja;community;manufacturer
+65bcb43b4b60dd0e34d897a3;WEINMANN Emergency Medical Technology GmbH + Co. KG;company;Frohbösestraße 12;22525;Hamburg;DE;+49 40 88 18 96 - 0;;info@weinmann-emt.de;www.weinmann-emergency.de;Ja;community;manufacturer
+67920008c017c7ba4e84ea14;ATMOS MedizinTechnik GmbH & Co. KG;company;Ludwig-Kegel-Str. 16;79853;Lenzkirch;DE;+49 7653 689 - 0;;atmos@atmosmed.de;www.atmosmed.de;Ja;community;manufacturer
+64b6ce6a16691d0024550af5;Thermo Fisher Scientific Inc.;company;3rd Avenue 168;02451;Waltham, MA;US;+1 781-622-1045;;;https://www.thermofisher.com/;Ja;community;manufacturer
+5d3ae8b0a159c577fd9b76af;Covidien Deutschland GmbH;company;Gewerbepark 1;93333;Kelheim;DE;+49 9445 9590;;;https://www.medtronic.com/de-de/ueber/standorte/produktionsstandort-covidien.html;Ja;community;manufacturer
+64b6cdbd16691d00245509d9;Mallinckrodt Medical GmbH;company;Josef-Dietzgen-Straße 1-3;53773;Rhein-Sieg-Kreis;DE;;;;;Ja;community;manufacturer
+64b653adf5fc38000e51c5b7;NDS Surgical Imaging, LLC.;company;Hellyer Avenue 5750;95138;San Jose, CA;US;+ 1 408 776 0085;;info@ndssi.com;www.ndssi.com;Ja;community;manufacturer
+64b653a1f5fc38000e51c44f;LSK-Wintrich Desinfektions- und Dosiertechnik GmbH;company;Weidenring 11;64625;Bensheim;DE;+49 6251 1730;;info@lsk-wintrich.de;www.lsk-wintrich.de;Ja;community;manufacturer
+64b653caf5fc38000e51c9b3;Zoll Medical Corporation;company;269 Mill Road;01824;Chelmsford, MA;US;+1 978 421 9655;;;http://www.zoll.com;Ja;community;manufacturer
+64b653bff5fc38000e51c872;TOSHIBA Medical Systems GmbH;company;Hellersbergstr. 4;41460;Neuss;DE;+49 2131 1809 0;;info@toshiba-medical.de;www.toshiba-medical.de;Ja;community;manufacturer
+5d3ae8a8a159c577fd9b765d;Agfa HealthCare GmbH;company;Paul-Thomas-Straße 58;40599;Düsseldorf;DE;+49 211 229860;;info-medimg.dach@agfa.com;http://www.agfa.de/;Ja;community;manufacturer
+64b653b8f5fc38000e51c774;SYSMEX Deutschland GmbH;company;Bornbarch 1;22848;Segeberg;DE;+49 40 5341020;;;https://www.sysmex.de/;Ja;community;manufacturer
+68e9450a9bb9f01aff495d9c;Seiko Epson Corporation;company;3-3-5 Owa, Suwa-shi;392-8502;Nagano;JP;+81 266 52 3131;;;https://corporate.epson/en/;Ja;community;manufacturer
+64b6d00d16691d0024550d6c;Xuzhou Yongkang Electronic Science Technology Co., Ltd;company;;;;CN;;;;;Ja;community;manufacturer
+64b653bbf5fc38000e51c7e2;Shimadzu Deutschland GmbH;company;Keniastraße 38;47269;Duisburg;DE;+49 203 76870;;;https://www.shimadzu.de/;Ja;community;manufacturer
+64b653aef5fc38000e51c5db;Neomed Medizintechnik GmbH;company;;;;DE;;;;;Ja;community;manufacturer
+64b6ce0e16691d0024550a5e;Weinmann Geräte für Medizin GmbH & Co. KG;company;;;;DE;;;;;Ja;community;manufacturer
+64b65398f5fc38000e51c2c3;HERMLE Labortechnik GmbH;company;Siemensstraße 25;78564;Wehingen;DE;+49 7426 9622 0;;info@hermlelt.de;www.hermle-labortechnik.de;Ja;community;manufacturer
+67c4b84406b0f9f2c2ff9169;Philips GmbH Market DACH;company;Röntgenstr. 22;22335;Hamburg;DE;+49 40 - 28 99 0;;Unternehmenskommunikation@philips.com;https://www.philips.de;Ja;community;manufacturer
+687c35df5c394728683952e3;Philips Medical Systems Nederland B.V.;company;Veenpluis 6;5684PC;Best;NL;+31 40 2791111;;;www.philips.com/global;Ja;community;manufacturer
+64b653caf5fc38000e51c9b0;Zimmer MedizinSysteme GmbH;company;Junkersstraße 9;89231;Neu-Ulm;DE;+49 731 9761 0;;info@zimmer.de;https://www.zimmer.de;Ja;community;manufacturer
+67a478038cdddcff0fbc1c23;KARL STORZ SE & Co. KG;company;Dr.-Karl-Storz-Straße 34;78532;Tuttlingen;DE;+49 7461 708 0;;info@karlstorz.com;www.karlstorz.com;Ja;community;manufacturer
+5d3ae84aa159c577fd9b72c8;Löwenstein Medical GmbH & Co. KG;company;Mühlenstraße 39;55543;Bad Kreuznach;DE;+49 671 48316975;;;https://loewensteinmedical.com/;Ja;community;manufacturer
+64b6cf3c16691d0024550c0f;Northern Digital Inc.;company;Randall Drive 103;N2V 1C5;Waterloo;CA;+1 519-884-5142;;;https://www.ndigital.com/;Ja;community;manufacturer
+64b65383f5fc38000e51bf82;BK Medical ApS;company;Mileparken 34;2730;Herlev;DK;+45 4452 8100;;eudamed@gehealthcare.com;http://www.bkmedical.com/;Ja;community;manufacturer
+64b653c2f5fc38000e51c8d3;TuR Elektromedizin GmbH;company;;;;DE;;;;;Ja;community;manufacturer
+5d3ae849a159c577fd9b72bb;custo med GmbH;company;Maria-Merian-Straße 6;85521;Ottobrunn;DE;+49 89 710 98 00;;info@customed.de;http://www.customed.de/;Ja;community;manufacturer
+5d3ae84ea159c577fd9b72e9;Ergoline GmbH;company;Lindenstraße 5;72475;Bitz;DE;+49 7431 9894 0;;info@ergoline.com;www.ergoline.com;Ja;community;manufacturer
+65b906b74b60dd000f566b3f;Löwenstein Medical Innovation GmbH & Co.KG;company;Weißkirchener Str. 1;61449;Steinbach;DE;06171 9787-0;;info.steinbach@loewensteinmedical.com;https://loewensteinmedical.de;Ja;manufacturer;manufacturer
+64b6539bf5fc38000e51c34f;Hydrosun Medizintechnik GmbH;company;Mauchener Straße 14;79379;Müllheim;DE;+49 7631 366320;;info@hydrosun.de;www.hydrosun.de;Ja;community;manufacturer
+64b653b7f5fc38000e51c749;Shenzhen Biocare Bio-Medical Equipment Co., Ltd;company;;;;CN;;;;;Ja;community;manufacturer
+64b65384f5fc38000e51bfa6;Baxter Medical Systems GmbH & Co. KG;company;Carl-Zeiss-Straße 7-9;07318;Saalfeld;DE;+49 3671 586-0;;hrc_trumpf_info@baxter.com;https://www.baxter.de/de;Ja;community;manufacturer
+64b65391f5fc38000e51c1c2;EDAN Instruments, Inc.;company;Jinsha Shequ Jinhui Road 15;518122;Shenzhen;CN;+86 755 2689 8326;;info@edan.com.cn;www.edan.com.cn;Ja;community;manufacturer
+64b653cbf5fc38000e51c9e8;ilcon GmbH;company;Hertzstraße 1-3;27318;Landkreis Nienburg/Weser;DE;+49 4251 81661010;;info@ilcon.com;https://www.en.ilcon.com/;Ja;community;manufacturer
+64b6539ff5fc38000e51c412;Konica Minolta Medical & Graphic Imaging Europe GmbH;company;Einsteinring 1;85609;München;DE;+49 89 748310;;;https://www.konicaminolta.de/de-de;Ja;community;manufacturer
+5d3ae809a159c577ac4b826f;KLS Martin GmbH & Co. KG;company;Am Flughafen 18;79108;Kreisfreie Stadt Freiburg im Breisgau;DE;+49 761 5579970;;;http://www.klsmartin.com/;Ja;community;manufacturer
+64b653ccf5fc38000e51c9f8;medin GmbH;company;Lindberghstraße 1;82178;Fürstenfeldbruck;DE;;;;;Ja;community;manufacturer
+64b65392f5fc38000e51c1ef;Esaote Biomedica Deutschland GmbH;company;Max- Planck-Str. 27 a;50858;Köln;DE;+49 2234 6885600;;info.germany@esaote.com;https://www2.esaote.com/de-DE;Ja;community;manufacturer
+65091478ec69a5001178667b;Quantium Medical S.L.U.;company;Avinguda d'Ernest Lluch 32;08302;Tecnocampus Torre 2 Mataró Barcelona;ES;+34 937 02 19 50;;;;Ja;community;manufacturer
+64b653b5f5fc38000e51c6f8;Rehder / Partner GmbH;company;;;;DE;;;;;Ja;community;manufacturer
+64b65384f5fc38000e51bfb6;Beijing Choice Electronic Technology Co., Ltd;company;Building No. 2 (2nd floor), 9 Shuangyuan Road;100041;Beijing;CN;+86-10-88204630/31;;market@choicemmed.com;;Ja;community;manufacturer
+64b65399f5fc38000e51c305;HeartSine Technologies, Ltd. gehört zu Stryker;company;Dr.-Homer-Stryker-Platz 1;47228;Duisburg;DE;+49 (0) 2065 837-0;;info-deutschland@stryker.com;https://de.heartsine.com/about-us/;Ja;community;manufacturer
+5d3ae809a159c577ac4b8266;seca GmbH & Co. KG;company;Hammer Steindamm 3-25;22089;Hamburg;DE;+49 40 2000000;;info@seca.com;www.seca.com;Ja;community;manufacturer
+64b6537ef5fc38000e51bece;Amann Girrbach AG;company;Gewerbestraße 10;6841;Mäder;AT;+43 59 301;;austria@amanngirrbach.com;https://www.amanngirrbach.com/de-de/;Ja;community;manufacturer
