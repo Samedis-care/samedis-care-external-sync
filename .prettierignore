@@ -1,0 +1,3 @@
+# Ignore C# project files
+*.csproj
+*.sln

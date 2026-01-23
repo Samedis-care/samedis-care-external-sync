@@ -1,0 +1,25 @@
+<Project Sdk="Microsoft.NET.Sdk">
+	<PropertyGroup>
+		<OutputType>Exe</OutputType>
+		<TargetFramework>net8.0</TargetFramework>
+		<RootNamespace>SamedisExternalSync</RootNamespace>
+		<ImplicitUsings>enable</ImplicitUsings>
+		<Nullable>enable</Nullable>
+		<!--
+		<PublishSingleFile>true</PublishSingleFile>
+		<SelfContained>true</SelfContained>
+		<RuntimeIdentifier>win-x64</RuntimeIdentifier>
+		<RuntimeIdentifier>linux-x64</RuntimeIdentifier>
+		<RuntimeIdentifier>osx-x64</RuntimeIdentifier>
+		<DebugType>embedded</DebugType>
+		-->
+	</PropertyGroup>
+	<ItemGroup>
+		<PackageReference Include="CsvHelper" Version="32.0.3" />
+		<PackageReference Include="ExcelDataReader" Version="3.6.0" />
+		<PackageReference Include="ExcelDataReader.DataSet" Version="3.6.0" />
+		<PackageReference Include="Newtonsoft.Json" Version="13.0.2" />
+		<PackageReference Include="RestSharp" Version="112.1.0" />
+		<PackageReference Include="YamlDotNet" Version="13.7.1" />
+	</ItemGroup>
+</Project>
