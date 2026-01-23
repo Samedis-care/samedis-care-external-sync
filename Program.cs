@@ -88,16 +88,9 @@ internal class Program
       filterBuilder.Clear();
       // filterBuilder.Add("updated_at", FilterBuilder.FilterType.GreaterThan, FilterBuilder.Type.Date, lastRun);
 
-      var taskTypeFilter = config.Sync.TaskDownloadTypes != null && config.Sync.TaskDownloadTypes.Count > 0
-        ? $"&filter[issue_type]={string.Join(",", config.Sync.TaskDownloadTypes)}"
-        : "";
+      var taskTypeFilter = $"&filter[issue_type]={string.Join(",", config.Sync.TaskDownloadTypes)}";
       var archiveFilter = $"&filter[archive]={config.Sync.TaskArchiveFilter.ToString().ToLower()}";
-      var statusValues = (config.Sync.TaskDownloadStatus != null && config.Sync.TaskDownloadStatus.Count > 0)
-        ? config.Sync.TaskDownloadStatus
-        : ["done"];
-      var statusFilter = statusValues.Count > 0
-        ? $"&filter[status]={string.Join(",", statusValues)}"
-        : "";
+      var statusFilter = $"&filter[status]={string.Join(",", config.Sync.TaskDownloadStatus)}";
 
       var requestResource = urlResource + $"?page[number]=1&page[limit]=0&quickfilter=&gridfilter={filterBuilder.Get()}{archiveFilter}{taskTypeFilter}{statusFilter}";
       var response = samedisClient.Get(requestResource);
