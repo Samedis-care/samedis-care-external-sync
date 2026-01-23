@@ -58,6 +58,11 @@ namespace SamedisExternalSync
     public bool DeviceModels { get; set; } = true;
     public bool Contacts { get; set; } = false;
 
+    public bool DepartmentsDownload { get; set; } = false;
+    public bool DepartmentsUpload { get; set; } = false;
+    public bool LocationsDownload { get; set; } = false;
+    public bool LocationsUpload { get; set; } = false;
+
     public bool InventoriesDownload { get; set; } = false;
     public bool InventoriesUpload { get; set; } = false;
     public bool TasksDownload { get; set; } = false;

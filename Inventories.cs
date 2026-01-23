@@ -25,44 +25,20 @@ namespace SamedisExternalSync
       [JsonProperty("external_id")]
       public string? ExternalId { get; set; }
 
-      [JsonProperty("variant")]
-      public string? Variant { get; set; }
-
       [JsonProperty("device_type_title")]
       public string? DeviceTypeTitle { get; set; }
-
-      [JsonProperty("device_type_id")]
-      public string? DeviceTypeId { get; set; }
-
-      [JsonProperty("catalog_type_device_title")]
-      public string? CatalogTypeDeviceTitle { get; set; }
-
-      [JsonProperty("catalog_manufacturer_according_to_type_plate")]
-      public string? CatalogManufacturerAccordingToTypePlate { get; set; }
 
       [JsonProperty("device_model_current_responsible_manufacturer")]
       public string? DeviceModelCurrentResponsibleManufacturer { get; set; }
 
-      [JsonProperty("catalog_current_responsible_manufacturer")]
-      public string? CatalogCurrentResponsibleManufacturer { get; set; }
-
       [JsonProperty("device_model_risk_level")]
       public string? DeviceModelRiskLevel { get; set; }
-
-      [JsonProperty("catalog_risk_level")]
-      public string? CatalogRiskLevel { get; set; }
 
       [JsonProperty("device_model_notified_body_ce")]
       public string? DeviceModelNotifiedBodyCe { get; set; }
 
-      [JsonProperty("catalog_notified_body_ce")]
-      public string? CatalogNotifiedBodyCe { get; set; }
-
       [JsonProperty("device_model_operator_ordinance")]
       public string? DeviceModelOperatorOrdinance { get; set; }
-
-      [JsonProperty("catalog_operator_ordinance")]
-      public string? CatalogOperatorOrdinance { get; set; }
 
       [JsonProperty("device_model_trust_level")]
       public string? DeviceModelTrustLevel { get; set; }
@@ -72,9 +48,6 @@ namespace SamedisExternalSync
 
       [JsonProperty("device_model_version_number")]
       public int? DeviceModelVersionNumber { get; set; }
-
-      [JsonProperty("device_model_id")]
-      public string? DeviceModelId { get; set; }
 
       [JsonProperty("date_of_acquisition")]
       public string? DateOfAcquisition { get; set; }
@@ -100,17 +73,26 @@ namespace SamedisExternalSync
       [JsonProperty("last_maintenance")]
       public string? LastMaintenance { get; set; }
 
+      [JsonProperty("last_maintenance_at")]
+      public string? LastMaintenanceAt { get; set; }
+
+      [JsonProperty("last_maintenance_issue_id")]
+      public string? LastMaintenanceIssueId { get; set; }
+
       [JsonProperty("next_maintenance")]
       public string? NextMaintenance { get; set; }
+
+      [JsonProperty("next_maintenance_at")]
+      public string? NextMaintenanceAt { get; set; }
+
+      [JsonProperty("next_maintenance_issue_id")]
+      public string? NextMaintenanceIssueId { get; set; }
 
       [JsonProperty("next_inspection_at")]
       public string? NextInspectionAt { get; set; }
 
       [JsonProperty("no_medical_device")]
       public bool NoMedicalDevice { get; set; }
-
-      [JsonProperty("medical_device")]
-      public bool MedicalDevice { get; set; }
 
       [JsonProperty("comments_field")]
       public string? CommentsField { get; set; }
@@ -136,8 +118,8 @@ namespace SamedisExternalSync
       [JsonProperty("device_location_title")]
       public string? DeviceLocationTitle { get; set; }
 
-      [JsonProperty("location_id")]
-      public string? LocationId { get; set; }
+      [JsonProperty("device_location_id")]
+      public string? DeviceLocationId { get; set; }
 
       [JsonProperty("device_location_path")]
       public string? DeviceLocationPath { get; set; }
@@ -168,6 +150,9 @@ namespace SamedisExternalSync
 
       [JsonProperty("main_inventory_number")]
       public string? MainInventoryNumber { get; set; }
+
+      [JsonProperty("main_inventory_id")]
+      public string? MainInventoryId { get; set; }
 
       [JsonProperty("device_condition")]
       public string? DeviceCondition { get; set; }
@@ -253,23 +238,11 @@ namespace SamedisExternalSync
       [JsonProperty("device_model_title")]
       public string? DeviceModelTitle { get; set; }
 
-      [JsonProperty("catalog_device_form_title")]
-      public string? CatalogDeviceFormTitle { get; set; }
-
       [JsonProperty("device_model_manufacturer_according_to_type_plate")]
       public string? DeviceModelManufacturerAccordingToTypePlate { get; set; }
 
-      [JsonProperty("manufacturer_id")]
-      public string? ManufacturerId { get; set; }
-
       [JsonProperty("device_type_title_labels")]
       public Dictionary<string, string>? DeviceTypeTitleLabels { get; set; }
-
-      [JsonProperty("catalog_type_catalog_titles")]
-      public List<string>? CatalogTypeCatalogTitles { get; set; }
-
-      [JsonProperty("catalog_device_picture")]
-      public string? CatalogDevicePicture { get; set; }
 
       [JsonProperty("device_model_image")]
       public string? DeviceModelImage { get; set; }
@@ -282,6 +255,39 @@ namespace SamedisExternalSync
 
       [JsonProperty("regulatory")]
       public Dictionary<string, string>? Regulatory { get; set; }
+
+      [JsonProperty("parent_device_model_combo_search")]
+      public string? ParentDeviceModelComboSearch { get; set; }
+
+      [JsonProperty("parent_device_model_title")]
+      public string? ParentDeviceModelTitle { get; set; }
+
+      [JsonProperty("parent_device_type_title")]
+      public string? ParentDeviceTypeTitle { get; set; }
+
+      [JsonProperty("parent_manufacturer_according_to_type_plate")]
+      public string? ParentManufacturerAccordingToTypePlate { get; set; }
+
+      [JsonProperty("placeholder_device_model_manufacturer")]
+      public string? PlaceholderDeviceModelManufacturer { get; set; }
+
+      [JsonProperty("placeholder_device_model_title")]
+      public string? PlaceholderDeviceModelTitle { get; set; }
+
+      [JsonProperty("placeholder_device_type_title")]
+      public string? PlaceholderDeviceTypeTitle { get; set; }
+
+      [JsonProperty("service_company_ids")]
+      public List<string>? ServiceCompanyIds { get; set; }
+
+      [JsonProperty("team_ids")]
+      public List<string>? TeamIds { get; set; }
+
+      [JsonProperty("updated_by_user_at")]
+      public string? UpdatedByUserAt { get; set; }
+
+      [JsonProperty("urn")]
+      public string? Urn { get; set; }
     }
 
     public class Data
@@ -366,15 +372,13 @@ namespace SamedisExternalSync
       dt.Columns.Add("external_id", typeof(string));
       dt.Columns.Add("inventory_number", typeof(string));           // device_number
       dt.Columns.Add("serial_number", typeof(string));              // serial_number
+      dt.Columns.Add("catalog_id", typeof(string));                 // device_model_catalog_id
       dt.Columns.Add("title", typeof(string));                      // device_model_title
-      dt.Columns.Add("device_model_id", typeof(string));            // device_model_id
-      dt.Columns.Add("device_type_id", typeof(string));             // device_type_id
       dt.Columns.Add("device_type_title", typeof(string));          // device_type_title
-      dt.Columns.Add("manufacturer_id", typeof(string));            // manufacturer_id
       dt.Columns.Add("manufacturer", typeof(string));               // device_model_manufacturer_according_to_type_plate
       dt.Columns.Add("responsible_manufacturer", typeof(string));   // device_model_current_responsible_manufacturer
       dt.Columns.Add("facility_name", typeof(string));              // tenant_name
-      dt.Columns.Add("location_id", typeof(string));                // location_id
+      dt.Columns.Add("location_id", typeof(string));                // device_location_id
       dt.Columns.Add("location", typeof(string));                   // device_location_title
       dt.Columns.Add("department_id", typeof(string));              // department_id
       dt.Columns.Add("department", typeof(string));                 // device_location_path
@@ -385,7 +389,6 @@ namespace SamedisExternalSync
       dt.Columns.Add("operation_status", typeof(string));
       dt.Columns.Add("last_maintenance", typeof(string));
       dt.Columns.Add("next_maintenance", typeof(string));
-      dt.Columns.Add("medical_device", typeof(string));
       dt.Columns.Add("ce_marking", typeof(string));                 // regulatory.ce
       dt.Columns.Add("ce_notified_body", typeof(string));           // device_model_notified_body_ce
       dt.Columns.Add("according_to_annex", typeof(string));         // device_model_operator_ordinance
@@ -425,15 +428,13 @@ namespace SamedisExternalSync
         row["external_id"] = attr.ExternalId ?? "";
         row["inventory_number"] = attr.DeviceNumber ?? "";
         row["serial_number"] = attr.SerialNumber ?? "";
+        row["catalog_id"] = attr.CatalogId ?? "";
         row["title"] = attr.DeviceModelTitle ?? "";
-        row["device_model_id"] = attr.DeviceModelId ?? "";
-        row["device_type_id"] = attr.DeviceTypeId ?? "";
         row["device_type_title"] = attr.DeviceTypeTitle ?? "";
-        row["manufacturer_id"] = attr.ManufacturerId ?? "";
         row["manufacturer"] = attr.DeviceModelManufacturerAccordingToTypePlate ?? "";
         row["responsible_manufacturer"] = attr.DeviceModelCurrentResponsibleManufacturer ?? "";
         row["facility_name"] = attr.TenantName ?? "";
-        row["location_id"] = attr.LocationId ?? "";
+        row["location_id"] = attr.DeviceLocationId ?? "";
         row["location"] = attr.DeviceLocationTitle ?? "";
         row["department_id"] = attr.DepartmentId ?? "";
         row["department"] = attr.DepartmentTitle ?? "";
@@ -444,7 +445,6 @@ namespace SamedisExternalSync
         row["operation_status"] = attr.OperationStatus ?? "";
         row["last_maintenance"] = attr.LastMaintenance ?? "";
         row["next_maintenance"] = attr.NextMaintenance ?? "";
-        row["medical_device"] = attr.MedicalDevice ? "Yes" : "No";
         row["ce_marking"] = (attr.Regulatory != null && attr.Regulatory.ContainsKey("ce")) ? "Yes" : "No";
         row["ce_notified_body"] = attr.DeviceModelNotifiedBodyCe ?? "";
         row["according_to_annex"] = Helper.OrdinanceMap(attr.DeviceModelOperatorOrdinance ?? string.Empty);
