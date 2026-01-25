@@ -18,20 +18,11 @@ sync:
   inventories_upload: false
   tasks_download: false
   tasks_upload: false
+  # malfunction, maintenance, device_retired, recommission_device, occurrence, security_message
   task_download_types: maintenance
-  # task_download_types: malfunction
-  # task_download_types: device_retired
-  # task_download_types: recommission_device
-  # task_download_types: occurrence
-  # task_download_types: security_message
   task_archive_filter: true
+  # _new, pending, in_progress, due_in_6week, elapsed, not_done
   task_download_status: done
-  # task_download_status: _new
-  # task_download_status: pending
-  # task_download_status: in_progress
-  # task_download_status: due_in_6week
-  # task_download_status: elapsed
-  # task_download_status: not_done
   tickets_download: false
   tickets_upload: false
   trainings: false
