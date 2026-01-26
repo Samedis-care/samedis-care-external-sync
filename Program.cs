@@ -86,7 +86,7 @@ internal class Program
 
       var filterBuilder = new FilterBuilder();
       filterBuilder.Clear();
-      // filterBuilder.Add("updated_at", FilterBuilder.FilterType.GreaterThan, FilterBuilder.Type.Date, lastRun);
+      filterBuilder.Add("updated_at", FilterBuilder.FilterType.GreaterThan, FilterBuilder.Type.Date, lastRun);
 
       var taskTypeFilter = $"&filter[issue_type]={string.Join(",", config.Sync.TaskDownloadTypes)}";
       var archiveFilter = $"&filter[archive]={config.Sync.TaskArchiveFilter.ToString().ToLower()}";
@@ -205,6 +205,56 @@ internal class Program
             }
           }
         }
+      }
+    }
+    #endregion
+
+    #region Requests Upload
+    if (!config.Sync.RequestsUpload)
+    {
+      helper.Message("Requests Upload sync disabled in config.yml", 1);
+    }
+    else
+    {
+      helper.Message("Requests Upload sync enabled but not implemented.", 1, "WARN");
+    }
+    #endregion
+
+    #region Requests Download
+    if (!config.Sync.RequestsDownload)
+    {
+      helper.Message("Requests Download sync disabled in config.yml", 1);
+    }
+    else
+    {
+      helper.Message("Requests Download sync starting.");
+      var urlResource = $"/api/{config.Samedis.ApiVersion}/tenants/{config.Samedis.TenantId}/incidents";
+      helper.CanDo(samedisClient, urlResource);
+
+      var filterBuilder = new FilterBuilder();
+      filterBuilder.Clear();
+      //filterBuilder.Add("updated_at", FilterBuilder.FilterType.GreaterThan, FilterBuilder.Type.Date, lastRun);
+
+      var requestResource = urlResource + $"?page[number]=1&page[limit]=0&quickfilter=&gridfilter={filterBuilder.Get()}";
+      var response = samedisClient.Get(requestResource);
+      var requestList = JsonConvert.DeserializeObject<Requests.Root>(response);
+      var totalRecords = requestList == null ? 0 : requestList.Meta.Total;
+      var pages = totalRecords % pageSize != 0 ? totalRecords / pageSize + 1 : totalRecords / pageSize;
+
+      helper.Message($"Status Code: {samedisClient.StatusCode} {samedisClient.Status}", 2);
+      helper.Message($"Total: {totalRecords} Pages: {pages}", 2);
+
+      for (var page = 1; page <= pages; page++)
+      {
+        requestResource = urlResource + $"?page[number]={page}&page[limit]={pageSize}&quickfilter=&gridfilter={filterBuilder.Get()}";
+        response = samedisClient.Get(requestResource);
+        helper.Message($"Page {page}", 2);
+        helper.Message($"Status Code: {samedisClient.StatusCode} {samedisClient.Status}", 2);
+
+        if (string.IsNullOrEmpty(response)) continue;
+        var rDs = Requests.CreateRequestDataSet();
+        Requests.FillRequestDataSet(rDs, response);
+        Helper.ExportDataSetToCsv(rDs, "data/requests.csv", "Requests");
       }
     }
     #endregion

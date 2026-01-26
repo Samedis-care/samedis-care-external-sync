@@ -70,8 +70,8 @@ namespace SamedisExternalSync
     public string? TaskDownloadTypes { get; set; } = "maintenance";
     public bool TaskArchiveFilter { get; set; } = true;
     public string? TaskDownloadStatus { get; set; } = "done";
-    public bool TicketsDownload { get; set; } = false;
-    public bool TicketsUpload { get; set; } = false;
+    public bool RequestsDownload { get; set; } = false;
+    public bool RequestsUpload { get; set; } = false;
     public bool Trainings { get; set; } = false;
   }
 }
