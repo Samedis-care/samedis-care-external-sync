@@ -23,8 +23,8 @@ sync:
   task_archive_filter: true
   # _new, pending, in_progress, due_in_6week, elapsed, not_done
   task_download_status: done
-  tickets_download: false
-  tickets_upload: false
+  requests_download: false
+  requests_upload: false
   trainings: false
 logging:
   # 0: off 1: on 2: debug
