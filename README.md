@@ -1,26 +1,110 @@
-# samedis-care-catalog-sync
+# samedis-care-external-sync
 
-.Net Core project to read excel file or query from any sql server source and insert or update staff records.
-You can fork with project and modify it to your own needs.
+SamedisExternalSync is a .NET 8 console application that syncs data from the Samedis API and exports it to CSV files. It supports downloading device types, departments, locations, device models, inventories, tasks, and requests, and can download task documents and protocols when enabled. Upload flows are present as flags but are not implemented yet.
 
-## Setup
+> **TODO** Extend this project to also handle read csv files to update data in Samedis.care using proper API calls.
 
-1. Copy and modify `config.yml.example` to `config.yml`
-2. Adjust settings in `config.yml`
-3. Compile the application to your target OS, modify `SamedisExternalSync.csproj` to your requirements
-   - Follow https://learn.microsoft.com/en-us/dotnet/core/deploying/single-file/overview?tabs=cli for more details on compile and deploy
-4. Run the application manually or setup a `cron task` or `task` on windows systems.
+## Requirements
 
-## Proxy server support
+- .NET SDK 8.0
+- Samedis API credentials (client id/secret and tenant id)
+- Network access to the Samedis API and identity endpoints
 
-To access Samedis.care you need internet access. If this requires a proxy server you can configure your settings in the `config.yml` section of `http`.
+## Installation and setup
 
-```
-  proxy: ""
-  proxy_username: ""
-  proxy_password: ""
+1. Copy the example config to a working config file:
+
+```bash
+cp config.yml.example config.yml
 ```
 
-## WIP
+2. Edit `config.yml` and fill in your auth and tenant settings.
+3. Run the application from the repo root so it can find `config.yml`.
 
-> Documentation pending, when project first steps done.
+## Configuration (config.yml)
+
+`config.yml` is required and must be located in the working directory when the app starts. The config is loaded with underscored (snake_case) keys.
+
+### auth
+
+- `uri`: Identity service base URL (for example `https://ident.services`).
+- `client_id`: Service account email or client id.
+- `client_secret`: Service account client secret.
+
+### samedis
+
+- `uri`: Samedis API base URL.
+- `api_version`: API version string (for example `v4`).
+- `tenant_id`: Tenant identifier.
+
+### sync
+
+Feature flags to enable or disable each sync flow.
+
+- `device_types`: Download device types.
+- `device_models`: Download device models (also downloads manufacturers).
+- `contacts`: Reserved (not used in the current flow).
+- `departments_download`: Download departments.
+- `departments_upload`: Upload departments (not implemented).
+- `locations_download`: Download locations.
+- `locations_upload`: Upload locations (not implemented).
+- `inventories_download`: Download inventories.
+- `inventories_upload`: Upload inventories (not implemented).
+- `tasks_download`: Download tasks and task documents.
+- `tasks_upload`: Upload tasks (not implemented).
+- `task_download_types`: Comma-separated list of task types (for example `maintenance`).
+- `task_archive_filter`: Boolean filter for archived tasks.
+- `task_download_status`: Comma-separated list of task status values (for example `done`).
+- `requests_download`: Download requests.
+- `requests_upload`: Upload requests (not implemented).
+- `trainings`: Reserved (not used in the current flow).
+
+### logging
+
+- `level`: `0` off, `1` on, `2` debug.
+- `mode`: `0` none, `1` console, `2` logfile, `3` console and logfile.
+
+### http
+
+- `valid_certificate`: Validate TLS certificates (set `false` for self-signed only if needed).
+- `proxy`: Proxy URL (empty for no proxy).
+- `proxy_username`: Proxy username (optional).
+- `proxy_password`: Proxy password (optional).
+
+### import_mode and import_sql (currently unused)
+
+The example file includes `import_mode`, `import_file`, and `import_sql` blocks. These keys are not read by the current codebase and are safe to ignore or remove unless you extend the project to use them.
+
+## Build
+
+Build a release binary:
+
+```bash
+dotnet build -c Release
+```
+
+Create a self-contained single-file build (choose your runtime identifier):
+
+```bash
+dotnet publish -c Release -r linux-x64 --self-contained true /p:PublishSingleFile=true
+```
+
+### Windows (single EXE)
+
+Build a single self-contained EXE for Windows:
+
+```powershell
+dotnet publish -c Release -r win-x64 --self-contained true /p:PublishSingleFile=true
+```
+
+The publish output folder will contain one executable. For xcopy-style deployment, copy only:
+
+- the generated `.exe`
+- `config.yml`
+
+## Runtime output
+
+- CSV exports are written to `data/`.
+- Task documents and protocols are written to `data/task_documents/`.
+- Last run date is tracked in `lastrun.txt`.
+- Logs are written based on the `logging` settings.
