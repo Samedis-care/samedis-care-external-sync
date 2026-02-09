@@ -32,9 +32,21 @@ internal class Program
     File.WriteAllText("lastrun.txt", DateTime.Now.ToString("yyyy-MM-dd"));
 
     // init authentication
-    if (config.Auth.Uri.Length == 0 || config.Auth.ClientId.Length == 0 || config.Auth.ClientSecret.Length == 0)
+    var authUri = config.Auth.Uri;
+    var authClientId = config.Auth.ClientId;
+    var authClientSecret = config.Auth.ClientSecret;
+    if (string.IsNullOrWhiteSpace(authUri) || string.IsNullOrWhiteSpace(authClientId) || string.IsNullOrWhiteSpace(authClientSecret))
     {
       helper.Message($"Authentication configuration invalid, please check config.yml.", 1, "ERROR");
+      return;
+    }
+
+    var samedisUri = config.Samedis.Uri;
+    var samedisApiVersion = config.Samedis.ApiVersion;
+    var samedisTenantId = config.Samedis.TenantId;
+    if (string.IsNullOrWhiteSpace(samedisUri) || string.IsNullOrWhiteSpace(samedisApiVersion) || string.IsNullOrWhiteSpace(samedisTenantId))
+    {
+      helper.Message($"Samedis configuration invalid, please check config.yml.", 1, "ERROR");
       return;
     }
 
@@ -46,12 +58,12 @@ internal class Program
       ValidateCertificate = config.Http.ValidCertificate,
     };
 
-    var samedisAuth = new Authenticate(config.Auth.Uri, config.Auth.ClientId, config.Auth.ClientSecret, httpSettings, helper);
+    var samedisAuth = new Authenticate(authUri, authClientId, authClientSecret, httpSettings, helper);
     helper.Message($"Credential checkup Status: {samedisAuth.StatusCode} {samedisAuth.Status} User: {samedisAuth.User}", 1);
     var bearerToken = samedisAuth.BearerToken;
 
     //define resource
-    var samedisClient = new RequestData(config.Samedis.Uri, bearerToken, httpSettings);
+    var samedisClient = new RequestData(samedisUri, bearerToken, httpSettings);
 
     // list settings
     var pageSize = 250; // max 250
@@ -81,21 +93,23 @@ internal class Program
     else
     {
       helper.Message("Tasks Download sync starting.");
-      var urlResource = $"/api/{config.Samedis.ApiVersion}/tenants/{config.Samedis.TenantId}/issues";
+      var urlResource = $"/api/{samedisApiVersion}/tenants/{samedisTenantId}/issues";
       helper.CanDo(samedisClient, urlResource);
 
       var filterBuilder = new FilterBuilder();
       filterBuilder.Clear();
       filterBuilder.Add("updated_at", FilterBuilder.FilterType.GreaterThan, FilterBuilder.Type.Date, lastRun);
 
-      var taskTypeFilter = $"&filter[issue_type]={string.Join(",", config.Sync.TaskDownloadTypes)}";
+      var taskDownloadTypes = config.Sync.TaskDownloadTypes ?? string.Empty;
+      var taskDownloadStatus = config.Sync.TaskDownloadStatus ?? string.Empty;
+      var taskTypeFilter = $"&filter[issue_type]={taskDownloadTypes}";
       var archiveFilter = $"&filter[archive]={config.Sync.TaskArchiveFilter.ToString().ToLower()}";
-      var statusFilter = $"&filter[status]={string.Join(",", config.Sync.TaskDownloadStatus)}";
+      var statusFilter = $"&filter[status]={taskDownloadStatus}";
 
       var requestResource = urlResource + $"?page[number]=1&page[limit]=0&quickfilter=&gridfilter={filterBuilder.Get()}{archiveFilter}{taskTypeFilter}{statusFilter}";
       var response = samedisClient.Get(requestResource);
-      var taskList = JsonConvert.DeserializeObject<Tasks.Root>(response);
-      var totalRecords = taskList == null ? 0 : taskList.Meta.Total;
+      var taskList = string.IsNullOrEmpty(response) ? null : JsonConvert.DeserializeObject<Tasks.Root>(response);
+      var totalRecords = taskList?.Meta?.Total ?? 0;
       var pages = totalRecords % pageSize != 0 ? totalRecords / pageSize + 1 : totalRecords / pageSize;
 
       helper.Message($"Status Code: {samedisClient.StatusCode} {samedisClient.Status}", 2);
@@ -132,7 +146,7 @@ internal class Program
 
           var docRequest = $"{urlResource}/{taskId}/uploads?page[number]=1&page[limit]={pageSize}&quickfilter=&gridfilter={{}}";
           var docResponse = samedisClient.Get(docRequest);
-          var docRoot = JsonConvert.DeserializeObject<Tasks.TaskDocuments.Root>(docResponse);
+          Tasks.TaskDocuments.Root? docRoot = string.IsNullOrEmpty(docResponse) ? null : JsonConvert.DeserializeObject<Tasks.TaskDocuments.Root>(docResponse);
           var docTotal = docRoot?.Meta?.Total ?? 0;
           var docPages = docTotal % pageSize != 0 ? docTotal / pageSize + 1 : docTotal / pageSize;
 
@@ -142,7 +156,7 @@ internal class Program
             {
               docRequest = $"{urlResource}/{taskId}/uploads?page[number]={docPage}&page[limit]={pageSize}&quickfilter=&gridfilter={{}}";
               docResponse = samedisClient.Get(docRequest);
-              docRoot = JsonConvert.DeserializeObject<Tasks.TaskDocuments.Root>(docResponse);
+              docRoot = string.IsNullOrEmpty(docResponse) ? null : JsonConvert.DeserializeObject<Tasks.TaskDocuments.Root>(docResponse);
             }
 
             if (docRoot?.Data == null || docRoot.Data.Count == 0)
@@ -179,6 +193,9 @@ internal class Program
           }
 
           var detailResponse = samedisClient.Get(urlResource + "/" + taskId);
+          if (string.IsNullOrEmpty(detailResponse))
+            continue;
+
           var detailRoot = JsonConvert.DeserializeObject<Tasks.Root>(detailResponse);
           var detailAttr = detailRoot?.Data?.FirstOrDefault()?.Attributes;
           var protocolUrl = detailAttr?.TestProtocolUrl;
@@ -228,7 +245,7 @@ internal class Program
     else
     {
       helper.Message("Requests Download sync starting.");
-      var urlResource = $"/api/{config.Samedis.ApiVersion}/tenants/{config.Samedis.TenantId}/incidents";
+      var urlResource = $"/api/{samedisApiVersion}/tenants/{samedisTenantId}/incidents";
       helper.CanDo(samedisClient, urlResource);
 
       var filterBuilder = new FilterBuilder();
@@ -237,8 +254,8 @@ internal class Program
 
       var requestResource = urlResource + $"?page[number]=1&page[limit]=0&quickfilter=&gridfilter={filterBuilder.Get()}";
       var response = samedisClient.Get(requestResource);
-      var requestList = JsonConvert.DeserializeObject<Requests.Root>(response);
-      var totalRecords = requestList == null ? 0 : requestList.Meta.Total;
+      var requestList = string.IsNullOrEmpty(response) ? null : JsonConvert.DeserializeObject<Requests.Root>(response);
+      var totalRecords = requestList?.Meta?.Total ?? 0;
       var pages = totalRecords % pageSize != 0 ? totalRecords / pageSize + 1 : totalRecords / pageSize;
 
       helper.Message($"Status Code: {samedisClient.StatusCode} {samedisClient.Status}", 2);
@@ -268,7 +285,7 @@ internal class Program
     }
     else
     {
-      var urlResource = $"/api/{config.Samedis.ApiVersion}/tenants/{config.Samedis.TenantId}/device_types";
+      var urlResource = $"/api/{samedisApiVersion}/tenants/{samedisTenantId}/device_types";
       helper.CanDo(samedisClient, urlResource);
 
       var filterBuilder = new FilterBuilder();
@@ -277,8 +294,8 @@ internal class Program
 
       var requestResource = urlResource + $"?page[number]=1&page[limit]=0&filter[scope]=public_and_tenant&quickfilter=&gridfilter={filterBuilder.Get()}";
       var response = samedisClient.Get(requestResource);
-      var typelist = JsonConvert.DeserializeObject<DeviceTypes.Root>(response);
-      var totalRecords = typelist == null ? 0 : typelist.Meta.Total;
+      var typelist = string.IsNullOrEmpty(response) ? null : JsonConvert.DeserializeObject<DeviceTypes.Root>(response);
+      var totalRecords = typelist?.Meta?.Total ?? 0;
       var pages = totalRecords % pageSize != 0 ? totalRecords / pageSize + 1 : totalRecords / pageSize;
 
       helper.Message($"Status Code: {samedisClient.StatusCode} {samedisClient.Status}", 2);
@@ -313,7 +330,7 @@ internal class Program
     }
     else
     {
-      var urlResource = $"/api/{config.Samedis.ApiVersion}/tenants/{config.Samedis.TenantId}/departments";
+      var urlResource = $"/api/{samedisApiVersion}/tenants/{samedisTenantId}/departments";
       helper.CanDo(samedisClient, urlResource);
 
       var filterBuilder = new FilterBuilder();
@@ -322,8 +339,8 @@ internal class Program
 
       var requestResource = urlResource + $"?page[number]=1&page[limit]=0&quickfilter=&gridfilter={filterBuilder.Get()}";
       var response = samedisClient.Get(requestResource);
-      var departmentList = JsonConvert.DeserializeObject<Departments.Root>(response);
-      var totalRecords = departmentList == null ? 0 : departmentList.Meta.Total;
+      var departmentList = string.IsNullOrEmpty(response) ? null : JsonConvert.DeserializeObject<Departments.Root>(response);
+      var totalRecords = departmentList?.Meta?.Total ?? 0;
       var pages = totalRecords % pageSize != 0 ? totalRecords / pageSize + 1 : totalRecords / pageSize;
 
       helper.Message($"Status Code: {samedisClient.StatusCode} {samedisClient.Status}", 2);
@@ -351,7 +368,7 @@ internal class Program
     }
     else
     {
-      var urlResource = $"/api/{config.Samedis.ApiVersion}/tenants/{config.Samedis.TenantId}/device_locations";
+      var urlResource = $"/api/{samedisApiVersion}/tenants/{samedisTenantId}/device_locations";
       helper.CanDo(samedisClient, urlResource);
 
       var filterBuilder = new FilterBuilder();
@@ -360,8 +377,8 @@ internal class Program
 
       var requestResource = urlResource + $"?page[number]=1&page[limit]=0&quickfilter=&gridfilter={filterBuilder.Get()}";
       var response = samedisClient.Get(requestResource);
-      var locationList = JsonConvert.DeserializeObject<Locations.Root>(response);
-      var totalRecords = locationList == null ? 0 : locationList.Meta.Total;
+      var locationList = string.IsNullOrEmpty(response) ? null : JsonConvert.DeserializeObject<Locations.Root>(response);
+      var totalRecords = locationList?.Meta?.Total ?? 0;
       var pages = totalRecords % pageSize != 0 ? totalRecords / pageSize + 1 : totalRecords / pageSize;
 
       helper.Message($"Status Code: {samedisClient.StatusCode} {samedisClient.Status}", 2);
@@ -389,7 +406,7 @@ internal class Program
     }
     else
     {
-      var urlResource = $"/api/{config.Samedis.ApiVersion}/tenants/{config.Samedis.TenantId}/device_models";
+      var urlResource = $"/api/{samedisApiVersion}/tenants/{samedisTenantId}/device_models";
       helper.CanDo(samedisClient, urlResource);
 
       var filterBuilder = new FilterBuilder();
@@ -399,8 +416,8 @@ internal class Program
 
       var requestResource = urlResource + $"?page[number]=1&page[limit]=0&filter[scope]=public_and_tenant&quickfilter=&gridfilter={filterBuilder.Get()}";
       var response = samedisClient.Get(requestResource);
-      var modellist = JsonConvert.DeserializeObject<DeviceModels.Root>(response);
-      var totalRecords = modellist == null ? 0 : modellist.Meta.Total;
+      var modellist = string.IsNullOrEmpty(response) ? null : JsonConvert.DeserializeObject<DeviceModels.Root>(response);
+      var totalRecords = modellist?.Meta?.Total ?? 0;
       var pages = totalRecords % pageSize != 0 ? totalRecords / pageSize + 1 : totalRecords / pageSize;
 
       helper.Message($"Status Code: {samedisClient.StatusCode} {samedisClient.Status}", 2);
@@ -419,30 +436,32 @@ internal class Program
         helper.Message($"Page {page}", 2);
         helper.Message($"Status Code: {samedisClient.StatusCode} {samedisClient.Status}", 2);
 
+        if (string.IsNullOrEmpty(response)) continue;
         modellist = JsonConvert.DeserializeObject<DeviceModels.Root>(response);
         //Helper.ToCsv<DeviceModels.Root, DeviceModels.Attributes>(modellist, "data/devicemodels_dump.csv", r => r.Data.Select(d => d.Attributes));
 
-        if (modellist != null)
+        if (modellist?.Data != null && modellist.Data.Count > 0)
         {
           var dsDm = DeviceModels.CreateDeviceDataSet();
           var dsC = Contacts.CreateContactDataSet();
           foreach (var item in modellist.Data)
           {
-            if (item.Attributes.Id == "63e399b904f218000e738670") continue; // ignore "No device model"
+            var attributes = item.Attributes;
+            if (attributes == null) continue;
+            if (attributes.Id == "63e399b904f218000e738670") continue; // ignore "No device model"
 
-            helper.Message($"Id: {item.Attributes.Id} ** Title: {item.Attributes.Title} ** Device Type Id: {item.Attributes.DeviceTypeId}");
+            helper.Message($"Id: {attributes.Id} ** Title: {attributes.Title} ** Device Type Id: {attributes.DeviceTypeId}");
 
             // detail to get service intervals and regulatories
-            var detailResponse = samedisClient.Get(urlResource + "/" + item.Attributes.Id);
+            var detailResponse = samedisClient.Get(urlResource + "/" + attributes.Id);
+            if (!string.IsNullOrEmpty(detailResponse))
+              DeviceModels.FillDeviceDataSet(dsDm, detailResponse);
 
-            DeviceModels.FillDeviceDataSet(dsDm, detailResponse);
-
-            var urlManufacturerResource = $"/api/{config.Samedis.ApiVersion}/tenants/{config.Samedis.TenantId}/contacts";
+            var urlManufacturerResource = $"/api/{samedisApiVersion}/tenants/{samedisTenantId}/contacts";
             helper.CanDo(samedisClient, urlManufacturerResource);
-            var manufacturerResponse = samedisClient.Get(urlManufacturerResource + "/" + item.Attributes.ManufacturerCompanyContactId);
-            var manufacturer = JsonConvert.DeserializeObject<Contacts.Root>(manufacturerResponse);
-
-            Contacts.FillContactDataSet(dsC, manufacturerResponse);
+            var manufacturerResponse = samedisClient.Get(urlManufacturerResource + "/" + attributes.ManufacturerCompanyContactId);
+            if (!string.IsNullOrEmpty(manufacturerResponse))
+              Contacts.FillContactDataSet(dsC, manufacturerResponse);
 
           }
           Helper.ExportDataSetToCsv(dsDm, "data/devicemodels.csv", "Devices");
@@ -459,8 +478,8 @@ internal class Program
     }
     else
     {
-      var urlResource = $"/api/{config.Samedis.ApiVersion}/tenants/{config.Samedis.TenantId}/inventories";
-      //urlResource = $"/api/{config.Samedis.ApiVersion}/enterprise/tenants/{config.Samedis.TenantId}/inventories";
+      var urlResource = $"/api/{samedisApiVersion}/tenants/{samedisTenantId}/inventories";
+      //urlResource = $"/api/{samedisApiVersion}/enterprise/tenants/{samedisTenantId}/inventories";
 
       helper.Message($"Using resource: {urlResource}", 1);
       helper.CanDo(samedisClient, urlResource);
@@ -472,8 +491,8 @@ internal class Program
 
       var requestResource = urlResource + $"?page[number]=1&page[limit]=0&variant=regular&quickfilter=&gridfilter={filterBuilder.Get()}";
       var response = samedisClient.Get(requestResource);
-      var inventoryList = JsonConvert.DeserializeObject<Inventories.Root>(response);
-      var totalRecords = inventoryList == null ? 0 : inventoryList.Meta.Total;
+      var inventoryList = string.IsNullOrEmpty(response) ? null : JsonConvert.DeserializeObject<Inventories.Root>(response);
+      var totalRecords = inventoryList?.Meta?.Total ?? 0;
       var pages = totalRecords % pageSize != 0 ? totalRecords / pageSize + 1 : totalRecords / pageSize;
 
       helper.Message($"Status Code: {samedisClient.StatusCode} {samedisClient.Status}", 2);
@@ -488,20 +507,23 @@ internal class Program
         helper.Message($"Page {page}", 2);
         helper.Message($"Status Code: {samedisClient.StatusCode} {samedisClient.Status}", 2);
 
+        if (string.IsNullOrEmpty(response)) continue;
         inventoryList = JsonConvert.DeserializeObject<Inventories.Root>(response);
         // Helper.ToCsv<Inventories.Root, Inventories.Attributes>(inventoryList, "data/inventories_dump.csv", r => r.Data.Select(d => d.Attributes));
 
-        if (inventoryList != null)
+        if (inventoryList?.Data != null && inventoryList.Data.Count > 0)
         {
           var iDs = Inventories.CreateInventoryDataSet();
           foreach (var item in inventoryList.Data)
           {
-            helper.Message($"Id: {item.Attributes.Id} ** Inventory Nr: {item.Attributes.DeviceNumber} ** Device Model: {item.Attributes.DeviceModelTitle}");
+            var attributes = item.Attributes;
+            if (attributes == null) continue;
+            helper.Message($"Id: {attributes.Id} ** Inventory Nr: {attributes.DeviceNumber} ** Device Model: {attributes.DeviceModelTitle}");
 
             // detail to get service intervals and regulatories
-            var detailResponse = samedisClient.Get(urlResource + "/" + item.Attributes.Id);
-
-            Inventories.FillInventoryDataSet(iDs, detailResponse);
+            var detailResponse = samedisClient.Get(urlResource + "/" + attributes.Id);
+            if (!string.IsNullOrEmpty(detailResponse))
+              Inventories.FillInventoryDataSet(iDs, detailResponse);
 
           }
           Helper.ExportDataSetToCsv(iDs, "data/inventories.csv", "Inventories");
