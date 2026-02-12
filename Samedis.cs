@@ -281,7 +281,7 @@ namespace SamedisExternalSync
           .AddHeader("accept", "application/json")
           .AddHeader("Content-Type", "application/json")
           .AddHeader("Authorization", $"Bearer {_token}")
-          .AddJsonBody(content);
+          .AddStringBody(content, DataFormat.Json);
 
       var response = client.ExecutePost(request);
       HandleRetry(response, request, client.ExecutePost);
@@ -312,12 +312,25 @@ namespace SamedisExternalSync
 
     public string? Put(string resource, string id, string content)
     {
+      var putResource = resource;
+      var queryIndex = putResource.IndexOf("?", StringComparison.Ordinal);
+      if (queryIndex >= 0)
+      {
+        var path = putResource[..queryIndex];
+        var query = putResource[queryIndex..];
+        putResource = path + "/" + id + query;
+      }
+      else
+      {
+        putResource = putResource + "/" + id;
+      }
+
       using var client = new RestClient(_options);
-      var request = new RestRequest(resource + "/" + id, Method.Put)
+      var request = new RestRequest(putResource, Method.Put)
           .AddHeader("accept", "application/json")
           .AddHeader("Content-Type", "application/json")
           .AddHeader("Authorization", $"Bearer {_token}")
-          .AddJsonBody(content);
+          .AddStringBody(content, DataFormat.Json);
 
       var response = client.ExecutePut(request);
       HandleRetry(response, request, client.ExecutePut);

@@ -92,6 +92,24 @@ namespace SamedisExternalSync
       return true;
     }
 
+    public static DataTable ImportCsvToDataTable(string filePath, string tableName)
+    {
+      using var reader = new StreamReader(filePath, Encoding.UTF8);
+      using var csv = new CsvReader(reader, new CsvConfiguration(CultureInfo.InvariantCulture)
+      {
+        Delimiter = ";",
+        TrimOptions = TrimOptions.Trim,
+        MissingFieldFound = null,
+        HeaderValidated = null,
+        BadDataFound = null
+      });
+      using var csvDataReader = new CsvDataReader(csv);
+
+      var dataTable = new DataTable(tableName);
+      dataTable.Load(csvDataReader);
+      return dataTable;
+    }
+
     public void CanDo(RequestData client, string resource)
     {
       var requestResource = resource + "?limit=0";
@@ -123,6 +141,96 @@ namespace SamedisExternalSync
       if (record?.Meta?.Total == 0 || record?.Data?.Count == 0) return "";
       if (record?.Data?.Count > 0) return record?.Data[0].Id;
       return "";
+    }
+
+    public static string? ExtractDataId(string? json)
+    {
+      if (string.IsNullOrWhiteSpace(json))
+        return null;
+
+      try
+      {
+        var root = JToken.Parse(json);
+        var data = root["data"];
+        if (data == null)
+          return null;
+
+        if (data.Type == JTokenType.Array)
+          return data.First?["id"]?.ToString();
+
+        return data["id"]?.ToString();
+      }
+      catch
+      {
+        return null;
+      }
+    }
+
+    public static string GetRowValue(DataRow row, string columnName)
+    {
+      if (!row.Table.Columns.Contains(columnName))
+        return string.Empty;
+
+      var value = row[columnName];
+      return value == DBNull.Value ? string.Empty : value?.ToString()?.Trim() ?? string.Empty;
+    }
+
+    public static bool TryParseInt(string value, out int result)
+    {
+      return int.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out result);
+    }
+
+    public static bool TryParseDecimal(string value, out decimal result)
+    {
+      if (decimal.TryParse(value, NumberStyles.Number, CultureInfo.InvariantCulture, out result))
+        return true;
+      return decimal.TryParse(value.Replace(',', '.'), NumberStyles.Number, CultureInfo.InvariantCulture, out result);
+    }
+
+    public static bool TryParseLong(string value, out long result)
+    {
+      return long.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out result);
+    }
+
+    public static bool TryParseBool(string value, out bool result)
+    {
+      if (bool.TryParse(value, out result))
+        return true;
+
+      var normalized = value.Trim().ToLowerInvariant();
+      switch (normalized)
+      {
+        case "1":
+        case "yes":
+        case "y":
+        case "ja":
+        case "true":
+          result = true;
+          return true;
+        case "0":
+        case "no":
+        case "n":
+        case "nein":
+        case "false":
+          result = false;
+          return true;
+        default:
+          result = false;
+          return false;
+      }
+    }
+
+    public static string NormalizeDate(string value)
+    {
+      if (string.IsNullOrWhiteSpace(value))
+        return string.Empty;
+      return DateTime.TryParse(value, out var date) ? date.ToString("yyyy-MM-dd") : value.Trim();
+    }
+
+    public static void AddStringAttribute(IDictionary<string, object> attributes, string key, string value)
+    {
+      if (!string.IsNullOrWhiteSpace(value))
+        attributes[key] = value;
     }
 
     public static object? GetDefault(Type type)

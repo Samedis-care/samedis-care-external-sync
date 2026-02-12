@@ -1,6 +1,6 @@
 # samedis-care-external-sync
 
-SamedisExternalSync is a .NET 8 console application that syncs data from the Samedis API and exports it to CSV files. It supports downloading device types, departments, locations, device models, inventories, tasks, and requests, and can download task documents and protocols when enabled. Upload flows are present as flags but are not implemented yet.
+SamedisExternalSync is a .NET 8 console application that syncs data from the Samedis API and exports it to CSV files. It supports downloading device types, departments, locations, device models, inventories, tasks, and requests, and can download task documents and protocols when enabled. Inventories upload is implemented from `data/to_samedis/inventories.csv`; other upload flows are still not implemented.
 
 > **TODO** Extend this project to also handle read csv files to update data in Samedis.care using proper API calls.
 
@@ -49,7 +49,10 @@ Feature flags to enable or disable each sync flow.
 - `locations_download`: Download locations.
 - `locations_upload`: Upload locations (not implemented).
 - `inventories_download`: Download inventories.
-- `inventories_upload`: Upload inventories (not implemented).
+- `inventories_upload`: Upload inventories from `data/to_samedis/inventories.csv`.
+- `inventories_upload_fallback_by_device_number`: If `true`, update matching inventory by `inventory_number` when CSV `id` is missing or not found.
+- `inventories_upload_create_departments_on_the_fly`: If `true`, create missing departments by exact title match from CSV column `department`.
+- `inventories_upload_create_locations_on_the_fly`: If `true`, create missing locations by exact title match from CSV column `location`.
 - `tasks_download`: Download tasks and task documents.
 - `tasks_upload`: Upload tasks (not implemented).
 - `task_download_types`: Comma-separated list of task types (for example `maintenance`).
@@ -104,7 +107,7 @@ The publish output folder will contain one executable. For xcopy-style deploymen
 
 ## Runtime output
 
-- CSV exports are written to `data/`.
-- Task documents and protocols are written to `data/task_documents/`.
+- CSV exports are written to `data/from_samedis/`.
+- Task documents and protocols are written to `data/from_samedis/task_documents/`.
 - Last run date is tracked in `lastrun.txt`.
 - Logs are written based on the `logging` settings.
