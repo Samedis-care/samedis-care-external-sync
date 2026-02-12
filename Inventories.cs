@@ -59,7 +59,7 @@ namespace SamedisExternalSync
       public string? Ownership { get; set; }
 
       [JsonProperty("status")]
-      public string? Status { get; set; }
+      public string? Status { get; set; } = "created";
 
       [JsonProperty("device_number")]
       public string? DeviceNumber { get; set; }
@@ -468,12 +468,18 @@ namespace SamedisExternalSync
       ISet<string> checkedInventoryIds,
       ISet<string> checkedInventoryNumbers)
     {
+      string? candidateId = null;
+      string? candidateDeviceNumber = null;
+
       if (!string.IsNullOrWhiteSpace(inventoryId))
       {
         if (inventoryById.TryGetValue(inventoryId, out var cachedId))
-          return string.IsNullOrWhiteSpace(cachedId) ? null : cachedId;
+        {
+          if (!string.IsNullOrWhiteSpace(cachedId))
+            candidateId = cachedId;
+        }
 
-        if (!checkedInventoryIds.Contains(inventoryId))
+        if (string.IsNullOrWhiteSpace(candidateId) && !checkedInventoryIds.Contains(inventoryId))
         {
           checkedInventoryIds.Add(inventoryId);
 
@@ -487,35 +493,51 @@ namespace SamedisExternalSync
             var detailRoot = string.IsNullOrEmpty(detailResponse) ? null : JsonConvert.DeserializeObject<Inventories.Root>(detailResponse);
             var resolvedDeviceNumber = detailRoot?.Data?.FirstOrDefault()?.Attributes?.DeviceNumber;
             if (!string.IsNullOrWhiteSpace(resolvedDeviceNumber))
+            {
               inventoryByDeviceNumber[resolvedDeviceNumber] = resolvedId;
+              candidateDeviceNumber = resolvedDeviceNumber;
+            }
 
-            return resolvedId;
+            candidateId = resolvedId;
           }
-
-          // negative cache to prevent repeated requests for same unknown id
-          inventoryById[inventoryId] = string.Empty;
+          else
+          {
+            // negative cache to prevent repeated requests for same unknown id
+            inventoryById[inventoryId] = string.Empty;
+          }
         }
       }
 
       if (!fallbackByDeviceNumber || string.IsNullOrWhiteSpace(inventoryNumber))
-        return null;
+        return candidateId;
+
+      if (!string.IsNullOrWhiteSpace(candidateId) &&
+          !string.IsNullOrWhiteSpace(candidateDeviceNumber) &&
+          string.Equals(candidateDeviceNumber, inventoryNumber, StringComparison.OrdinalIgnoreCase))
+      {
+        return candidateId;
+      }
 
       if (inventoryByDeviceNumber.TryGetValue(inventoryNumber, out var cachedByDeviceNumber))
-        return string.IsNullOrWhiteSpace(cachedByDeviceNumber) ? null : cachedByDeviceNumber;
+        return string.IsNullOrWhiteSpace(cachedByDeviceNumber) ? candidateId : cachedByDeviceNumber;
 
       if (checkedInventoryNumbers.Contains(inventoryNumber))
-        return null;
+        return candidateId;
 
       checkedInventoryNumbers.Add(inventoryNumber);
 
+      var filterBuilder = new FilterBuilder();
+      filterBuilder.Clear();
+      filterBuilder.Add("device_number", FilterBuilder.FilterType.Equals, FilterBuilder.Type.Text, inventoryNumber);
+
       var listResponse = client.Get(
         resource +
-        $"?page[number]=1&page[limit]=1&filter[device_number]={Uri.EscapeDataString(inventoryNumber)}"
+        $"?page[number]=1&page[limit]=1&variant=regular&gridfilter={filterBuilder.Get()}"
       );
       if (client.StatusCode != 200 || string.IsNullOrWhiteSpace(listResponse))
       {
         inventoryByDeviceNumber[inventoryNumber] = string.Empty;
-        return null;
+        return candidateId;
       }
 
       var listRoot = JsonConvert.DeserializeObject<Root>(listResponse);
@@ -524,7 +546,7 @@ namespace SamedisExternalSync
       if (string.IsNullOrWhiteSpace(resolvedByDeviceNumberId))
       {
         inventoryByDeviceNumber[inventoryNumber] = string.Empty;
-        return null;
+        return candidateId;
       }
 
       inventoryById[resolvedByDeviceNumberId] = resolvedByDeviceNumberId;
@@ -532,14 +554,15 @@ namespace SamedisExternalSync
       return resolvedByDeviceNumberId;
     }
 
-    public static Dictionary<string, object> BuildInventoryAttributes(DataRow row, string? departmentId, string? locationId)
+    public static Dictionary<string, object> BuildInventoryAttributes(DataRow row, string? departmentId, string? locationId, string? catalogIdOverride = null)
     {
       var attributes = new Dictionary<string, object>();
 
       Helper.AddStringAttribute(attributes, "external_id", Helper.GetRowValue(row, "external_id"));
       Helper.AddStringAttribute(attributes, "device_number", Helper.GetRowValue(row, "inventory_number"));
       Helper.AddStringAttribute(attributes, "serial_number", Helper.GetRowValue(row, "serial_number"));
-      Helper.AddStringAttribute(attributes, "catalog_id", Helper.GetRowValue(row, "catalog_id"));
+      var catalogId = string.IsNullOrWhiteSpace(catalogIdOverride) ? Helper.GetRowValue(row, "catalog_id") : catalogIdOverride;
+      Helper.AddStringAttribute(attributes, "catalog_id", catalogId);
       Helper.AddStringAttribute(attributes, "commissioning_at", Helper.NormalizeDate(Helper.GetRowValue(row, "commissioning_at")));
       Helper.AddStringAttribute(attributes, "service_partner", Helper.GetRowValue(row, "service_partner"));
       Helper.AddStringAttribute(attributes, "comments_field", Helper.GetRowValue(row, "comments_field"));

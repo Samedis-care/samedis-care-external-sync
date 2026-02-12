@@ -487,11 +487,13 @@ internal class Program
       var inventoryWriteResource = inventoryResource + "?locale=en";
       var departmentsResource = $"/api/{samedisApiVersion}/tenants/{samedisTenantId}/departments";
       var locationsResource = $"/api/{samedisApiVersion}/tenants/{samedisTenantId}/device_locations";
+      var deviceModelsResource = $"/api/{samedisApiVersion}/tenants/{samedisTenantId}/device_models";
       var inventoryCsvPath = Path.Combine(uploadRoot, "inventories.csv");
 
       helper.CanDo(samedisClient, inventoryResource);
       helper.CanDo(samedisClient, departmentsResource);
       helper.CanDo(samedisClient, locationsResource);
+      helper.CanDo(samedisClient, deviceModelsResource);
 
       if (!File.Exists(inventoryCsvPath))
       {
@@ -538,9 +540,9 @@ internal class Program
           var locationsById = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
           var locationsByTitle = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
           var checkedLocations = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+          var deviceModelCatalogLookup = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
 
           helper.Message($"Inventories Upload source rows: {uploadTable.Rows.Count}", 1);
-          helper.Message("Lookups are resolved on the fly for inventories, departments, and locations.", 2);
 
           var createdCount = 0;
           var updatedCount = 0;
@@ -554,6 +556,35 @@ internal class Program
             var inventoryNumber = Helper.GetRowValue(row, "inventory_number");
             var departmentTitle = Helper.GetRowValue(row, "department");
             var locationTitle = Helper.GetRowValue(row, "location");
+            var catalogId = Helper.GetRowValue(row, "catalog_id");
+
+            if (string.IsNullOrWhiteSpace(catalogId))
+            {
+              var lookupTitle = inventoryTitle;
+              if (string.IsNullOrWhiteSpace(lookupTitle))
+                lookupTitle = Helper.GetRowValue(row, "device_model_title");
+
+              var lookupManufacturer = Helper.GetRowValue(row, "manufacturer");
+              if (string.IsNullOrWhiteSpace(lookupManufacturer))
+                lookupManufacturer = Helper.GetRowValue(row, "responsible_manufacturer");
+
+              catalogId = DeviceModels.ResolveCatalogId(
+                samedisClient,
+                deviceModelsResource,
+                lookupTitle,
+                lookupManufacturer,
+                deviceModelCatalogLookup
+              ) ?? string.Empty;
+
+              if (!string.IsNullOrWhiteSpace(catalogId))
+              {
+                helper.Message($"Resolved catalog_id '{catalogId}' via device model lookup (title='{lookupTitle}', manufacturer='{lookupManufacturer}').", 2);
+              }
+              else if (!string.IsNullOrWhiteSpace(lookupTitle))
+              {
+                helper.Message($"No device model match found for catalog lookup (title='{lookupTitle}', manufacturer='{lookupManufacturer}', inventory_number='{inventoryNumber}').", 2, "WARN");
+              }
+            }
 
             var departmentId = Departments.ResolveDepartmentId(
               samedisClient,
@@ -609,7 +640,7 @@ internal class Program
               checkedInventoryNumbers
             );
 
-            var attributes = Inventories.BuildInventoryAttributes(row, departmentId, locationId);
+            var attributes = Inventories.BuildInventoryAttributes(row, departmentId, locationId, catalogId);
 
             if (attributes.Count == 0)
             {

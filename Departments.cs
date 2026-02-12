@@ -183,41 +183,6 @@ namespace SamedisExternalSync
       }
     }
 
-    public static void LoadLookups(
-      RequestData client,
-      string resource,
-      int pageSize,
-      IDictionary<string, string> departmentsById,
-      IDictionary<string, string> departmentsByTitle)
-    {
-      var firstResponse = client.Get(resource + "?page[number]=1&page[limit]=0&quickfilter=&gridfilter={}");
-      var list = string.IsNullOrEmpty(firstResponse) ? null : JsonConvert.DeserializeObject<Departments.Root>(firstResponse);
-      var totalRecords = list?.Meta?.Total ?? 0;
-      var pages = totalRecords % pageSize != 0 ? totalRecords / pageSize + 1 : totalRecords / pageSize;
-
-      for (var page = 1; page <= Math.Max(1, pages); page++)
-      {
-        var response = client.Get(resource + $"?page[number]={page}&page[limit]={pageSize}&quickfilter=&gridfilter={{}}");
-        if (string.IsNullOrEmpty(response)) continue;
-
-        var root = JsonConvert.DeserializeObject<Departments.Root>(response);
-        if (root?.Data == null) continue;
-
-        foreach (var data in root.Data)
-        {
-          var attr = data.Attributes;
-          var id = attr?.Id ?? data.Id;
-          if (string.IsNullOrWhiteSpace(id)) continue;
-
-          departmentsById[id] = id;
-
-          var title = attr?.Title;
-          if (!string.IsNullOrWhiteSpace(title))
-            departmentsByTitle[title] = id;
-        }
-      }
-    }
-
     public static string? ResolveDepartmentId(
       RequestData client,
       string resource,
@@ -278,9 +243,13 @@ namespace SamedisExternalSync
         }
         else
         {
+          var filterBuilder = new FilterBuilder();
+          filterBuilder.Clear();
+          filterBuilder.Add("title", FilterBuilder.FilterType.Equals, FilterBuilder.Type.Text, Uri.EscapeDataString(departmentTitle));
+
           var listResponse = client.Get(
             resource +
-            $"?page[number]=1&page[limit]=1&filter[title]={Uri.EscapeDataString(departmentTitle)}&quickfilter=&gridfilter={{}}"
+            $"?page[number]=1&page[limit]=1&gridfilter={filterBuilder.Get()}"
           );
           if (client.StatusCode == 200 && !string.IsNullOrWhiteSpace(listResponse))
           {
@@ -309,13 +278,9 @@ namespace SamedisExternalSync
 
       var payload = JsonConvert.SerializeObject(new
       {
-        data = new
+        data = new Dictionary<string, object?>
         {
-          type = "departments",
-          attributes = new Dictionary<string, object?>
-          {
-            ["title"] = departmentTitle
-          }
+          ["title"] = departmentTitle
         }
       });
 
