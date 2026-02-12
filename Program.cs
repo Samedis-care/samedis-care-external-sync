@@ -68,10 +68,15 @@ internal class Program
     // list settings
     var pageSize = 250; // max 250
 
-    // clean up
-    if (Directory.Exists("data"))
-      Directory.Delete("data", true);
-    Directory.CreateDirectory("data");
+    var dataRoot = "data";
+    var downloadRoot = Path.Combine(dataRoot, "from_samedis");
+    var uploadRoot = Path.Combine(dataRoot, "to_samedis");
+
+    // clean up download folder only, keep upload folder for import procedures
+    if (Directory.Exists(downloadRoot))
+      Directory.Delete(downloadRoot, true);
+    Directory.CreateDirectory(downloadRoot);
+    Directory.CreateDirectory(uploadRoot);
     #endregion
 
     #region Tasks Upload
@@ -126,12 +131,12 @@ internal class Program
         var taskRoot = JsonConvert.DeserializeObject<Tasks.Root>(response);
         var tDs = Tasks.CreateTaskDataSet();
         Tasks.FillTaskDataSet(tDs, response);
-        Helper.ExportDataSetToCsv(tDs, "data/tasks.csv", "Tasks");
+        Helper.ExportDataSetToCsv(tDs, Path.Combine(downloadRoot, "tasks.csv"), "Tasks");
 
         if (taskRoot?.Data == null || taskRoot.Data.Count == 0)
           continue;
 
-        var documentsRoot = Path.Combine("data", "task_documents");
+        var documentsRoot = Path.Combine(downloadRoot, "task_documents");
         Directory.CreateDirectory(documentsRoot);
 
         foreach (var task in taskRoot.Data)
@@ -271,12 +276,10 @@ internal class Program
         if (string.IsNullOrEmpty(response)) continue;
         var rDs = Requests.CreateRequestDataSet();
         Requests.FillRequestDataSet(rDs, response);
-        Helper.ExportDataSetToCsv(rDs, "data/requests.csv", "Requests");
+        Helper.ExportDataSetToCsv(rDs, Path.Combine(downloadRoot, "requests.csv"), "Requests");
       }
     }
     #endregion
-
-    //helper.MessageAndExit("we stop here");
 
     #region DeviceTypes
     if (!config.Sync.DeviceTypes)
@@ -316,7 +319,7 @@ internal class Program
         if (root == null) continue;
         Helper.ToCsv<DeviceTypes.Root, DeviceTypes.Attributes>(
           root,
-          "data/devicetypes.csv",
+          Path.Combine(downloadRoot, "devicetypes.csv"),
           r => (r.Data ?? Enumerable.Empty<DeviceTypes.Data>()).Select(d => d.Attributes!).Where(attr => attr != null)
         );
       }
@@ -356,7 +359,7 @@ internal class Program
         if (string.IsNullOrEmpty(response)) continue;
         var dDs = Departments.CreateDepartmentDataSet();
         Departments.FillDepartmentDataSet(dDs, response);
-        Helper.ExportDataSetToCsv(dDs, "data/departments.csv", "Departments");
+        Helper.ExportDataSetToCsv(dDs, Path.Combine(downloadRoot, "departments.csv"), "Departments");
       }
     }
     #endregion
@@ -394,7 +397,7 @@ internal class Program
         if (string.IsNullOrEmpty(response)) continue;
         var lDs = Locations.CreateLocationDataSet();
         Locations.FillLocationDataSet(lDs, response);
-        Helper.ExportDataSetToCsv(lDs, "data/locations.csv", "Locations");
+        Helper.ExportDataSetToCsv(lDs, Path.Combine(downloadRoot, "locations.csv"), "Locations");
       }
     }
     #endregion
@@ -438,7 +441,7 @@ internal class Program
 
         if (string.IsNullOrEmpty(response)) continue;
         modellist = JsonConvert.DeserializeObject<DeviceModels.Root>(response);
-        //Helper.ToCsv<DeviceModels.Root, DeviceModels.Attributes>(modellist, "data/devicemodels_dump.csv", r => r.Data.Select(d => d.Attributes));
+        //Helper.ToCsv<DeviceModels.Root, DeviceModels.Attributes>(modellist, Path.Combine(downloadRoot, "devicemodels_dump.csv"), r => r.Data.Select(d => d.Attributes));
 
         if (modellist?.Data != null && modellist.Data.Count > 0)
         {
@@ -464,8 +467,209 @@ internal class Program
               Contacts.FillContactDataSet(dsC, manufacturerResponse);
 
           }
-          Helper.ExportDataSetToCsv(dsDm, "data/devicemodels.csv", "Devices");
-          Helper.ExportDataSetToCsv(dsC, "data/devicemanufacturers.csv", "Contacts");
+          Helper.ExportDataSetToCsv(dsDm, Path.Combine(downloadRoot, "devicemodels.csv"), "Devices");
+          Helper.ExportDataSetToCsv(dsC, Path.Combine(downloadRoot, "devicemanufacturers.csv"), "Contacts");
+        }
+      }
+    }
+    #endregion
+
+    #region Inventories Upload
+    if (!config.Sync.InventoriesUpload)
+    {
+      helper.Message("Inventories Upload sync disabled in config.yml", 1);
+    }
+    else
+    {
+      helper.Message("Inventories Upload sync starting.", 1);
+
+      var inventoryResource = $"/api/{samedisApiVersion}/tenants/{samedisTenantId}/inventories";
+      var inventoryWriteResource = inventoryResource + "?locale=en";
+      var departmentsResource = $"/api/{samedisApiVersion}/tenants/{samedisTenantId}/departments";
+      var locationsResource = $"/api/{samedisApiVersion}/tenants/{samedisTenantId}/device_locations";
+      var inventoryCsvPath = Path.Combine(uploadRoot, "inventories.csv");
+
+      helper.CanDo(samedisClient, inventoryResource);
+      helper.CanDo(samedisClient, departmentsResource);
+      helper.CanDo(samedisClient, locationsResource);
+
+      if (!File.Exists(inventoryCsvPath))
+      {
+        helper.Message($"Inventories Upload skipped. CSV not found: {inventoryCsvPath}", 1, "WARN");
+      }
+      else
+      {
+        DataTable uploadTable;
+        try
+        {
+          uploadTable = Helper.ImportCsvToDataTable(inventoryCsvPath, "InventoriesUpload");
+        }
+        catch (Exception ex)
+        {
+          helper.Message($"Inventories Upload failed to read CSV {inventoryCsvPath}: {ex.Message}", 1, "ERROR");
+          uploadTable = new DataTable("InventoriesUpload");
+        }
+
+        var requiredColumns = new[]
+        {
+          "id",
+          "inventory_number",
+          "department",
+          "location"
+        };
+
+        if (uploadTable.Rows.Count == 0)
+        {
+          helper.Message("Inventories Upload skipped because CSV contains no rows.", 1, "WARN");
+        }
+        else if (!Helper.CheckColumnsExist(uploadTable, requiredColumns))
+        {
+          helper.Message($"Inventories Upload skipped. CSV missing one or more required columns: {string.Join(", ", requiredColumns)}", 1, "ERROR");
+        }
+        else
+        {
+          var inventoryById = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+          var inventoryByDeviceNumber = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+          var checkedInventoryIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+          var checkedInventoryNumbers = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+          var departmentsById = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+          var departmentsByTitle = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+          var checkedDepartments = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+          var locationsById = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+          var locationsByTitle = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+          var checkedLocations = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+
+          helper.Message($"Inventories Upload source rows: {uploadTable.Rows.Count}", 1);
+          helper.Message("Lookups are resolved on the fly for inventories, departments, and locations.", 2);
+
+          var createdCount = 0;
+          var updatedCount = 0;
+          var skippedCount = 0;
+          var errorCount = 0;
+
+          foreach (DataRow row in uploadTable.Rows)
+          {
+            var rowId = Helper.GetRowValue(row, "id");
+            var inventoryTitle = Helper.GetRowValue(row, "title");
+            var inventoryNumber = Helper.GetRowValue(row, "inventory_number");
+            var departmentTitle = Helper.GetRowValue(row, "department");
+            var locationTitle = Helper.GetRowValue(row, "location");
+
+            var departmentId = Departments.ResolveDepartmentId(
+              samedisClient,
+              departmentsResource,
+              Helper.GetRowValue(row, "department_id"),
+              departmentTitle,
+              config.Sync.InventoriesUploadCreateDepartmentsOnTheFly,
+              rowId,
+              inventoryTitle,
+              departmentsById,
+              departmentsByTitle,
+              checkedDepartments,
+              helper
+            );
+
+            if (!string.IsNullOrWhiteSpace(departmentTitle) && string.IsNullOrWhiteSpace(departmentId))
+            {
+              skippedCount++;
+              helper.Message($"Skipped inventory row because department '{departmentTitle}' could not be resolved/created (id='{rowId}', inventory_number='{inventoryNumber}').", 1, "WARN");
+              continue;
+            }
+
+            var locationId = Locations.ResolveLocationId(
+              samedisClient,
+              locationsResource,
+              Helper.GetRowValue(row, "location_id"),
+              locationTitle,
+              config.Sync.InventoriesUploadCreateLocationsOnTheFly,
+              rowId,
+              inventoryTitle,
+              locationsById,
+              locationsByTitle,
+              checkedLocations,
+              helper
+            );
+
+            if (!string.IsNullOrWhiteSpace(locationTitle) && string.IsNullOrWhiteSpace(locationId))
+            {
+              skippedCount++;
+              helper.Message($"Skipped inventory row because location '{locationTitle}' could not be resolved/created (id='{rowId}', inventory_number='{inventoryNumber}').", 1, "WARN");
+              continue;
+            }
+
+            var targetInventoryId = Inventories.ResolveExistingInventoryId(
+              samedisClient,
+              inventoryResource,
+              rowId,
+              inventoryNumber,
+              config.Sync.InventoriesUploadFallbackByDeviceNumber,
+              inventoryById,
+              inventoryByDeviceNumber,
+              checkedInventoryIds,
+              checkedInventoryNumbers
+            );
+
+            var attributes = Inventories.BuildInventoryAttributes(row, departmentId, locationId);
+
+            if (attributes.Count == 0)
+            {
+              skippedCount++;
+              helper.Message($"Skipped inventory row because no writable fields were provided (id='{rowId}', inventory_number='{inventoryNumber}').", 2, "WARN");
+              continue;
+            }
+
+            var requestPayload = JsonConvert.SerializeObject(new
+            {
+              data = attributes
+            });
+
+            string? response;
+            var operation = string.IsNullOrWhiteSpace(targetInventoryId) ? "create" : "update";
+            if (string.IsNullOrWhiteSpace(targetInventoryId))
+            {
+              response = samedisClient.Post(inventoryWriteResource, requestPayload);
+            }
+            else
+            {
+              response = samedisClient.Put(inventoryWriteResource, targetInventoryId, requestPayload);
+            }
+
+            if (samedisClient.StatusCode >= 200 && samedisClient.StatusCode < 300)
+            {
+              var resultingId = Helper.ExtractDataId(response) ?? targetInventoryId ?? rowId;
+              if (!string.IsNullOrWhiteSpace(resultingId))
+              {
+                inventoryById[resultingId] = resultingId;
+                if (!string.IsNullOrWhiteSpace(rowId))
+                  inventoryById[rowId] = resultingId;
+                if (!string.IsNullOrWhiteSpace(inventoryNumber))
+                  inventoryByDeviceNumber[inventoryNumber] = resultingId;
+              }
+
+              if (string.IsNullOrWhiteSpace(targetInventoryId))
+              {
+                createdCount++;
+                helper.Message($"Inventory created (inventory_number='{inventoryNumber}', id='{resultingId}').", 2);
+              }
+              else
+              {
+                updatedCount++;
+                helper.Message($"Inventory updated (inventory_number='{inventoryNumber}', id='{targetInventoryId}').", 2);
+              }
+            }
+            else
+            {
+              errorCount++;
+              var failedInventoryId = string.IsNullOrWhiteSpace(targetInventoryId) ? rowId : targetInventoryId;
+              helper.Message(
+                $"Failed to {operation} inventory (id='{failedInventoryId}', title='{inventoryTitle}', inventory_number='{inventoryNumber}', status={samedisClient.StatusCode}). Response: {response}",
+                1,
+                "ERROR"
+              );
+            }
+          }
+
+          helper.Message($"Inventories Upload finished. Created: {createdCount}, Updated: {updatedCount}, Skipped: {skippedCount}, Errors: {errorCount}", 1);
         }
       }
     }
@@ -509,7 +713,7 @@ internal class Program
 
         if (string.IsNullOrEmpty(response)) continue;
         inventoryList = JsonConvert.DeserializeObject<Inventories.Root>(response);
-        // Helper.ToCsv<Inventories.Root, Inventories.Attributes>(inventoryList, "data/inventories_dump.csv", r => r.Data.Select(d => d.Attributes));
+        // Helper.ToCsv<Inventories.Root, Inventories.Attributes>(inventoryList, Path.Combine(downloadRoot, "inventories_dump.csv"), r => r.Data.Select(d => d.Attributes));
 
         if (inventoryList?.Data != null && inventoryList.Data.Count > 0)
         {
@@ -526,7 +730,7 @@ internal class Program
               Inventories.FillInventoryDataSet(iDs, detailResponse);
 
           }
-          Helper.ExportDataSetToCsv(iDs, "data/inventories.csv", "Inventories");
+          Helper.ExportDataSetToCsv(iDs, Path.Combine(downloadRoot, "inventories.csv"), "Inventories");
         }
       }
     }
@@ -534,4 +738,5 @@ internal class Program
 
     helper.Message("Sync finised.", 1);
   }
+
 }

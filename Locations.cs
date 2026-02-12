@@ -63,6 +63,9 @@ namespace SamedisExternalSync
 
       [JsonProperty("attributes")]
       public Attributes? Attributes { get; set; }
+
+      [JsonProperty("relationships")]
+      public Dictionary<string, object>? Relationships { get; set; }
     }
 
     public class Msg
@@ -191,6 +194,173 @@ namespace SamedisExternalSync
 
         table.Rows.Add(row);
       }
+    }
+
+    public static void LoadLookups(
+      RequestData client,
+      string resource,
+      int pageSize,
+      IDictionary<string, string> locationsById,
+      IDictionary<string, string> locationsByTitle)
+    {
+      var firstResponse = client.Get(resource + "?page[number]=1&page[limit]=0&quickfilter=&gridfilter={}");
+      var list = string.IsNullOrEmpty(firstResponse) ? null : JsonConvert.DeserializeObject<Locations.Root>(firstResponse);
+      var totalRecords = list?.Meta?.Total ?? 0;
+      var pages = totalRecords % pageSize != 0 ? totalRecords / pageSize + 1 : totalRecords / pageSize;
+
+      for (var page = 1; page <= Math.Max(1, pages); page++)
+      {
+        var response = client.Get(resource + $"?page[number]={page}&page[limit]={pageSize}&quickfilter=&gridfilter={{}}");
+        if (string.IsNullOrEmpty(response)) continue;
+
+        var root = JsonConvert.DeserializeObject<Locations.Root>(response);
+        if (root?.Data == null) continue;
+
+        foreach (var data in root.Data)
+        {
+          var attr = data.Attributes;
+          var id = attr?.Id ?? data.Id;
+          if (string.IsNullOrWhiteSpace(id)) continue;
+
+          locationsById[id] = id;
+
+          var title = attr?.Title;
+          if (!string.IsNullOrWhiteSpace(title))
+            locationsByTitle[title] = id;
+        }
+      }
+    }
+
+    public static string? ResolveLocationId(
+      RequestData client,
+      string resource,
+      string locationId,
+      string locationTitle,
+      bool createOnTheFly,
+      string inventoryId,
+      string inventoryTitle,
+      IDictionary<string, string> locationsById,
+      IDictionary<string, string> locationsByTitle,
+      IDictionary<string, string> checkedLocations,
+      Helper helper)
+    {
+      if (!string.IsNullOrWhiteSpace(locationId) && locationsById.TryGetValue(locationId, out var existingId) && !string.IsNullOrWhiteSpace(existingId))
+        return existingId;
+
+      if (!string.IsNullOrWhiteSpace(locationTitle) && locationsByTitle.TryGetValue(locationTitle, out existingId) && !string.IsNullOrWhiteSpace(existingId))
+        return existingId;
+
+      if (!string.IsNullOrWhiteSpace(locationId))
+      {
+        var checkedByIdKey = "id:" + locationId;
+        if (checkedLocations.TryGetValue(checkedByIdKey, out var checkedById))
+        {
+          if (!string.IsNullOrWhiteSpace(checkedById))
+            return checkedById;
+        }
+        else
+        {
+          var detailResponse = client.Get(resource + "/" + Uri.EscapeDataString(locationId));
+          if (client.StatusCode == 200)
+          {
+            var resolvedId = Helper.ExtractDataId(detailResponse) ?? locationId;
+            locationsById[locationId] = resolvedId;
+            locationsById[resolvedId] = resolvedId;
+
+            var detailRoot = string.IsNullOrEmpty(detailResponse) ? null : JsonConvert.DeserializeObject<Locations.Root>(detailResponse);
+            var resolvedTitle = detailRoot?.Data?.FirstOrDefault()?.Attributes?.Title;
+            if (!string.IsNullOrWhiteSpace(resolvedTitle))
+              locationsByTitle[resolvedTitle] = resolvedId;
+
+            checkedLocations[checkedByIdKey] = resolvedId;
+            return resolvedId;
+          }
+
+          checkedLocations[checkedByIdKey] = string.Empty;
+          locationsById[locationId] = string.Empty;
+        }
+      }
+
+      if (!string.IsNullOrWhiteSpace(locationTitle))
+      {
+        var checkedByTitleKey = "title:" + locationTitle;
+        if (checkedLocations.TryGetValue(checkedByTitleKey, out var checkedByTitle))
+        {
+          if (!string.IsNullOrWhiteSpace(checkedByTitle))
+            return checkedByTitle;
+        }
+        else
+        {
+          var listResponse = client.Get(
+            resource +
+            $"?page[number]=1&page[limit]=1&filter[title]={Uri.EscapeDataString(locationTitle)}&quickfilter=&gridfilter={{}}"
+          );
+          if (client.StatusCode == 200 && !string.IsNullOrWhiteSpace(listResponse))
+          {
+            var listRoot = JsonConvert.DeserializeObject<Locations.Root>(listResponse);
+            var foundLocation = listRoot?.Data?.FirstOrDefault();
+            var resolvedId = foundLocation?.Attributes?.Id ?? foundLocation?.Id;
+            if (!string.IsNullOrWhiteSpace(resolvedId))
+            {
+              locationsById[resolvedId] = resolvedId;
+              locationsByTitle[locationTitle] = resolvedId;
+              checkedLocations[checkedByTitleKey] = resolvedId;
+              return resolvedId;
+            }
+          }
+
+          checkedLocations[checkedByTitleKey] = string.Empty;
+          locationsByTitle[locationTitle] = string.Empty;
+        }
+      }
+
+      if (!createOnTheFly)
+        return null;
+
+      if (string.IsNullOrWhiteSpace(locationTitle))
+        return null;
+
+      var payload = JsonConvert.SerializeObject(new
+      {
+        data = new
+        {
+          type = "device_locations",
+          attributes = new Dictionary<string, object?>
+          {
+            ["title"] = locationTitle
+          }
+        }
+      });
+
+      var response = client.Post(resource, payload);
+      if (client.StatusCode < 200 || client.StatusCode >= 300)
+      {
+        helper.Message(
+          $"Failed to create location (id='{locationId}', title='{locationTitle}', inventory_id='{inventoryId}', inventory_title='{inventoryTitle}', status={client.StatusCode}). Response: {response}",
+          1,
+          "ERROR"
+        );
+        return null;
+      }
+
+      var newLocationId = Helper.ExtractDataId(response);
+      if (string.IsNullOrWhiteSpace(newLocationId))
+      {
+        helper.Message(
+          $"Failed to create location (id='{locationId}', title='{locationTitle}', inventory_id='{inventoryId}', inventory_title='{inventoryTitle}'): API returned no location id.",
+          1,
+          "ERROR"
+        );
+        return null;
+      }
+
+      locationsById[newLocationId] = newLocationId;
+      locationsByTitle[locationTitle] = newLocationId;
+      checkedLocations["title:" + locationTitle] = newLocationId;
+      if (!string.IsNullOrWhiteSpace(locationId))
+        checkedLocations["id:" + locationId] = newLocationId;
+      helper.Message($"Location created on the fly: '{locationTitle}' -> {newLocationId}", 2);
+      return newLocationId;
     }
   }
 }

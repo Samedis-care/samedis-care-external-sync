@@ -182,5 +182,172 @@ namespace SamedisExternalSync
         table.Rows.Add(row);
       }
     }
+
+    public static void LoadLookups(
+      RequestData client,
+      string resource,
+      int pageSize,
+      IDictionary<string, string> departmentsById,
+      IDictionary<string, string> departmentsByTitle)
+    {
+      var firstResponse = client.Get(resource + "?page[number]=1&page[limit]=0&quickfilter=&gridfilter={}");
+      var list = string.IsNullOrEmpty(firstResponse) ? null : JsonConvert.DeserializeObject<Departments.Root>(firstResponse);
+      var totalRecords = list?.Meta?.Total ?? 0;
+      var pages = totalRecords % pageSize != 0 ? totalRecords / pageSize + 1 : totalRecords / pageSize;
+
+      for (var page = 1; page <= Math.Max(1, pages); page++)
+      {
+        var response = client.Get(resource + $"?page[number]={page}&page[limit]={pageSize}&quickfilter=&gridfilter={{}}");
+        if (string.IsNullOrEmpty(response)) continue;
+
+        var root = JsonConvert.DeserializeObject<Departments.Root>(response);
+        if (root?.Data == null) continue;
+
+        foreach (var data in root.Data)
+        {
+          var attr = data.Attributes;
+          var id = attr?.Id ?? data.Id;
+          if (string.IsNullOrWhiteSpace(id)) continue;
+
+          departmentsById[id] = id;
+
+          var title = attr?.Title;
+          if (!string.IsNullOrWhiteSpace(title))
+            departmentsByTitle[title] = id;
+        }
+      }
+    }
+
+    public static string? ResolveDepartmentId(
+      RequestData client,
+      string resource,
+      string departmentId,
+      string departmentTitle,
+      bool createOnTheFly,
+      string inventoryId,
+      string inventoryTitle,
+      IDictionary<string, string> departmentsById,
+      IDictionary<string, string> departmentsByTitle,
+      IDictionary<string, string> checkedDepartments,
+      Helper helper)
+    {
+      if (!string.IsNullOrWhiteSpace(departmentId) && departmentsById.TryGetValue(departmentId, out var existingId) && !string.IsNullOrWhiteSpace(existingId))
+        return existingId;
+
+      if (!string.IsNullOrWhiteSpace(departmentTitle) && departmentsByTitle.TryGetValue(departmentTitle, out existingId) && !string.IsNullOrWhiteSpace(existingId))
+        return existingId;
+
+      if (!string.IsNullOrWhiteSpace(departmentId))
+      {
+        var checkedByIdKey = "id:" + departmentId;
+        if (checkedDepartments.TryGetValue(checkedByIdKey, out var checkedById))
+        {
+          if (!string.IsNullOrWhiteSpace(checkedById))
+            return checkedById;
+        }
+        else
+        {
+          var detailResponse = client.Get(resource + "/" + Uri.EscapeDataString(departmentId));
+          if (client.StatusCode == 200)
+          {
+            var resolvedId = Helper.ExtractDataId(detailResponse) ?? departmentId;
+            departmentsById[departmentId] = resolvedId;
+            departmentsById[resolvedId] = resolvedId;
+
+            var detailRoot = string.IsNullOrEmpty(detailResponse) ? null : JsonConvert.DeserializeObject<Departments.Root>(detailResponse);
+            var resolvedTitle = detailRoot?.Data?.FirstOrDefault()?.Attributes?.Title;
+            if (!string.IsNullOrWhiteSpace(resolvedTitle))
+              departmentsByTitle[resolvedTitle] = resolvedId;
+
+            checkedDepartments[checkedByIdKey] = resolvedId;
+            return resolvedId;
+          }
+
+          checkedDepartments[checkedByIdKey] = string.Empty;
+          departmentsById[departmentId] = string.Empty;
+        }
+      }
+
+      if (!string.IsNullOrWhiteSpace(departmentTitle))
+      {
+        var checkedByTitleKey = "title:" + departmentTitle;
+        if (checkedDepartments.TryGetValue(checkedByTitleKey, out var checkedByTitle))
+        {
+          if (!string.IsNullOrWhiteSpace(checkedByTitle))
+            return checkedByTitle;
+        }
+        else
+        {
+          var listResponse = client.Get(
+            resource +
+            $"?page[number]=1&page[limit]=1&filter[title]={Uri.EscapeDataString(departmentTitle)}&quickfilter=&gridfilter={{}}"
+          );
+          if (client.StatusCode == 200 && !string.IsNullOrWhiteSpace(listResponse))
+          {
+            var listRoot = JsonConvert.DeserializeObject<Departments.Root>(listResponse);
+            var foundDepartment = listRoot?.Data?.FirstOrDefault();
+            var resolvedId = foundDepartment?.Attributes?.Id ?? foundDepartment?.Id;
+            if (!string.IsNullOrWhiteSpace(resolvedId))
+            {
+              departmentsById[resolvedId] = resolvedId;
+              departmentsByTitle[departmentTitle] = resolvedId;
+              checkedDepartments[checkedByTitleKey] = resolvedId;
+              return resolvedId;
+            }
+          }
+
+          checkedDepartments[checkedByTitleKey] = string.Empty;
+          departmentsByTitle[departmentTitle] = string.Empty;
+        }
+      }
+
+      if (!createOnTheFly)
+        return null;
+
+      if (string.IsNullOrWhiteSpace(departmentTitle))
+        return null;
+
+      var payload = JsonConvert.SerializeObject(new
+      {
+        data = new
+        {
+          type = "departments",
+          attributes = new Dictionary<string, object?>
+          {
+            ["title"] = departmentTitle
+          }
+        }
+      });
+
+      var response = client.Post(resource, payload);
+      if (client.StatusCode < 200 || client.StatusCode >= 300)
+      {
+        helper.Message(
+          $"Failed to create department (id='{departmentId}', title='{departmentTitle}', inventory_id='{inventoryId}', inventory_title='{inventoryTitle}', status={client.StatusCode}). Response: {response}",
+          1,
+          "ERROR"
+        );
+        return null;
+      }
+
+      var newDepartmentId = Helper.ExtractDataId(response);
+      if (string.IsNullOrWhiteSpace(newDepartmentId))
+      {
+        helper.Message(
+          $"Failed to create department (id='{departmentId}', title='{departmentTitle}', inventory_id='{inventoryId}', inventory_title='{inventoryTitle}'): API returned no department id.",
+          1,
+          "ERROR"
+        );
+        return null;
+      }
+
+      departmentsById[newDepartmentId] = newDepartmentId;
+      departmentsByTitle[departmentTitle] = newDepartmentId;
+      checkedDepartments["title:" + departmentTitle] = newDepartmentId;
+      if (!string.IsNullOrWhiteSpace(departmentId))
+        checkedDepartments["id:" + departmentId] = newDepartmentId;
+      helper.Message($"Department created on the fly: '{departmentTitle}' -> {newDepartmentId}", 2);
+      return newDepartmentId;
+    }
   }
 }

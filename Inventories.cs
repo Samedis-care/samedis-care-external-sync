@@ -457,5 +457,198 @@ namespace SamedisExternalSync
       }
     }
 
+    public static string? ResolveExistingInventoryId(
+      RequestData client,
+      string resource,
+      string inventoryId,
+      string inventoryNumber,
+      bool fallbackByDeviceNumber,
+      IDictionary<string, string> inventoryById,
+      IDictionary<string, string> inventoryByDeviceNumber,
+      ISet<string> checkedInventoryIds,
+      ISet<string> checkedInventoryNumbers)
+    {
+      if (!string.IsNullOrWhiteSpace(inventoryId))
+      {
+        if (inventoryById.TryGetValue(inventoryId, out var cachedId))
+          return string.IsNullOrWhiteSpace(cachedId) ? null : cachedId;
+
+        if (!checkedInventoryIds.Contains(inventoryId))
+        {
+          checkedInventoryIds.Add(inventoryId);
+
+          var detailResponse = client.Get(resource + "/" + Uri.EscapeDataString(inventoryId));
+          if (client.StatusCode == 200)
+          {
+            var resolvedId = Helper.ExtractDataId(detailResponse) ?? inventoryId;
+            inventoryById[inventoryId] = resolvedId;
+            inventoryById[resolvedId] = resolvedId;
+
+            var detailRoot = string.IsNullOrEmpty(detailResponse) ? null : JsonConvert.DeserializeObject<Inventories.Root>(detailResponse);
+            var resolvedDeviceNumber = detailRoot?.Data?.FirstOrDefault()?.Attributes?.DeviceNumber;
+            if (!string.IsNullOrWhiteSpace(resolvedDeviceNumber))
+              inventoryByDeviceNumber[resolvedDeviceNumber] = resolvedId;
+
+            return resolvedId;
+          }
+
+          // negative cache to prevent repeated requests for same unknown id
+          inventoryById[inventoryId] = string.Empty;
+        }
+      }
+
+      if (!fallbackByDeviceNumber || string.IsNullOrWhiteSpace(inventoryNumber))
+        return null;
+
+      if (inventoryByDeviceNumber.TryGetValue(inventoryNumber, out var cachedByDeviceNumber))
+        return string.IsNullOrWhiteSpace(cachedByDeviceNumber) ? null : cachedByDeviceNumber;
+
+      if (checkedInventoryNumbers.Contains(inventoryNumber))
+        return null;
+
+      checkedInventoryNumbers.Add(inventoryNumber);
+
+      var listResponse = client.Get(
+        resource +
+        $"?page[number]=1&page[limit]=1&filter[device_number]={Uri.EscapeDataString(inventoryNumber)}"
+      );
+      if (client.StatusCode != 200 || string.IsNullOrWhiteSpace(listResponse))
+      {
+        inventoryByDeviceNumber[inventoryNumber] = string.Empty;
+        return null;
+      }
+
+      var listRoot = JsonConvert.DeserializeObject<Root>(listResponse);
+      var resolvedByDeviceNumber = listRoot?.Data?.FirstOrDefault();
+      var resolvedByDeviceNumberId = resolvedByDeviceNumber?.Attributes?.Id ?? resolvedByDeviceNumber?.Id;
+      if (string.IsNullOrWhiteSpace(resolvedByDeviceNumberId))
+      {
+        inventoryByDeviceNumber[inventoryNumber] = string.Empty;
+        return null;
+      }
+
+      inventoryById[resolvedByDeviceNumberId] = resolvedByDeviceNumberId;
+      inventoryByDeviceNumber[inventoryNumber] = resolvedByDeviceNumberId;
+      return resolvedByDeviceNumberId;
+    }
+
+    public static Dictionary<string, object> BuildInventoryAttributes(DataRow row, string? departmentId, string? locationId)
+    {
+      var attributes = new Dictionary<string, object>();
+
+      Helper.AddStringAttribute(attributes, "external_id", Helper.GetRowValue(row, "external_id"));
+      Helper.AddStringAttribute(attributes, "device_number", Helper.GetRowValue(row, "inventory_number"));
+      Helper.AddStringAttribute(attributes, "serial_number", Helper.GetRowValue(row, "serial_number"));
+      Helper.AddStringAttribute(attributes, "catalog_id", Helper.GetRowValue(row, "catalog_id"));
+      Helper.AddStringAttribute(attributes, "commissioning_at", Helper.NormalizeDate(Helper.GetRowValue(row, "commissioning_at")));
+      Helper.AddStringAttribute(attributes, "service_partner", Helper.GetRowValue(row, "service_partner"));
+      Helper.AddStringAttribute(attributes, "comments_field", Helper.GetRowValue(row, "comments_field"));
+      Helper.AddStringAttribute(attributes, "operation_status", NormalizeOperationStatus(Helper.GetRowValue(row, "operation_status")));
+      Helper.AddStringAttribute(attributes, "retirement_date", Helper.NormalizeDate(Helper.GetRowValue(row, "retirement_date")));
+      Helper.AddStringAttribute(attributes, "status", NormalizeStatus(Helper.GetRowValue(row, "status")));
+      Helper.AddStringAttribute(attributes, "ownership", NormalizeOwnership(Helper.GetRowValue(row, "ownership")));
+      Helper.AddStringAttribute(attributes, "currency_code", NormalizeCurrency(Helper.GetRowValue(row, "currency_code")));
+      Helper.AddStringAttribute(attributes, "date_of_acquisition", Helper.NormalizeDate(Helper.GetRowValue(row, "date_of_acquisition")));
+      Helper.AddStringAttribute(attributes, "delivered_at", Helper.NormalizeDate(Helper.GetRowValue(row, "delivered_at")));
+      Helper.AddStringAttribute(attributes, "installed_at", Helper.NormalizeDate(Helper.GetRowValue(row, "installed_at")));
+      Helper.AddStringAttribute(attributes, "warranty_period", Helper.NormalizeDate(Helper.GetRowValue(row, "warranty_period")));
+      Helper.AddStringAttribute(attributes, "asset_accounting_number", Helper.GetRowValue(row, "asset_accounting_number"));
+      Helper.AddStringAttribute(attributes, "device_condition", Helper.GetRowValue(row, "device_condition"));
+      Helper.AddStringAttribute(attributes, "device_nick_name", Helper.GetRowValue(row, "device_nick_name"));
+      Helper.AddStringAttribute(attributes, "manufacturer_system_number", Helper.GetRowValue(row, "manufacturer_system_number"));
+      Helper.AddStringAttribute(attributes, "network_connectivity", Helper.GetRowValue(row, "network_connectivity"));
+      Helper.AddStringAttribute(attributes, "operating_system", Helper.GetRowValue(row, "operating_system"));
+      Helper.AddStringAttribute(attributes, "software_version", Helper.GetRowValue(row, "software_version"));
+      Helper.AddStringAttribute(attributes, "ip_address", Helper.GetRowValue(row, "ip_address"));
+      Helper.AddStringAttribute(attributes, "mac_address", Helper.GetRowValue(row, "mac_address"));
+      Helper.AddStringAttribute(attributes, "qr_code_token", Helper.GetRowValue(row, "qr_code_token"));
+      Helper.AddStringAttribute(attributes, "commissioning_through", Helper.GetRowValue(row, "commissioning_through"));
+      Helper.AddStringAttribute(attributes, "linked_image_id", Helper.GetRowValue(row, "linked_image_id"));
+      Helper.AddStringAttribute(attributes, "main_inventory_id", Helper.GetRowValue(row, "main_inventory_id"));
+      Helper.AddStringAttribute(attributes, "supplier_company_contact_id", Helper.GetRowValue(row, "supplier_company_contact_id"));
+
+      // API docs define construction_year as string.
+      Helper.AddStringAttribute(attributes, "construction_year", Helper.GetRowValue(row, "construction_year"));
+
+      if (Helper.TryParseInt(Helper.GetRowValue(row, "depreciation_in_years"), out var depreciationInYears))
+        attributes["depreciation_in_years"] = depreciationInYears;
+
+      if (Helper.TryParseInt(Helper.GetRowValue(row, "lifespan"), out var lifespan))
+        attributes["lifespan"] = lifespan;
+
+      if (Helper.TryParseDecimal(Helper.GetRowValue(row, "purchase_price"), out var purchasePrice))
+        attributes["purchase_price"] = purchasePrice;
+
+      if (Helper.TryParseLong(Helper.GetRowValue(row, "purchase_price_in_cents"), out var purchasePriceInCents))
+        attributes["purchase_price_in_cents"] = purchasePriceInCents;
+
+      if (Helper.TryParseBool(Helper.GetRowValue(row, "accessible_usb_ports"), out var accessibleUsbPorts))
+        attributes["accessible_usb_ports"] = accessibleUsbPorts;
+
+      if (Helper.TryParseBool(Helper.GetRowValue(row, "contains_patient_data"), out var containsPatientData))
+        attributes["contains_patient_data"] = containsPatientData;
+
+      if (Helper.TryParseBool(Helper.GetRowValue(row, "do_maintenance"), out var doMaintenance))
+        attributes["do_maintenance"] = doMaintenance;
+
+      if (Helper.TryParseBool(Helper.GetRowValue(row, "no_medical_device"), out var noMedicalDevice))
+        attributes["no_medical_device"] = noMedicalDevice;
+
+      if (Helper.TryParseBool(Helper.GetRowValue(row, "device_model_is_placeholder"), out var isPlaceholder))
+        attributes["device_model_is_placeholder"] = isPlaceholder;
+
+      if (!string.IsNullOrWhiteSpace(departmentId))
+        attributes["department_id"] = departmentId;
+
+      if (!string.IsNullOrWhiteSpace(locationId))
+        attributes["device_location_id"] = locationId;
+
+      return attributes;
+    }
+
+    private static string NormalizeOperationStatus(string value)
+    {
+      if (string.IsNullOrWhiteSpace(value))
+        return string.Empty;
+
+      var normalized = value.Trim().ToLowerInvariant().Replace("-", "_").Replace(" ", "_");
+      return normalized switch
+      {
+        "limited" => "limited_use",
+        "outoforder" => "out_of_order",
+        "decommission" => "decommissioned",
+        _ => normalized
+      };
+    }
+
+    private static string NormalizeStatus(string value)
+    {
+      if (string.IsNullOrWhiteSpace(value))
+        return string.Empty;
+
+      var normalized = value.Trim().ToLowerInvariant().Replace("-", "_").Replace(" ", "_");
+      return normalized switch
+      {
+        "finalise_creation" => "finalize_creation",
+        _ => normalized
+      };
+    }
+
+    private static string NormalizeOwnership(string value)
+    {
+      if (string.IsNullOrWhiteSpace(value))
+        return string.Empty;
+
+      return value.Trim().ToLowerInvariant().Replace("-", "_").Replace(" ", "_");
+    }
+
+    private static string NormalizeCurrency(string value)
+    {
+      if (string.IsNullOrWhiteSpace(value))
+        return string.Empty;
+
+      return value.Trim().ToUpperInvariant();
+    }
+
   }
 }

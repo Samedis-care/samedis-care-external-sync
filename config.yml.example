@@ -16,6 +16,9 @@ sync:
   locations_upload: false
   inventories_download: false
   inventories_upload: false
+  inventories_upload_fallback_by_device_number: false
+  inventories_upload_create_departments_on_the_fly: false
+  inventories_upload_create_locations_on_the_fly: false
   tasks_download: false
   tasks_upload: false
   # malfunction, maintenance, device_retired, recommission_device, occurrence, security_message
