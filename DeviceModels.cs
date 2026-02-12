@@ -413,6 +413,63 @@ namespace SamedisExternalSync
       }
     }
 
+    public static string? ResolveCatalogId(
+      RequestData client,
+      string resource,
+      string title,
+      string manufacturer,
+      IDictionary<string, string> catalogLookupCache)
+    {
+      var normalizedTitle = title?.Trim() ?? string.Empty;
+      if (string.IsNullOrWhiteSpace(normalizedTitle))
+        return null;
+
+      var normalizedManufacturer = manufacturer?.Trim() ?? string.Empty;
+      var cacheKey = $"{normalizedTitle}|{normalizedManufacturer}";
+
+      if (catalogLookupCache.TryGetValue(cacheKey, out var cachedCatalogId))
+        return string.IsNullOrWhiteSpace(cachedCatalogId) ? null : cachedCatalogId;
+
+      string? TryFindWithFilter(string? manufacturerField, string? manufacturerValue)
+      {
+        var filterBuilder = new FilterBuilder();
+        filterBuilder.Clear();
+        filterBuilder.Add("title", FilterBuilder.FilterType.Equals, FilterBuilder.Type.Text, normalizedTitle);
+
+        if (!string.IsNullOrWhiteSpace(manufacturerField) && !string.IsNullOrWhiteSpace(manufacturerValue))
+        {
+          filterBuilder.Add(manufacturerField, FilterBuilder.FilterType.Equals, FilterBuilder.Type.Text, manufacturerValue);
+        }
+
+        var listResponse = client.Get(
+          resource +
+          $"?page[number]=1&page[limit]=1&filter[scope]=public_and_tenant&quickfilter=&gridfilter={filterBuilder.Get()}"
+        );
+
+        if (client.StatusCode != 200 || string.IsNullOrWhiteSpace(listResponse))
+          return null;
+
+        var listRoot = JsonConvert.DeserializeObject<DeviceModels.Root>(listResponse);
+        var first = listRoot?.Data?.FirstOrDefault();
+        var foundId = first?.Attributes?.Id ?? first?.Id;
+        return string.IsNullOrWhiteSpace(foundId) ? null : foundId;
+      }
+
+      string? resolvedCatalogId = null;
+      if (!string.IsNullOrWhiteSpace(normalizedManufacturer))
+      {
+        resolvedCatalogId = TryFindWithFilter("manufacturer_according_to_type_plate", normalizedManufacturer);
+        resolvedCatalogId ??= TryFindWithFilter("current_responsible_manufacturer", normalizedManufacturer);
+      }
+      else
+      {
+        resolvedCatalogId = TryFindWithFilter(null, null);
+      }
+
+      catalogLookupCache[cacheKey] = resolvedCatalogId ?? string.Empty;
+      return resolvedCatalogId;
+    }
+
   }
 
   public class WithServiceInterval
