@@ -514,10 +514,7 @@ internal class Program
 
         var requiredColumns = new[]
         {
-          "id",
-          "inventory_number",
-          "department",
-          "location"
+          "inventory_number"
         };
 
         if (uploadTable.Rows.Count == 0)
