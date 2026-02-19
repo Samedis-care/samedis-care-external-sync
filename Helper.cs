@@ -172,7 +172,14 @@ namespace SamedisExternalSync
         return string.Empty;
 
       var value = row[columnName];
-      return value == DBNull.Value ? string.Empty : value?.ToString()?.Trim() ?? string.Empty;
+      if (value == DBNull.Value || value == null)
+        return string.Empty;
+
+      var normalized = value.ToString()?.Trim() ?? string.Empty;
+      if (string.Equals(normalized, "NULL", StringComparison.OrdinalIgnoreCase))
+        return string.Empty;
+
+      return normalized;
     }
 
     public static bool TryParseInt(string value, out int result)
