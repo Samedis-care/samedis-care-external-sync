@@ -1,5 +1,6 @@
 ﻿using Newtonsoft.Json;
 using System.Data;
+using System.Globalization;
 
 namespace SamedisExternalSync;
 
@@ -26,10 +27,29 @@ internal class Program
 
     helper.Message("Sync started.", 1);
 
-    // last run handler
-    var lastRun = File.Exists("lastrun.txt") ? File.ReadAllText("lastrun.txt") : "2022-01-01";
+    // last run handler (supports legacy date formats and writes ISO datetime with timezone)
+    const string lastRunFormat = "yyyy-MM-ddTHH:mm:ss.fffzzz";
+    var lastRunFallback = new DateTimeOffset(2022, 1, 1, 0, 0, 0, DateTimeOffset.Now.Offset).ToString(lastRunFormat, CultureInfo.InvariantCulture);
+    var lastRunFilePath = "lastrun.txt";
+    var lastRunRaw = File.Exists(lastRunFilePath) ? File.ReadAllText(lastRunFilePath).Trim() : lastRunFallback;
+
+    var acceptedLastRunFormats = new[]
+    {
+      lastRunFormat,
+      "o",
+      "yyyy-MM-ddTHH:mm:sszzz",
+      "yyyy-MM-ddTHH:mm:ssK",
+      "yyyy-MM-dd HH:mm:ss",
+      "yyyy-MM-dd"
+    };
+
+    var parsedLastRunOk =
+      DateTimeOffset.TryParseExact(lastRunRaw, acceptedLastRunFormats, CultureInfo.InvariantCulture, DateTimeStyles.AssumeLocal, out var parsedLastRun) ||
+      DateTimeOffset.TryParse(lastRunRaw, CultureInfo.InvariantCulture, DateTimeStyles.AssumeLocal, out parsedLastRun);
+
+    var lastRun = parsedLastRunOk ? parsedLastRun.ToString(lastRunFormat, CultureInfo.InvariantCulture) : lastRunFallback;
     helper.Message($"Last run: {lastRun}", 2);
-    File.WriteAllText("lastrun.txt", DateTime.Now.ToString("yyyy-MM-dd"));
+    File.WriteAllText(lastRunFilePath, DateTimeOffset.Now.ToString(lastRunFormat, CultureInfo.InvariantCulture));
 
     // init authentication
     var authUri = config.Auth.Uri;
@@ -65,12 +85,24 @@ internal class Program
     //define resource
     var samedisClient = new RequestData(samedisUri, bearerToken, httpSettings);
 
+    // tenant-level settings
+    var tenantSettings = Tenant.GetSettings(samedisClient, samedisApiVersion, samedisTenantId, helper);
+    var useExtendedDeviceLocations = tenantSettings.UseExtendedDeviceLocations;
+    var useProfitCenters = tenantSettings.UseProfitCenters;
+    var locationMode = useExtendedDeviceLocations ? "property" : "standard";
+    helper.Message(
+      $"Tenant settings loaded. TenantId: {tenantSettings.TenantId} Name: {tenantSettings.Name} LocationMode: {locationMode} use_profit_centers: {useProfitCenters}",
+      1
+    );
+
     // list settings
     var pageSize = 250; // max 250
 
-    var dataRoot = "data";
-    var downloadRoot = Path.Combine(dataRoot, "from_samedis");
-    var uploadRoot = Path.Combine(dataRoot, "to_samedis");
+    var defaultDownloadRoot = Path.Combine("data", "from_samedis");
+    var defaultUploadRoot = Path.Combine("data", "to_samedis");
+    var downloadRoot = string.IsNullOrWhiteSpace(config.Paths?.FromSamedis) ? defaultDownloadRoot : config.Paths.FromSamedis.Trim();
+    var uploadRoot = string.IsNullOrWhiteSpace(config.Paths?.ToSamedis) ? defaultUploadRoot : config.Paths.ToSamedis.Trim();
+    helper.Message($"Data paths: from_samedis='{downloadRoot}', to_samedis='{uploadRoot}'", 2);
 
     // clean up download folder only, keep upload folder for import procedures
     if (Directory.Exists(downloadRoot))
@@ -103,7 +135,7 @@ internal class Program
 
       var filterBuilder = new FilterBuilder();
       filterBuilder.Clear();
-      filterBuilder.Add("updated_at", FilterBuilder.FilterType.GreaterThan, FilterBuilder.Type.Date, lastRun);
+      filterBuilder.Add("updated_at", FilterBuilder.FilterType.GreaterThan, FilterBuilder.Type.DateTime, lastRun);
 
       var taskDownloadTypes = config.Sync.TaskDownloadTypes ?? string.Empty;
       var taskDownloadStatus = config.Sync.TaskDownloadStatus ?? string.Empty;
@@ -255,7 +287,7 @@ internal class Program
 
       var filterBuilder = new FilterBuilder();
       filterBuilder.Clear();
-      //filterBuilder.Add("updated_at", FilterBuilder.FilterType.GreaterThan, FilterBuilder.Type.Date, lastRun);
+      filterBuilder.Add("updated_at", FilterBuilder.FilterType.GreaterThan, FilterBuilder.Type.DateTime, lastRun);
 
       var requestResource = urlResource + $"?page[number]=1&page[limit]=0&quickfilter=&gridfilter={filterBuilder.Get()}";
       var response = samedisClient.Get(requestResource);
@@ -293,7 +325,7 @@ internal class Program
 
       var filterBuilder = new FilterBuilder();
       filterBuilder.Clear();
-      filterBuilder.Add("updated_at", FilterBuilder.FilterType.GreaterThan, FilterBuilder.Type.Date, lastRun);
+      filterBuilder.Add("updated_at", FilterBuilder.FilterType.GreaterThan, FilterBuilder.Type.DateTime, lastRun);
 
       var requestResource = urlResource + $"?page[number]=1&page[limit]=0&filter[scope]=public_and_tenant&quickfilter=&gridfilter={filterBuilder.Get()}";
       var response = samedisClient.Get(requestResource);
@@ -338,7 +370,7 @@ internal class Program
 
       var filterBuilder = new FilterBuilder();
       filterBuilder.Clear();
-      filterBuilder.Add("updated_at", FilterBuilder.FilterType.GreaterThan, FilterBuilder.Type.Date, lastRun);
+      filterBuilder.Add("updated_at", FilterBuilder.FilterType.GreaterThan, FilterBuilder.Type.DateTime, lastRun);
 
       var requestResource = urlResource + $"?page[number]=1&page[limit]=0&quickfilter=&gridfilter={filterBuilder.Get()}";
       var response = samedisClient.Get(requestResource);
@@ -376,7 +408,7 @@ internal class Program
 
       var filterBuilder = new FilterBuilder();
       filterBuilder.Clear();
-      filterBuilder.Add("updated_at", FilterBuilder.FilterType.GreaterThan, FilterBuilder.Type.Date, lastRun);
+      filterBuilder.Add("updated_at", FilterBuilder.FilterType.GreaterThan, FilterBuilder.Type.DateTime, lastRun);
 
       var requestResource = urlResource + $"?page[number]=1&page[limit]=0&quickfilter=&gridfilter={filterBuilder.Get()}";
       var response = samedisClient.Get(requestResource);
@@ -415,7 +447,7 @@ internal class Program
       var filterBuilder = new FilterBuilder();
 
       filterBuilder.Clear();
-      filterBuilder.Add("updated_at", FilterBuilder.FilterType.GreaterThan, FilterBuilder.Type.Date, lastRun);
+      filterBuilder.Add("updated_at", FilterBuilder.FilterType.GreaterThan, FilterBuilder.Type.DateTime, lastRun);
 
       var requestResource = urlResource + $"?page[number]=1&page[limit]=0&filter[scope]=public_and_tenant&quickfilter=&gridfilter={filterBuilder.Get()}";
       var response = samedisClient.Get(requestResource);
@@ -431,7 +463,7 @@ internal class Program
       {
         filterBuilder.Clear();
         //filterBuilder.Add("linked_image_id", FilterBuilder.FilterType.NotEmpty, FilterBuilder.Type.Text);
-        filterBuilder.Add("updated_at", FilterBuilder.FilterType.GreaterThan, FilterBuilder.Type.Date, lastRun);
+        filterBuilder.Add("updated_at", FilterBuilder.FilterType.GreaterThan, FilterBuilder.Type.DateTime, lastRun);
 
         requestResource = urlResource + $"?page[number]={page}&page[limit]={pageSize}&filter[scope]=public_and_tenant&quickfilter=&gridfilter={filterBuilder.Get()}";
         requestResource += $"&sort=[{{\"property\":\"device_model_combo_search\",\"direction\":\"ASC\"}}]";
@@ -486,6 +518,9 @@ internal class Program
       var inventoryResource = $"/api/{samedisApiVersion}/tenants/{samedisTenantId}/inventories";
       var inventoryWriteResource = inventoryResource + "?locale=en";
       var departmentsResource = $"/api/{samedisApiVersion}/tenants/{samedisTenantId}/departments";
+      var propertiesResource = $"/api/{samedisApiVersion}/tenants/{samedisTenantId}/properties";
+      var buildingsResource = $"/api/{samedisApiVersion}/tenants/{samedisTenantId}/buildings";
+      var floorsResource = $"/api/{samedisApiVersion}/tenants/{samedisTenantId}/floors";
       var locationsResource = $"/api/{samedisApiVersion}/tenants/{samedisTenantId}/device_locations";
       var deviceModelsResource = $"/api/{samedisApiVersion}/tenants/{samedisTenantId}/device_models";
       var inventoryCsvPath = Path.Combine(uploadRoot, "inventories.csv");
@@ -494,6 +529,12 @@ internal class Program
       helper.CanDo(samedisClient, departmentsResource);
       helper.CanDo(samedisClient, locationsResource);
       helper.CanDo(samedisClient, deviceModelsResource);
+      if (useExtendedDeviceLocations)
+      {
+        helper.CanDo(samedisClient, propertiesResource);
+        helper.CanDo(samedisClient, buildingsResource);
+        helper.CanDo(samedisClient, floorsResource);
+      }
 
       if (!File.Exists(inventoryCsvPath))
       {
@@ -537,9 +578,16 @@ internal class Program
           var locationsById = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
           var locationsByTitle = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
           var checkedLocations = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+          var propertiesByTitle = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+          var checkedProperties = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+          var buildingsByKey = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+          var checkedBuildings = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+          var floorsByKey = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+          var checkedFloors = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
           var deviceModelCatalogLookup = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
 
           helper.Message($"Inventories Upload source rows: {uploadTable.Rows.Count}", 1);
+          helper.Message($"Inventories Upload location mode: {(useExtendedDeviceLocations ? "property (building/floor/room)" : "standard (room only)")}", 1);
 
           var createdCount = 0;
           var updatedCount = 0;
@@ -553,7 +601,22 @@ internal class Program
             var inventoryNumber = Helper.GetRowValue(row, "inventory_number");
             var departmentTitle = Helper.GetRowValue(row, "department");
             var locationTitle = Helper.GetRowValue(row, "location");
+            var operationStatus = Helper.GetRowValue(row, "operation_status");
+            var sourceBuildingTitle = Helper.GetRowValue(row, "source_gebaeude");
+            var sourceFloorTitle = Helper.GetRowValue(row, "source_ebene");
+            var sourceRoomTitle = Helper.GetRowValue(row, "source_raum");
             var catalogId = Helper.GetRowValue(row, "catalog_id");
+
+            if (Inventories.IsRetiredOperationStatus(operationStatus))
+            {
+              skippedCount++;
+              helper.Message(
+                $"Skipped inventory row because operation_status is 'retired' and API does not allow updates for retired devices (id='{rowId}', inventory_number='{inventoryNumber}', title='{inventoryTitle}').",
+                1,
+                "WARN"
+              );
+              continue;
+            }
 
             if (string.IsNullOrWhiteSpace(catalogId))
             {
@@ -604,25 +667,153 @@ internal class Program
               continue;
             }
 
-            var locationId = Locations.ResolveLocationId(
-              samedisClient,
-              locationsResource,
-              Helper.GetRowValue(row, "location_id"),
-              locationTitle,
-              config.Sync.InventoriesUploadCreateLocationsOnTheFly,
-              rowId,
-              inventoryTitle,
-              locationsById,
-              locationsByTitle,
-              checkedLocations,
-              helper
-            );
-
-            if (!string.IsNullOrWhiteSpace(locationTitle) && string.IsNullOrWhiteSpace(locationId))
+            string? locationId = null;
+            if (useExtendedDeviceLocations)
             {
-              skippedCount++;
-              helper.Message($"Skipped inventory row because location '{locationTitle}' could not be resolved/created (id='{rowId}', inventory_number='{inventoryNumber}').", 1, "WARN");
-              continue;
+              var propertyTitle = string.IsNullOrWhiteSpace(tenantSettings.Name) ? "Default Property" : tenantSettings.Name;
+              var roomTitle = string.IsNullOrWhiteSpace(sourceRoomTitle) ? locationTitle : sourceRoomTitle;
+              var roomIdFromCsv = Helper.GetRowValue(row, "location_id");
+
+              var propertyId = Properties.ResolvePropertyId(
+                samedisClient,
+                propertiesResource,
+                propertyTitle,
+                config.Sync.InventoriesUploadCreateLocationsOnTheFly,
+                propertiesByTitle,
+                checkedProperties,
+                helper
+              );
+              if (string.IsNullOrWhiteSpace(propertyId))
+              {
+                helper.Message(
+                  $"Property '{propertyTitle}' could not be resolved/created in property mode. Proceeding without location assignment (id='{rowId}', inventory_number='{inventoryNumber}').",
+                  1,
+                  "WARN"
+                );
+              }
+              else
+              {
+                string? buildingId = null;
+                if (!string.IsNullOrWhiteSpace(sourceBuildingTitle))
+                {
+                  buildingId = Buildings.ResolveBuildingId(
+                    samedisClient,
+                    buildingsResource,
+                    propertyId,
+                    sourceBuildingTitle,
+                    config.Sync.InventoriesUploadCreateLocationsOnTheFly,
+                    rowId,
+                    inventoryTitle,
+                    buildingsByKey,
+                    checkedBuildings,
+                    helper
+                  );
+                  if (string.IsNullOrWhiteSpace(buildingId))
+                  {
+                    helper.Message(
+                      $"Building '{sourceBuildingTitle}' could not be resolved/created in property mode. Proceeding without location assignment (id='{rowId}', inventory_number='{inventoryNumber}').",
+                      1,
+                      "WARN"
+                    );
+                  }
+                }
+
+                string? floorId = null;
+                if (!string.IsNullOrWhiteSpace(sourceFloorTitle))
+                {
+                  if (string.IsNullOrWhiteSpace(buildingId))
+                  {
+                    helper.Message(
+                      $"Floor '{sourceFloorTitle}' needs a building from 'source_gebaeude' but none was provided/resolved. Proceeding without location assignment (id='{rowId}', inventory_number='{inventoryNumber}').",
+                      1,
+                      "WARN"
+                    );
+                  }
+                  else
+                  {
+                    floorId = Floors.ResolveFloorId(
+                      samedisClient,
+                      floorsResource,
+                      buildingId,
+                      sourceFloorTitle,
+                      config.Sync.InventoriesUploadCreateLocationsOnTheFly,
+                      rowId,
+                      inventoryTitle,
+                      floorsByKey,
+                      checkedFloors,
+                      helper
+                    );
+                    if (string.IsNullOrWhiteSpace(floorId))
+                    {
+                      helper.Message(
+                        $"Floor '{sourceFloorTitle}' could not be resolved/created in property mode. Proceeding without location assignment (id='{rowId}', inventory_number='{inventoryNumber}').",
+                        1,
+                        "WARN"
+                      );
+                    }
+                  }
+                }
+
+                if (!string.IsNullOrWhiteSpace(roomTitle) && string.IsNullOrWhiteSpace(floorId) && string.IsNullOrWhiteSpace(roomIdFromCsv))
+                {
+                  helper.Message(
+                    $"Room '{roomTitle}' needs a floor from 'source_ebene' (or an explicit location_id) in property mode. Proceeding without location assignment (id='{rowId}', inventory_number='{inventoryNumber}').",
+                    1,
+                    "WARN"
+                  );
+                }
+                else
+                {
+                  locationId = Locations.ResolveLocationId(
+                    samedisClient,
+                    locationsResource,
+                    roomIdFromCsv,
+                    roomTitle,
+                    config.Sync.InventoriesUploadCreateLocationsOnTheFly,
+                    rowId,
+                    inventoryTitle,
+                    locationsById,
+                    locationsByTitle,
+                    checkedLocations,
+                    helper,
+                    propertyId,
+                    buildingId,
+                    floorId
+                  );
+
+                  if (!string.IsNullOrWhiteSpace(roomTitle) && string.IsNullOrWhiteSpace(locationId))
+                  {
+                    helper.Message(
+                      $"Room '{roomTitle}' could not be resolved/created in property mode. Proceeding without location assignment (id='{rowId}', inventory_number='{inventoryNumber}').",
+                      1,
+                      "WARN"
+                    );
+                  }
+                }
+              }
+            }
+            else
+            {
+              locationId = Locations.ResolveLocationId(
+                samedisClient,
+                locationsResource,
+                Helper.GetRowValue(row, "location_id"),
+                locationTitle,
+                config.Sync.InventoriesUploadCreateLocationsOnTheFly,
+                rowId,
+                inventoryTitle,
+                locationsById,
+                locationsByTitle,
+                checkedLocations,
+                helper
+              );
+
+              if (!string.IsNullOrWhiteSpace(locationTitle) && string.IsNullOrWhiteSpace(locationId))
+              {
+                skippedCount++;
+                helper.Message($"Skipped inventory row because location '{locationTitle}' could not be resolved/created (id='{rowId}', inventory_number='{inventoryNumber}').", 1, "WARN");
+                continue;
+              }
             }
 
             var targetInventoryId = Inventories.ResolveExistingInventoryId(
@@ -719,7 +910,7 @@ internal class Program
       var filterBuilder = new FilterBuilder();
 
       filterBuilder.Clear();
-      filterBuilder.Add("updated_at", FilterBuilder.FilterType.GreaterThan, FilterBuilder.Type.Date, lastRun);
+      filterBuilder.Add("updated_at", FilterBuilder.FilterType.GreaterThan, FilterBuilder.Type.DateTime, lastRun);
 
       var requestResource = urlResource + $"?page[number]=1&page[limit]=0&variant=regular&quickfilter=&gridfilter={filterBuilder.Get()}";
       var response = samedisClient.Get(requestResource);

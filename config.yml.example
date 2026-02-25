@@ -6,6 +6,9 @@ samedis:
   uri: "https://sync.samedis.care"
   api_version: "v4"
   tenant_id: "63f5c0491b57cc000df2b2c7"
+paths:
+  from_samedis: "data/from_samedis"
+  to_samedis: "data/to_samedis"
 sync:
   device_types: false
   contacts: false
