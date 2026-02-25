@@ -629,6 +629,11 @@ namespace SamedisExternalSync
       return attributes;
     }
 
+    public static bool IsRetiredOperationStatus(string value)
+    {
+      return string.Equals(NormalizeOperationStatus(value), "retired", StringComparison.OrdinalIgnoreCase);
+    }
+
     private static string NormalizeOperationStatus(string value)
     {
       if (string.IsNullOrWhiteSpace(value))

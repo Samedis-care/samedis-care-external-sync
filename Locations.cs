@@ -207,12 +207,20 @@ namespace SamedisExternalSync
       IDictionary<string, string> locationsById,
       IDictionary<string, string> locationsByTitle,
       IDictionary<string, string> checkedLocations,
-      Helper helper)
+      Helper helper,
+      string? propertyId = null,
+      string? buildingId = null,
+      string? floorId = null)
     {
       if (!string.IsNullOrWhiteSpace(locationId) && locationsById.TryGetValue(locationId, out var existingId) && !string.IsNullOrWhiteSpace(existingId))
         return existingId;
 
-      if (!string.IsNullOrWhiteSpace(locationTitle) && locationsByTitle.TryGetValue(locationTitle, out existingId) && !string.IsNullOrWhiteSpace(existingId))
+      var normalizedLocationTitle = locationTitle?.Trim() ?? string.Empty;
+      var hasHierarchyScope = !string.IsNullOrWhiteSpace(propertyId) || !string.IsNullOrWhiteSpace(buildingId) || !string.IsNullOrWhiteSpace(floorId);
+      var scopeKey = hasHierarchyScope ? $"{propertyId ?? string.Empty}|{buildingId ?? string.Empty}|{floorId ?? string.Empty}" : string.Empty;
+      var titleLookupKey = hasHierarchyScope ? $"{scopeKey}|{normalizedLocationTitle}" : normalizedLocationTitle;
+
+      if (!string.IsNullOrWhiteSpace(normalizedLocationTitle) && locationsByTitle.TryGetValue(titleLookupKey, out existingId) && !string.IsNullOrWhiteSpace(existingId))
         return existingId;
 
       if (!string.IsNullOrWhiteSpace(locationId))
@@ -233,9 +241,15 @@ namespace SamedisExternalSync
             locationsById[resolvedId] = resolvedId;
 
             var detailRoot = string.IsNullOrEmpty(detailResponse) ? null : JsonConvert.DeserializeObject<Locations.Root>(detailResponse);
-            var resolvedTitle = detailRoot?.Data?.FirstOrDefault()?.Attributes?.Title;
+            var resolvedAttributes = detailRoot?.Data?.FirstOrDefault()?.Attributes;
+            var resolvedTitle = resolvedAttributes?.Title;
             if (!string.IsNullOrWhiteSpace(resolvedTitle))
-              locationsByTitle[resolvedTitle] = resolvedId;
+            {
+              var resolvedTitleKey = hasHierarchyScope
+                ? $"{resolvedAttributes?.PropertyId ?? propertyId ?? string.Empty}|{resolvedAttributes?.BuildingId ?? buildingId ?? string.Empty}|{resolvedAttributes?.FloorId ?? floorId ?? string.Empty}|{resolvedTitle}"
+                : resolvedTitle;
+              locationsByTitle[resolvedTitleKey] = resolvedId;
+            }
 
             checkedLocations[checkedByIdKey] = resolvedId;
             return resolvedId;
@@ -246,9 +260,9 @@ namespace SamedisExternalSync
         }
       }
 
-      if (!string.IsNullOrWhiteSpace(locationTitle))
+      if (!string.IsNullOrWhiteSpace(normalizedLocationTitle))
       {
-        var checkedByTitleKey = "title:" + locationTitle;
+        var checkedByTitleKey = "title:" + titleLookupKey;
         if (checkedLocations.TryGetValue(checkedByTitleKey, out var checkedByTitle))
         {
           if (!string.IsNullOrWhiteSpace(checkedByTitle))
@@ -258,7 +272,13 @@ namespace SamedisExternalSync
         {
           var filterBuilder = new FilterBuilder();
           filterBuilder.Clear();
-          filterBuilder.Add("title", FilterBuilder.FilterType.Equals, FilterBuilder.Type.Text, Uri.EscapeDataString(locationTitle));
+          filterBuilder.Add("title", FilterBuilder.FilterType.Equals, FilterBuilder.Type.Text, Uri.EscapeDataString(normalizedLocationTitle));
+          if (!string.IsNullOrWhiteSpace(propertyId))
+            filterBuilder.Add("property_id", FilterBuilder.FilterType.Equals, FilterBuilder.Type.ObjectId, propertyId);
+          if (!string.IsNullOrWhiteSpace(buildingId))
+            filterBuilder.Add("building_id", FilterBuilder.FilterType.Equals, FilterBuilder.Type.ObjectId, buildingId);
+          if (!string.IsNullOrWhiteSpace(floorId))
+            filterBuilder.Add("floor_id", FilterBuilder.FilterType.Equals, FilterBuilder.Type.ObjectId, floorId);
 
           var listResponse = client.Get(
             resource +
@@ -272,36 +292,44 @@ namespace SamedisExternalSync
             if (!string.IsNullOrWhiteSpace(resolvedId))
             {
               locationsById[resolvedId] = resolvedId;
-              locationsByTitle[locationTitle] = resolvedId;
+              locationsByTitle[titleLookupKey] = resolvedId;
               checkedLocations[checkedByTitleKey] = resolvedId;
               return resolvedId;
             }
           }
 
           checkedLocations[checkedByTitleKey] = string.Empty;
-          locationsByTitle[locationTitle] = string.Empty;
+          locationsByTitle[titleLookupKey] = string.Empty;
         }
       }
 
       if (!createOnTheFly)
         return null;
 
-      if (string.IsNullOrWhiteSpace(locationTitle))
+      if (string.IsNullOrWhiteSpace(normalizedLocationTitle))
         return null;
+
+      var createPayload = new Dictionary<string, object?>
+      {
+        ["title"] = normalizedLocationTitle
+      };
+      if (!string.IsNullOrWhiteSpace(propertyId))
+        createPayload["property_id"] = propertyId;
+      if (!string.IsNullOrWhiteSpace(buildingId))
+        createPayload["building_id"] = buildingId;
+      if (!string.IsNullOrWhiteSpace(floorId))
+        createPayload["floor_id"] = floorId;
 
       var payload = JsonConvert.SerializeObject(new
       {
-        data = new Dictionary<string, object?>
-        {
-          ["title"] = locationTitle
-        }
+        data = createPayload
       });
 
       var response = client.Post(resource, payload);
       if (client.StatusCode < 200 || client.StatusCode >= 300)
       {
         helper.Message(
-          $"Failed to create location (id='{locationId}', title='{locationTitle}', inventory_id='{inventoryId}', inventory_title='{inventoryTitle}', status={client.StatusCode}). Response: {response}",
+          $"Failed to create location (id='{locationId}', title='{normalizedLocationTitle}', property_id='{propertyId}', building_id='{buildingId}', floor_id='{floorId}', inventory_id='{inventoryId}', inventory_title='{inventoryTitle}', status={client.StatusCode}). Response: {response}",
           1,
           "ERROR"
         );
@@ -312,7 +340,7 @@ namespace SamedisExternalSync
       if (string.IsNullOrWhiteSpace(newLocationId))
       {
         helper.Message(
-          $"Failed to create location (id='{locationId}', title='{locationTitle}', inventory_id='{inventoryId}', inventory_title='{inventoryTitle}'): API returned no location id.",
+          $"Failed to create location (id='{locationId}', title='{normalizedLocationTitle}', property_id='{propertyId}', building_id='{buildingId}', floor_id='{floorId}', inventory_id='{inventoryId}', inventory_title='{inventoryTitle}'): API returned no location id.",
           1,
           "ERROR"
         );
@@ -320,11 +348,11 @@ namespace SamedisExternalSync
       }
 
       locationsById[newLocationId] = newLocationId;
-      locationsByTitle[locationTitle] = newLocationId;
-      checkedLocations["title:" + locationTitle] = newLocationId;
+      locationsByTitle[titleLookupKey] = newLocationId;
+      checkedLocations["title:" + titleLookupKey] = newLocationId;
       if (!string.IsNullOrWhiteSpace(locationId))
         checkedLocations["id:" + locationId] = newLocationId;
-      helper.Message($"Location created on the fly: '{locationTitle}' -> {newLocationId}", 2);
+      helper.Message($"Location created on the fly: '{normalizedLocationTitle}' -> {newLocationId}", 2);
       return newLocationId;
     }
   }

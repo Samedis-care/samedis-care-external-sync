@@ -8,6 +8,7 @@ namespace SamedisExternalSync
   {
     public AuthConfig Auth { get; set; } = new AuthConfig();
     public SamedisConfig Samedis { get; set; } = new SamedisConfig();
+    public PathsConfig Paths { get; set; } = new PathsConfig();
     public LoggingConfig Logging { get; set; } = new LoggingConfig();
     public HttpConfig Http { get; set; } = new HttpConfig();
     public SyncSettings Sync { get; set; } = new SyncSettings();
@@ -34,6 +35,12 @@ namespace SamedisExternalSync
     public string? Uri { get; set; }
     public string? ApiVersion { get; set; }
     public string? TenantId { get; set; }
+  }
+
+  public class PathsConfig
+  {
+    public string? FromSamedis { get; set; } = "data/from_samedis";
+    public string? ToSamedis { get; set; } = "data/to_samedis";
   }
 
 
