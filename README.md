@@ -1,113 +1,185 @@
 # samedis-care-external-sync
 
-SamedisExternalSync is a .NET 8 console application that syncs data from the Samedis API and exports it to CSV files. It supports downloading device types, departments, locations, device models, inventories, tasks, and requests, and can download task documents and protocols when enabled. Inventories upload is implemented from `data/to_samedis/inventories.csv`; other upload flows are still not implemented.
+SamedisExternalSync is a .NET 8 console application that synchronizes data with the Samedis API.
 
-> **TODO** Extend this project to also handle read csv files to update data in Samedis.care using proper API calls.
+Current implementation focus:
+- Download sync: `tasks`, `requests`, `device_types`, `departments`, `locations`, `device_models`, `inventories`
+- Upload sync: `inventories` from CSV (`<to_samedis>/inventories.csv`)
+- Task file download: task documents and test protocols
+
+Not implemented yet:
+- `tasks_upload`
+- `requests_upload`
+- `departments_upload`
+- `locations_upload`
+- dedicated `contacts` / `trainings` sync flows
 
 ## Requirements
 
 - .NET SDK 8.0
-- Samedis API credentials (client id/secret and tenant id)
-- Network access to the Samedis API and identity endpoints
+- Samedis credentials (`auth.client_id`, `auth.client_secret`)
+- Samedis tenant (`samedis.tenant_id`)
+- Network access to Identity and Samedis API endpoints
 
-## Installation and setup
+## Setup
 
-1. Copy the example config to a working config file:
+1. Create config file:
 
 ```bash
 cp config.yml.example config.yml
 ```
 
-2. Edit `config.yml` and fill in your auth and tenant settings.
-3. Run the application from the repo root so it can find `config.yml`.
+2. Fill in credentials and tenant values in `config.yml`.
+3. Run from repository root (the app expects `config.yml` in current working directory).
 
-## Configuration (config.yml)
+## Run
 
-`config.yml` is required and must be located in the working directory when the app starts. The config is loaded with underscored (snake_case) keys.
-
-### auth
-
-- `uri`: Identity service base URL (for example `https://ident.services`).
-- `client_id`: Service account email or client id.
-- `client_secret`: Service account client secret.
-
-### samedis
-
-- `uri`: Samedis API base URL.
-- `api_version`: API version string (for example `v4`).
-- `tenant_id`: Tenant identifier.
-
-### sync
-
-Feature flags to enable or disable each sync flow.
-
-- `device_types`: Download device types.
-- `device_models`: Download device models (also downloads manufacturers).
-- `contacts`: Reserved (not used in the current flow).
-- `departments_download`: Download departments.
-- `departments_upload`: Upload departments (not implemented).
-- `locations_download`: Download locations.
-- `locations_upload`: Upload locations (not implemented).
-- `inventories_download`: Download inventories.
-- `inventories_upload`: Upload inventories from `data/to_samedis/inventories.csv`.
-- `inventories_upload_fallback_by_device_number`: If `true`, update matching inventory by `inventory_number` when CSV `id` is missing or not found.
-- `inventories_upload_create_departments_on_the_fly`: If `true`, create missing departments by exact title match from CSV column `department`.
-- `inventories_upload_create_locations_on_the_fly`: If `true`, create missing locations by exact title match from CSV column `location`.
-- `tasks_download`: Download tasks and task documents.
-- `tasks_upload`: Upload tasks (not implemented).
-- `task_download_types`: Comma-separated list of task types (for example `maintenance`).
-- `task_archive_filter`: Boolean filter for archived tasks.
-- `task_download_status`: Comma-separated list of task status values (for example `done`).
-- `requests_download`: Download requests.
-- `requests_upload`: Upload requests (not implemented).
-- `trainings`: Reserved (not used in the current flow).
-
-### logging
-
-- `level`: `0` off, `1` on, `2` debug.
-- `mode`: `0` none, `1` console, `2` logfile, `3` console and logfile.
-
-### http
-
-- `valid_certificate`: Validate TLS certificates (set `false` for self-signed only if needed).
-- `proxy`: Proxy URL (empty for no proxy).
-- `proxy_username`: Proxy username (optional).
-- `proxy_password`: Proxy password (optional).
-
-### import_mode and import_sql (currently unused)
-
-The example file includes `import_mode`, `import_file`, and `import_sql` blocks. These keys are not read by the current codebase and are safe to ignore or remove unless you extend the project to use them.
+```bash
+dotnet run
+```
 
 ## Build
-
-Build a release binary:
 
 ```bash
 dotnet build -c Release
 ```
 
-Create a self-contained single-file build (choose your runtime identifier):
-
 ```bash
 dotnet publish -c Release -r linux-x64 --self-contained true /p:PublishSingleFile=true
 ```
 
-### Windows (single EXE)
-
-Build a single self-contained EXE for Windows:
+Windows single EXE:
 
 ```powershell
 dotnet publish -c Release -r win-x64 --self-contained true /p:PublishSingleFile=true
 ```
 
-The publish output folder will contain one executable. For xcopy-style deployment, copy only:
+## Runtime Behavior
 
-- the generated `.exe`
-- `config.yml`
+- `config.yml` is mandatory.
+- `lastrun.txt` is used as incremental sync cursor (`updated_at > lastRun`).
+- If `lastrun.txt` is missing or invalid, fallback is `2022-01-01T00:00:00.000<local-offset>`.
+- On every run, `<paths.from_samedis>` is deleted and recreated.
+- `<paths.to_samedis>` is created if missing and kept (not cleaned).
+- Tenant settings are loaded via `/api/{version}/user/tenants/{tenant_id}`.
+- If tenant settings cannot be loaded, fallback is `standard` location mode.
 
-## Runtime output
+## config.yml Reference
 
-- CSV exports are written to `data/from_samedis/`.
-- Task documents and protocols are written to `data/from_samedis/task_documents/`.
-- Last run date is tracked in `lastrun.txt`.
-- Logs are written based on the `logging` settings.
+Configuration keys are deserialized in snake_case (YAML) to C# classes.
+
+### `auth`
+
+| Key | Type | Required | Default | Description |
+|---|---|---|---|---|
+| `auth.uri` | string | yes | none | Identity base URL used for login (`/api/v1/samedis.care/oauth/token`). |
+| `auth.client_id` | string | yes | none | Login identity (currently sent as `email` form field). |
+| `auth.client_secret` | string | yes | none | Login secret (currently sent as `password` form field). |
+
+### `samedis`
+
+| Key | Type | Required | Default | Description |
+|---|---|---|---|---|
+| `samedis.uri` | string | yes | none | Base URL for all Samedis API requests. |
+| `samedis.api_version` | string | yes | none | API version path segment, e.g. `v4`. |
+| `samedis.tenant_id` | string | yes | none | Tenant ID used in tenant-scoped resources. |
+
+### `paths`
+
+| Key | Type | Required | Default | Description |
+|---|---|---|---|---|
+| `paths.from_samedis` | string | no | `data/from_samedis` | Export target folder. Important: folder is wiped at start of each run. |
+| `paths.to_samedis` | string | no | `data/to_samedis` | Input folder for uploads. Currently used for `inventories.csv`. |
+
+### `sync`
+
+| Key | Type | Default | Implemented | Description |
+|---|---|---|---|---|
+| `sync.device_types` | bool | `false` | yes | Downloads device types to `<from_samedis>/devicetypes.csv`. |
+| `sync.device_models` | bool | `true` | yes | Downloads device models and manufacturers to `devicemodels.csv` and `devicemanufacturers.csv`. |
+| `sync.contacts` | bool | `false` | no | Currently not used in control flow. |
+| `sync.departments_download` | bool | `false` | yes | Downloads departments to `departments.csv`. |
+| `sync.departments_upload` | bool | `false` | no | Flag exists, but upload flow is not implemented. |
+| `sync.locations_download` | bool | `false` | yes | Downloads locations to `locations.csv`. |
+| `sync.locations_upload` | bool | `false` | no | Flag exists, but upload flow is not implemented. |
+| `sync.inventories_download` | bool | `false` | yes | Downloads inventories to `inventories.csv`. |
+| `sync.inventories_upload` | bool | `false` | yes | Uploads inventories from `<to_samedis>/inventories.csv`. |
+| `sync.inventories_upload_fallback_by_device_number` | bool | `false` | yes | If ID lookup fails/missing, resolve target inventory by `inventory_number` (`device_number`). |
+| `sync.inventories_upload_create_departments_on_the_fly` | bool | `false` | yes | Allows creating missing departments from CSV title. |
+| `sync.inventories_upload_create_locations_on_the_fly` | bool | `false` | yes | Allows creating missing locations; in property mode also property/building/floor. |
+| `sync.tasks_download` | bool | `false` | yes | Downloads tasks to `tasks.csv`, plus task documents/protocol files into `task_documents/`. |
+| `sync.tasks_upload` | bool | `false` | no | Flag exists, but upload flow is not implemented. |
+| `sync.task_download_types` | string | `maintenance` | yes | Passed as `filter[issue_type]`. Comma-separated values are supported by API. |
+| `sync.task_archive_filter` | bool | `true` | yes | Passed as `filter[archive]=true/false`. |
+| `sync.task_download_status` | string | `done` | yes | Passed as `filter[status]`. |
+| `sync.requests_download` | bool | `false` | yes | Downloads requests to `requests.csv`. |
+| `sync.requests_upload` | bool | `false` | no | Flag exists, but upload flow is not implemented. |
+| `sync.trainings` | bool | `false` | no | Currently not used in control flow. |
+
+### `logging`
+
+| Key | Type | Default | Description |
+|---|---|---|---|
+| `logging.level` | int | `0` | `0=off`, `1=info`, `2=debug`. |
+| `logging.mode` | int | `0` | `0=none`, `1=console`, `2=file`, `3=console+file`. |
+
+When logfile mode is active, logs are written to `log/Logfile_<date>.log`.
+
+### `http`
+
+| Key | Type | Default | Description |
+|---|---|---|---|
+| `http.valid_certificate` | bool | `false` | If `false`, TLS certificate validation is disabled for API/auth and file downloads. |
+| `http.proxy` | string | empty | Proxy address. Use a full URI (recommended: `http://host:port`). |
+| `http.proxy_username` | string | empty | Optional proxy username. |
+| `http.proxy_password` | string | empty | Optional proxy password. |
+
+### Keys present in `config.yml.example` but currently unused
+
+The following keys are currently not read anywhere in code:
+- `import_mode`
+- `import_file`
+- `import_sql.*`
+
+## Inventories Upload CSV
+
+Source file:
+- `<paths.to_samedis>/inventories.csv`
+
+Format:
+- delimiter is `;`
+- header row required
+- minimum required column: `inventory_number`
+
+Important lookup columns:
+- `id` (preferred target ID for update)
+- `inventory_number` (required; also used for fallback lookup)
+- `catalog_id` (optional direct model reference)
+- `title`, `device_model_title`, `manufacturer`, `responsible_manufacturer` (used for catalog auto-resolution if `catalog_id` is empty)
+- `department_id`, `department`
+- `location_id`, `location`
+- `source_gebaeude`, `source_ebene`, `source_raum` (used in tenant property mode)
+
+Rows with `operation_status` resolved to `retired` are skipped.
+
+## Output Files
+
+Depending on enabled sync flags, these files are generated in `<paths.from_samedis>`:
+- `tasks.csv`
+- `requests.csv`
+- `devicetypes.csv`
+- `departments.csv`
+- `locations.csv`
+- `devicemodels.csv`
+- `devicemanufacturers.csv`
+- `inventories.csv`
+- `task_documents/*` (task documents and protocol files)
+
+Additional files in project root:
+- `lastrun.txt`
+- `log/...` (if enabled by `logging.mode`)
+
+## Security Notes
+
+- `config.yml` contains secrets. Do not commit real credentials.
+- Use `http.valid_certificate: false` only in controlled environments (staging/dev with self-signed certs).
