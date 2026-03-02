@@ -82,6 +82,14 @@ namespace SamedisExternalSync
       File.AppendAllText(Path.Combine("log", LogFile), logContent + "\n");
     }
 
+    public void LogListStatus(RequestData client, string requestResource, int totalRecords, int pages)
+    {
+      Message($"Status Code: {client.StatusCode} {client.Status}", 2);
+      if (client.StatusCode >= 400)
+        Message($"Request URI: {requestResource}", 1, "ERROR");
+      Message($"Total: {totalRecords} Pages: {pages}", 2);
+    }
+
     public static bool CheckColumnsExist(DataTable dataTable, string[] requiredColumns)
     {
       foreach (var columnName in requiredColumns)

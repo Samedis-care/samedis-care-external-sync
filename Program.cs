@@ -149,8 +149,7 @@ internal class Program
       var totalRecords = taskList?.Meta?.Total ?? 0;
       var pages = totalRecords % pageSize != 0 ? totalRecords / pageSize + 1 : totalRecords / pageSize;
 
-      helper.Message($"Status Code: {samedisClient.StatusCode} {samedisClient.Status}", 2);
-      helper.Message($"Total: {totalRecords} Pages: {pages}", 2);
+      helper.LogListStatus(samedisClient, requestResource, totalRecords, pages);
 
       for (var page = 1; page <= pages; page++)
       {
@@ -295,8 +294,7 @@ internal class Program
       var totalRecords = requestList?.Meta?.Total ?? 0;
       var pages = totalRecords % pageSize != 0 ? totalRecords / pageSize + 1 : totalRecords / pageSize;
 
-      helper.Message($"Status Code: {samedisClient.StatusCode} {samedisClient.Status}", 2);
-      helper.Message($"Total: {totalRecords} Pages: {pages}", 2);
+      helper.LogListStatus(samedisClient, requestResource, totalRecords, pages);
 
       for (var page = 1; page <= pages; page++)
       {
@@ -304,6 +302,9 @@ internal class Program
         response = samedisClient.Get(requestResource);
         helper.Message($"Page {page}", 2);
         helper.Message($"Status Code: {samedisClient.StatusCode} {samedisClient.Status}", 2);
+        if (samedisClient.StatusCode >= 400)
+          helper.Message($"Request URI: {requestResource}", 1, "ERROR");
+
 
         if (string.IsNullOrEmpty(response)) continue;
         var rDs = Requests.CreateRequestDataSet();
@@ -333,8 +334,7 @@ internal class Program
       var totalRecords = typelist?.Meta?.Total ?? 0;
       var pages = totalRecords % pageSize != 0 ? totalRecords / pageSize + 1 : totalRecords / pageSize;
 
-      helper.Message($"Status Code: {samedisClient.StatusCode} {samedisClient.Status}", 2);
-      helper.Message($"Total: {totalRecords} Pages: {pages}", 2);
+      helper.LogListStatus(samedisClient, requestResource, totalRecords, pages);
 
       // get data
       for (var page = 1; page <= pages; page++)
@@ -378,8 +378,7 @@ internal class Program
       var totalRecords = departmentList?.Meta?.Total ?? 0;
       var pages = totalRecords % pageSize != 0 ? totalRecords / pageSize + 1 : totalRecords / pageSize;
 
-      helper.Message($"Status Code: {samedisClient.StatusCode} {samedisClient.Status}", 2);
-      helper.Message($"Total: {totalRecords} Pages: {pages}", 2);
+      helper.LogListStatus(samedisClient, requestResource, totalRecords, pages);
 
       for (var page = 1; page <= pages; page++)
       {
@@ -416,8 +415,7 @@ internal class Program
       var totalRecords = locationList?.Meta?.Total ?? 0;
       var pages = totalRecords % pageSize != 0 ? totalRecords / pageSize + 1 : totalRecords / pageSize;
 
-      helper.Message($"Status Code: {samedisClient.StatusCode} {samedisClient.Status}", 2);
-      helper.Message($"Total: {totalRecords} Pages: {pages}", 2);
+      helper.LogListStatus(samedisClient, requestResource, totalRecords, pages);
 
       for (var page = 1; page <= pages; page++)
       {
@@ -455,8 +453,7 @@ internal class Program
       var totalRecords = modellist?.Meta?.Total ?? 0;
       var pages = totalRecords % pageSize != 0 ? totalRecords / pageSize + 1 : totalRecords / pageSize;
 
-      helper.Message($"Status Code: {samedisClient.StatusCode} {samedisClient.Status}", 2);
-      helper.Message($"Total: {totalRecords} Pages: {pages}", 2);
+      helper.LogListStatus(samedisClient, requestResource, totalRecords, pages);
 
       // get data
       for (var page = 1; page <= pages; page++)
@@ -918,8 +915,7 @@ internal class Program
       var totalRecords = inventoryList?.Meta?.Total ?? 0;
       var pages = totalRecords % pageSize != 0 ? totalRecords / pageSize + 1 : totalRecords / pageSize;
 
-      helper.Message($"Status Code: {samedisClient.StatusCode} {samedisClient.Status}", 2);
-      helper.Message($"Total: {totalRecords} Pages: {pages}", 2);
+      helper.LogListStatus(samedisClient, requestResource, totalRecords, pages);
 
       // get data
       for (var page = 1; page <= pages; page++)
