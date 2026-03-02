@@ -104,20 +104,22 @@ public class FilterBuilder
       if (conditions.Count == 1)
       {
         var singleCondition = conditions[0];
+        var valueFromKey = GetFromValueKey(singleCondition.Type);
+        var valueToKey = GetToValueKey(singleCondition.Type);
         var singleFilter = new Dictionary<string, object>
                     {
-                        { "filterType", ConvertToCamelCaseWithUnderscores(singleCondition.Type.ToString()) },
-                        { "type", ConvertToCamelCaseWithUnderscores(singleCondition.FilterType.ToString()) }
+                        { "filterType", ToFilterType(singleCondition.Type) },
+                        { "type", ToConditionType(singleCondition.FilterType) }
                     };
 
         if (singleCondition.FilterType != FilterType.Empty && singleCondition.FilterType != FilterType.NotEmpty)
         {
-          singleFilter.Add(singleCondition.Type == Type.Date || singleCondition.Type == Type.DateTime ? "dateFrom" : "filter", FormatValue(singleCondition.Value, singleCondition.Type));
+          singleFilter.Add(valueFromKey, FormatValue(singleCondition.Value, singleCondition.Type));
         }
 
         if (singleCondition.ValueTo != null)
         {
-          singleFilter.Add(singleCondition.Type == Type.Date || singleCondition.Type == Type.DateTime ? "dateTo" : "filterTo", FormatValue(singleCondition.ValueTo, singleCondition.Type));
+          singleFilter.Add(valueToKey, FormatValue(singleCondition.ValueTo, singleCondition.Type));
         }
 
         result[column.Key] = singleFilter;
@@ -126,27 +128,36 @@ public class FilterBuilder
       {
         var compoundFilter = new Dictionary<string, object>();
         int conditionNumber = 1;
+        Type? firstConditionType = null;
 
         foreach (var condition in conditions)
         {
+          firstConditionType ??= condition.Type;
+          var valueFromKey = GetFromValueKey(condition.Type);
+          var valueToKey = GetToValueKey(condition.Type);
           var conditionKey = $"condition{conditionNumber++}";
           var conditionDict = new Dictionary<string, object>
                         {
-                            { "filterType", ConvertToCamelCaseWithUnderscores(condition.Type.ToString()) },
-                            { "type", ConvertToCamelCaseWithUnderscores(condition.FilterType.ToString()) }
+                            { "filterType", ToFilterType(condition.Type) },
+                            { "type", ToConditionType(condition.FilterType) }
                         };
 
           if (condition.FilterType != FilterType.Empty && condition.FilterType != FilterType.NotEmpty)
           {
-            conditionDict.Add(condition.Type == Type.Date || condition.Type == Type.DateTime ? "dateFrom" : "filter", FormatValue(condition.Value, condition.Type));
+            conditionDict.Add(valueFromKey, FormatValue(condition.Value, condition.Type));
           }
 
           if (condition.ValueTo != null)
           {
-            conditionDict.Add(condition.Type == Type.Date || condition.Type == Type.DateTime ? "dateTo" : "filterTo", FormatValue(condition.ValueTo, condition.Type));
+            conditionDict.Add(valueToKey, FormatValue(condition.ValueTo, condition.Type));
           }
 
           compoundFilter[conditionKey] = conditionDict;
+        }
+
+        if (firstConditionType.HasValue)
+        {
+          compoundFilter["filterType"] = ToFilterType(firstConditionType.Value);
         }
 
         if (fieldFilters.FieldOperator.HasValue)
@@ -165,8 +176,44 @@ public class FilterBuilder
     if (value == null) return "";
     if (type == Type.ObjectId && value is IEnumerable<string>)
       return value;
+    if (type == Type.Date)
+      return NormalizeDateValue(value);
+    if (type == Type.DateTime)
+      return NormalizeDateTimeValue(value);
 
     return UrlEncodeValue(value);
+  }
+
+  private static string NormalizeDateValue(object value)
+  {
+    if (value is DateTimeOffset dto)
+      return dto.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
+    if (value is DateTime dt)
+      return dt.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
+
+    var raw = value.ToString() ?? string.Empty;
+    if (DateTimeOffset.TryParse(raw, CultureInfo.InvariantCulture, DateTimeStyles.AssumeLocal, out var parsedDto))
+      return parsedDto.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
+    if (DateTime.TryParse(raw, CultureInfo.InvariantCulture, DateTimeStyles.AssumeLocal, out var parsedDt))
+      return parsedDt.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
+
+    return raw;
+  }
+
+  private static string NormalizeDateTimeValue(object value)
+  {
+    if (value is DateTimeOffset dto)
+      return dto.ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ss.fff'Z'", CultureInfo.InvariantCulture);
+    if (value is DateTime dt)
+      return dt.ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ss.fff'Z'", CultureInfo.InvariantCulture);
+
+    var raw = value.ToString() ?? string.Empty;
+    if (DateTimeOffset.TryParse(raw, CultureInfo.InvariantCulture, DateTimeStyles.AssumeLocal, out var parsedDto))
+      return parsedDto.ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ss.fff'Z'", CultureInfo.InvariantCulture);
+    if (DateTime.TryParse(raw, CultureInfo.InvariantCulture, DateTimeStyles.AssumeLocal, out var parsedDt))
+      return parsedDt.ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ss.fff'Z'", CultureInfo.InvariantCulture);
+
+    return raw;
   }
 
   private static string UrlEncodeValue(object value)
@@ -178,9 +225,65 @@ public class FilterBuilder
         .Replace("+", "%2B");
   }
 
-  private string ConvertToCamelCaseWithUnderscores(string value)
+  private static string GetFromValueKey(Type type)
   {
-    return string.Concat(value.Select((x, i) => i > 0 && char.IsUpper(x) ? "_" + x : x.ToString())).ToLower();
+    return type switch
+    {
+      Type.Date => "dateFrom",
+      Type.DateTime => "dateTimeFrom",
+      _ => "filter"
+    };
+  }
+
+  private static string GetToValueKey(Type type)
+  {
+    return type switch
+    {
+      Type.Date => "dateTo",
+      Type.DateTime => "dateTimeTo",
+      _ => "filterTo"
+    };
+  }
+
+  private static string ToFilterType(Type type)
+  {
+    return type switch
+    {
+      Type.Text => "text",
+      Type.Number => "number",
+      Type.ObjectId => "object_id",
+      Type.Date => "date",
+      Type.DateTime => "dateTime",
+      Type.Bool => "bool",
+      _ => "text"
+    };
+  }
+
+  private static string ToConditionType(FilterType filterType)
+  {
+    return filterType switch
+    {
+      FilterType.Empty => "empty",
+      FilterType.NotEmpty => "notEmpty",
+      FilterType.InSet => "inSet",
+      FilterType.NotInSet => "notInSet",
+      FilterType.Contains => "contains",
+      FilterType.Equals => "equals",
+      FilterType.NotEqual => "notEqual",
+      FilterType.EndsWith => "endsWith",
+      FilterType.StartsWith => "startsWith",
+      FilterType.NotContains => "notContains",
+      FilterType.InRange => "inRange",
+      FilterType.LessThan => "lessThan",
+      FilterType.LessThanOrEqual => "lessThanOrEqual",
+      FilterType.GreaterThan => "greaterThan",
+      FilterType.GreaterThanOrEqual => "greaterThanOrEqual",
+      FilterType.BeforeToday => "beforeToday",
+      FilterType.AfterToday => "afterToday",
+      FilterType.BeforeNow => "beforeNow",
+      FilterType.AfterNow => "afterNow",
+      _ => "equals"
+    };
   }
 
   public string? Get(bool prettyPrint = false)

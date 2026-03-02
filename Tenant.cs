@@ -25,11 +25,11 @@ namespace SamedisExternalSync
       [JsonProperty("required_inventory_fields")]
       public List<string>? RequiredInventoryFields { get; set; }
 
-      [JsonProperty("use_extended_device_locations")]
-      public bool UseExtendedDeviceLocations { get; set; }
+      [JsonProperty("use_extended_device_locations", NullValueHandling = NullValueHandling.Ignore)]
+      public bool UseExtendedDeviceLocations { get; set; } = false;
 
-      [JsonProperty("use_profit_centers")]
-      public bool UseProfitCenters { get; set; }
+      [JsonProperty("use_profit_centers", NullValueHandling = NullValueHandling.Ignore)]
+      public bool UseProfitCenters { get; set; } = false;
 
       // Keep unknown tenant settings available for future use without changing the model each time.
       [JsonExtensionData]
@@ -112,8 +112,8 @@ namespace SamedisExternalSync
     {
       public string TenantId { get; init; } = string.Empty;
       public string Name { get; init; } = string.Empty;
-      public bool UseExtendedDeviceLocations { get; init; }
-      public bool UseProfitCenters { get; init; }
+      public bool UseExtendedDeviceLocations { get; init; } = false;
+      public bool UseProfitCenters { get; init; } = false;
       public string LocationMode => UseExtendedDeviceLocations ? "property" : "standard";
     }
 
@@ -149,7 +149,7 @@ namespace SamedisExternalSync
         TenantId = attributes.TenantId ?? attributes.Id ?? root?.Data?.Id ?? tenantId,
         Name = attributes.Name ?? string.Empty,
         UseExtendedDeviceLocations = attributes.UseExtendedDeviceLocations,
-        UseProfitCenters = attributes.UseProfitCenters
+        UseProfitCenters = attributes.UseProfitCenters,
       };
     }
   }
