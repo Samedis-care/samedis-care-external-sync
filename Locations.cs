@@ -5,6 +5,15 @@ namespace SamedisExternalSync
 {
   public class Locations
   {
+    public class SourceRoom
+    {
+      public string SourceId { get; set; } = string.Empty;
+      public string SourceFloorId { get; set; } = string.Empty;
+      public string Number { get; set; } = string.Empty;
+      public string Title { get; set; } = string.Empty;
+      public string PlisCode { get; set; } = string.Empty;
+    }
+
     public class Attributes
     {
       [JsonProperty("id")]
@@ -129,6 +138,63 @@ namespace SamedisExternalSync
       public Meta? Meta { get; set; }
     }
 
+    public static Dictionary<string, SourceRoom> LoadSourceRooms(string csvPath, Helper helper)
+    {
+      var result = new Dictionary<string, SourceRoom>(StringComparer.OrdinalIgnoreCase);
+      if (string.IsNullOrWhiteSpace(csvPath) || !File.Exists(csvPath))
+        return result;
+
+      DataTable sourceTable;
+      try
+      {
+        sourceTable = Helper.ImportCsvToDataTable(csvPath, "SourceRooms");
+      }
+      catch (Exception ex)
+      {
+        helper.Message($"Failed to read source rooms CSV '{csvPath}': {ex.Message}", 1, "WARN");
+        return result;
+      }
+      var hasPlisCodeColumn = sourceTable.Columns.Contains("plis_code");
+
+      foreach (DataRow row in sourceTable.Rows)
+      {
+        var sourceId = Helper.GetRowValue(row, "lid");
+        if (string.IsNullOrWhiteSpace(sourceId))
+          sourceId = Helper.GetRowValue(row, "id");
+
+        if (string.IsNullOrWhiteSpace(sourceId))
+          continue;
+
+        var title = Helper.GetRowValue(row, "Bezeichnung");
+        if (string.IsNullOrWhiteSpace(title))
+          title = Helper.GetRowValue(row, "description");
+        if (string.IsNullOrWhiteSpace(title))
+          title = Helper.GetRowValue(row, "descriptions");
+        if (string.IsNullOrWhiteSpace(title))
+          title = Helper.GetRowValue(row, "title");
+        var number = Helper.GetRowValue(row, "Number");
+        if (string.IsNullOrWhiteSpace(number))
+          number = Helper.GetRowValue(row, "number");
+        if (!string.IsNullOrWhiteSpace(title) && !string.IsNullOrWhiteSpace(number))
+          title = $"{title} ({number})";
+        var sourceFloorId = Helper.GetRowValue(row, "parent_id");
+        if (string.IsNullOrWhiteSpace(sourceFloorId))
+          sourceFloorId = Helper.GetRowValue(row, "Übergeordnet");
+
+        result[sourceId] = new SourceRoom
+        {
+          SourceId = sourceId,
+          SourceFloorId = sourceFloorId,
+          Number = number,
+          Title = title,
+          PlisCode = hasPlisCodeColumn ? Helper.GetRowValue(row, "plis_code") : string.Empty
+        };
+      }
+
+      helper.Message($"Loaded source room map entries: {result.Count}", 2);
+      return result;
+    }
+
     public static DataSet CreateLocationDataSet()
     {
       var ds = new DataSet("Locations");
@@ -210,7 +276,8 @@ namespace SamedisExternalSync
       Helper helper,
       string? propertyId = null,
       string? buildingId = null,
-      string? floorId = null)
+      string? floorId = null,
+      string? locationNotes = null)
     {
       if (!string.IsNullOrWhiteSpace(locationId) && locationsById.TryGetValue(locationId, out var existingId) && !string.IsNullOrWhiteSpace(existingId))
         return existingId;
@@ -319,6 +386,8 @@ namespace SamedisExternalSync
         createPayload["building_id"] = buildingId;
       if (!string.IsNullOrWhiteSpace(floorId))
         createPayload["floor_id"] = floorId;
+      if (!string.IsNullOrWhiteSpace(locationNotes))
+        createPayload["notes"] = locationNotes;
 
       var payload = JsonConvert.SerializeObject(new
       {

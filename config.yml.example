@@ -17,6 +17,7 @@ sync:
   departments_upload: false
   locations_download: false
   locations_upload: false
+  locations_room_placeholder: "Keine Raumzuordnung"
   inventories_download: false
   inventories_upload: false
   inventories_upload_fallback_by_device_number: false

@@ -1,9 +1,18 @@
+using System.Data;
 using Newtonsoft.Json;
 
 namespace SamedisExternalSync
 {
   public class Buildings
   {
+    public class SourceBuilding
+    {
+      public string SourceId { get; set; } = string.Empty;
+      public string ParentSourceId { get; set; } = string.Empty;
+      public string Number { get; set; } = string.Empty;
+      public string Title { get; set; } = string.Empty;
+    }
+
     public class Attributes
     {
       [JsonProperty("id")]
@@ -42,6 +51,60 @@ namespace SamedisExternalSync
       [JsonProperty("data")]
       [JsonConverter(typeof(Helper.SingleOrArrayConverter<Data>))]
       public List<Data>? Data { get; set; }
+    }
+
+    public static Dictionary<string, SourceBuilding> LoadSourceBuildings(string csvPath, Helper helper)
+    {
+      var result = new Dictionary<string, SourceBuilding>(StringComparer.OrdinalIgnoreCase);
+      if (string.IsNullOrWhiteSpace(csvPath) || !File.Exists(csvPath))
+        return result;
+
+      DataTable sourceTable;
+      try
+      {
+        sourceTable = Helper.ImportCsvToDataTable(csvPath, "SourceBuildings");
+      }
+      catch (Exception ex)
+      {
+        helper.Message($"Failed to read source buildings CSV '{csvPath}': {ex.Message}", 1, "WARN");
+        return result;
+      }
+
+      foreach (DataRow row in sourceTable.Rows)
+      {
+        var sourceId = Helper.GetRowValue(row, "lid");
+        if (string.IsNullOrWhiteSpace(sourceId))
+          sourceId = Helper.GetRowValue(row, "id");
+
+        if (string.IsNullOrWhiteSpace(sourceId))
+          continue;
+
+        var title = Helper.GetRowValue(row, "Bezeichnung");
+        if (string.IsNullOrWhiteSpace(title))
+          title = Helper.GetRowValue(row, "description");
+        if (string.IsNullOrWhiteSpace(title))
+          title = Helper.GetRowValue(row, "descriptions");
+        if (string.IsNullOrWhiteSpace(title))
+          title = Helper.GetRowValue(row, "title");
+        var parentSourceId = Helper.GetRowValue(row, "parent_id");
+        if (string.IsNullOrWhiteSpace(parentSourceId))
+          parentSourceId = Helper.GetRowValue(row, "Übergeordnet");
+
+        var number = Helper.GetRowValue(row, "Number");
+        if (string.IsNullOrWhiteSpace(number))
+          number = Helper.GetRowValue(row, "number");
+
+        result[sourceId] = new SourceBuilding
+        {
+          SourceId = sourceId,
+          ParentSourceId = parentSourceId,
+          Number = number,
+          Title = title
+        };
+      }
+
+      helper.Message($"Loaded source building map entries: {result.Count}", 2);
+      return result;
     }
 
     public static string? ResolveBuildingId(
