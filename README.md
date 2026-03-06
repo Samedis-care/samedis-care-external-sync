@@ -156,11 +156,13 @@ Important lookup columns:
 - `inventory_number` (required; also used for fallback lookup)
 - `catalog_id` (optional direct model reference)
 - `title`, `device_model_title`, `manufacturer`, `responsible_manufacturer` (used for catalog auto-resolution if `catalog_id` is empty)
-- `department_id`, `department`
-- `location_id`, `location`
-- `source_gebaeude`, `source_ebene`, `source_raum` (used in tenant property mode)
+- `department_id`, `department`, `cost_center_number`, `cost_center_description`, `Abteilung`
+- `location_id`, `location`, `source_location_id`, `source_location_type`, `source_location_number`
+- `StandorteGeba*.csv`, `StandorteEbe*.csv`, `StandorteRau*.csv` in `<paths.to_samedis>` are used to resolve source location hierarchy in tenant property mode
+- For floor/building source references, importer resolves/creates a room placeholder under the hierarchy using `sync.locations_room_placeholder` (default: `Keine Raumzuordnung`)
+- In tenant property mode, rows are skipped if `source_location_id` is missing/unresolvable or if building/floor/room hierarchy cannot be resolved to a valid room target
 
-Rows with `operation_status` resolved to `retired` are skipped.
+Rows with `operation_status` resolved to `retired` are skipped only if the inventory already exists; otherwise they are created as retired devices.
 
 ## Output Files
 

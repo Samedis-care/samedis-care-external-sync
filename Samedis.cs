@@ -221,6 +221,8 @@ namespace SamedisExternalSync
   {
     public int StatusCode = 0;
     public HttpStatusCode Status;
+    public string LastError = string.Empty;
+    public string LastResponseStatus = string.Empty;
     public bool Debug { get; set; }
     public int LogLevel { get; set; }
     public bool TestMode { get; set; }
@@ -269,6 +271,8 @@ namespace SamedisExternalSync
 
       Status = response.StatusCode;
       StatusCode = (int)Status;
+      LastResponseStatus = response.ResponseStatus.ToString();
+      LastError = response.ErrorMessage ?? response.ErrorException?.Message ?? string.Empty;
       if (Debug && TestMode)
         WriteDebugGetCsv(resource, response);
       return response.Content ?? string.Empty;
@@ -288,6 +292,8 @@ namespace SamedisExternalSync
 
       Status = response.StatusCode;
       StatusCode = (int)Status;
+      LastResponseStatus = response.ResponseStatus.ToString();
+      LastError = response.ErrorMessage ?? response.ErrorException?.Message ?? string.Empty;
       return response.Content ?? string.Empty;
     }
 
@@ -307,6 +313,8 @@ namespace SamedisExternalSync
 
       Status = response.StatusCode;
       StatusCode = (int)Status;
+      LastResponseStatus = response.ResponseStatus.ToString();
+      LastError = response.ErrorMessage ?? response.ErrorException?.Message ?? string.Empty;
       return response.Content ?? string.Empty;
     }
 
@@ -337,6 +345,8 @@ namespace SamedisExternalSync
 
       Status = response.StatusCode;
       StatusCode = (int)Status;
+      LastResponseStatus = response.ResponseStatus.ToString();
+      LastError = response.ErrorMessage ?? response.ErrorException?.Message ?? string.Empty;
       return response.Content ?? string.Empty;
     }
 

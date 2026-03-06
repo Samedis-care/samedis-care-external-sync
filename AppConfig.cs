@@ -75,6 +75,7 @@ namespace SamedisExternalSync
     public bool InventoriesUploadFallbackByDeviceNumber { get; set; } = false;
     public bool InventoriesUploadCreateDepartmentsOnTheFly { get; set; } = false;
     public bool InventoriesUploadCreateLocationsOnTheFly { get; set; } = false;
+    public string? LocationsRoomPlaceholder { get; set; } = "Keine Raumzuordnung";
     public bool TasksDownload { get; set; } = false;
     public bool TasksUpload { get; set; } = false;
     public string? TaskDownloadTypes { get; set; } = "maintenance";

@@ -462,11 +462,15 @@ namespace SamedisExternalSync
       string resource,
       string inventoryId,
       string inventoryNumber,
+      string inventoryModelTitle,
+      string inventoryManufacturer,
       bool fallbackByDeviceNumber,
       IDictionary<string, string> inventoryById,
       IDictionary<string, string> inventoryByDeviceNumber,
+      IDictionary<string, string> inventoryByModelAndManufacturer,
       ISet<string> checkedInventoryIds,
-      ISet<string> checkedInventoryNumbers)
+      ISet<string> checkedInventoryNumbers,
+      ISet<string> checkedInventoryModelAndManufacturer)
     {
       string? candidateId = null;
       string? candidateDeviceNumber = null;
@@ -508,9 +512,6 @@ namespace SamedisExternalSync
         }
       }
 
-      if (!fallbackByDeviceNumber || string.IsNullOrWhiteSpace(inventoryNumber))
-        return candidateId;
-
       if (!string.IsNullOrWhiteSpace(candidateId) &&
           !string.IsNullOrWhiteSpace(candidateDeviceNumber) &&
           string.Equals(candidateDeviceNumber, inventoryNumber, StringComparison.OrdinalIgnoreCase))
@@ -518,40 +519,98 @@ namespace SamedisExternalSync
         return candidateId;
       }
 
-      if (inventoryByDeviceNumber.TryGetValue(inventoryNumber, out var cachedByDeviceNumber))
-        return string.IsNullOrWhiteSpace(cachedByDeviceNumber) ? candidateId : cachedByDeviceNumber;
-
-      if (checkedInventoryNumbers.Contains(inventoryNumber))
-        return candidateId;
-
-      checkedInventoryNumbers.Add(inventoryNumber);
-
-      var filterBuilder = new FilterBuilder();
-      filterBuilder.Clear();
-      filterBuilder.Add("device_number", FilterBuilder.FilterType.Equals, FilterBuilder.Type.Text, inventoryNumber);
-
-      var listResponse = client.Get(
-        resource +
-        $"?page[number]=1&page[limit]=1&variant=regular&gridfilter={filterBuilder.Get()}"
-      );
-      if (client.StatusCode != 200 || string.IsNullOrWhiteSpace(listResponse))
+      if (fallbackByDeviceNumber && !string.IsNullOrWhiteSpace(inventoryNumber))
       {
-        inventoryByDeviceNumber[inventoryNumber] = string.Empty;
-        return candidateId;
+        if (inventoryByDeviceNumber.TryGetValue(inventoryNumber, out var cachedByDeviceNumber))
+          return string.IsNullOrWhiteSpace(cachedByDeviceNumber) ? candidateId : cachedByDeviceNumber;
+
+        if (!checkedInventoryNumbers.Contains(inventoryNumber))
+        {
+          checkedInventoryNumbers.Add(inventoryNumber);
+
+          var filterBuilder = new FilterBuilder();
+          filterBuilder.Clear();
+          filterBuilder.Add("device_number", FilterBuilder.FilterType.Equals, FilterBuilder.Type.Text, inventoryNumber);
+
+          var listResponse = client.Get(
+            resource +
+            $"?page[number]=1&page[limit]=1&variant=regular&gridfilter={filterBuilder.Get()}"
+          );
+          if (client.StatusCode == 200 && !string.IsNullOrWhiteSpace(listResponse))
+          {
+            var listRoot = JsonConvert.DeserializeObject<Root>(listResponse);
+            var resolvedByDeviceNumber = listRoot?.Data?.FirstOrDefault();
+            var resolvedByDeviceNumberId = resolvedByDeviceNumber?.Attributes?.Id ?? resolvedByDeviceNumber?.Id;
+            if (!string.IsNullOrWhiteSpace(resolvedByDeviceNumberId))
+            {
+              inventoryById[resolvedByDeviceNumberId] = resolvedByDeviceNumberId;
+              inventoryByDeviceNumber[inventoryNumber] = resolvedByDeviceNumberId;
+              return resolvedByDeviceNumberId;
+            }
+          }
+
+          inventoryByDeviceNumber[inventoryNumber] = string.Empty;
+        }
       }
 
-      var listRoot = JsonConvert.DeserializeObject<Root>(listResponse);
-      var resolvedByDeviceNumber = listRoot?.Data?.FirstOrDefault();
-      var resolvedByDeviceNumberId = resolvedByDeviceNumber?.Attributes?.Id ?? resolvedByDeviceNumber?.Id;
-      if (string.IsNullOrWhiteSpace(resolvedByDeviceNumberId))
-      {
-        inventoryByDeviceNumber[inventoryNumber] = string.Empty;
+      if (!string.IsNullOrWhiteSpace(candidateId))
         return candidateId;
+
+      if (string.IsNullOrWhiteSpace(inventoryModelTitle))
+        return candidateId;
+
+      var normalizedModelTitle = inventoryModelTitle.Trim();
+      var normalizedManufacturer = inventoryManufacturer?.Trim() ?? string.Empty;
+      var modelManufacturerKey = $"{normalizedModelTitle}|{normalizedManufacturer}";
+
+      if (inventoryByModelAndManufacturer.TryGetValue(modelManufacturerKey, out var cachedByModelManufacturer))
+        return string.IsNullOrWhiteSpace(cachedByModelManufacturer) ? candidateId : cachedByModelManufacturer;
+
+      if (checkedInventoryModelAndManufacturer.Contains(modelManufacturerKey))
+        return candidateId;
+
+      checkedInventoryModelAndManufacturer.Add(modelManufacturerKey);
+
+      string? ResolveByModelAndManufacturer(string? manufacturerField, string? manufacturerValue)
+      {
+        var filterBuilder = new FilterBuilder();
+        filterBuilder.Clear();
+        filterBuilder.Add("device_model_title", FilterBuilder.FilterType.Equals, FilterBuilder.Type.Text, normalizedModelTitle);
+        if (!string.IsNullOrWhiteSpace(manufacturerField) && !string.IsNullOrWhiteSpace(manufacturerValue))
+          filterBuilder.Add(manufacturerField, FilterBuilder.FilterType.Equals, FilterBuilder.Type.Text, manufacturerValue);
+
+        var listResponse = client.Get(
+          resource +
+          $"?page[number]=1&page[limit]=1&variant=regular&gridfilter={filterBuilder.Get()}"
+        );
+        if (client.StatusCode != 200 || string.IsNullOrWhiteSpace(listResponse))
+          return null;
+
+        var listRoot = JsonConvert.DeserializeObject<Root>(listResponse);
+        var found = listRoot?.Data?.FirstOrDefault();
+        var foundId = found?.Attributes?.Id ?? found?.Id;
+        return string.IsNullOrWhiteSpace(foundId) ? null : foundId;
       }
 
-      inventoryById[resolvedByDeviceNumberId] = resolvedByDeviceNumberId;
-      inventoryByDeviceNumber[inventoryNumber] = resolvedByDeviceNumberId;
-      return resolvedByDeviceNumberId;
+      string? resolvedByModelAndManufacturer = null;
+      if (!string.IsNullOrWhiteSpace(normalizedManufacturer))
+      {
+        resolvedByModelAndManufacturer = ResolveByModelAndManufacturer("device_model_manufacturer_according_to_type_plate", normalizedManufacturer);
+        resolvedByModelAndManufacturer ??= ResolveByModelAndManufacturer("device_model_current_responsible_manufacturer", normalizedManufacturer);
+      }
+      else
+      {
+        resolvedByModelAndManufacturer = ResolveByModelAndManufacturer(null, null);
+      }
+
+      inventoryByModelAndManufacturer[modelManufacturerKey] = resolvedByModelAndManufacturer ?? string.Empty;
+      if (!string.IsNullOrWhiteSpace(resolvedByModelAndManufacturer))
+      {
+        inventoryById[resolvedByModelAndManufacturer] = resolvedByModelAndManufacturer;
+        return resolvedByModelAndManufacturer;
+      }
+
+      return candidateId;
     }
 
     public static Dictionary<string, object> BuildInventoryAttributes(DataRow row, string? departmentId, string? locationId, string? catalogIdOverride = null)
@@ -642,9 +701,17 @@ namespace SamedisExternalSync
       var normalized = value.Trim().ToLowerInvariant().Replace("-", "_").Replace(" ", "_");
       return normalized switch
       {
+        "aktiv" => "active",
+        "in_betrieb" => "active",
+        "ausgemustert" => "retired",
+        "stillgelegt" => "decommissioned",
+        "eingelagert" => "decommissioned",
+        "ausser_betrieb" => "out_of_order",
+        "außer_betrieb" => "out_of_order",
+        "undefiniert" => string.Empty,
         "limited" => "limited_use",
         "outoforder" => "out_of_order",
-        "decommission" => "decommissioned",
+        "decommission" => "retired",
         _ => normalized
       };
     }
