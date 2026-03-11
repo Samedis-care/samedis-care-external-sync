@@ -160,6 +160,120 @@ namespace SamedisExternalSync
       public Meta? Meta { get; set; }
     }
 
+    public class ListRoot
+    {
+      [JsonProperty("data")]
+      [JsonConverter(typeof(Helper.SingleOrArrayConverter<Data>))]
+      public List<Data>? Data { get; set; }
+
+      [JsonProperty("meta")]
+      public Meta? Meta { get; set; }
+    }
+
+    public static string? ResolveCompanyContactId(
+      RequestData client,
+      string resource,
+      string companyName,
+      bool createOnTheFly,
+      IDictionary<string, string> contactsByName,
+      IDictionary<string, string> checkedContacts,
+      Helper helper,
+      string contextId = "",
+      string contextTitle = "")
+    {
+      if (string.IsNullOrWhiteSpace(companyName))
+        return null;
+
+      var normalizedCompanyName = companyName.Trim();
+      var checkedByNameKey = "name:" + normalizedCompanyName;
+
+      if (contactsByName.TryGetValue(normalizedCompanyName, out var cachedContactId))
+      {
+        if (!string.IsNullOrWhiteSpace(cachedContactId))
+          return cachedContactId;
+
+        return null;
+      }
+
+      if (checkedContacts.TryGetValue(checkedByNameKey, out var checkedByName))
+      {
+        if (!string.IsNullOrWhiteSpace(checkedByName))
+          return checkedByName;
+
+        return null;
+      }
+
+      string? TryFindCompanyByLastName()
+      {
+        var filterBuilder = new FilterBuilder();
+        filterBuilder.Clear();
+        filterBuilder.Add("last_name", FilterBuilder.FilterType.Equals, FilterBuilder.Type.Text, normalizedCompanyName);
+        filterBuilder.Add("contact_type", FilterBuilder.FilterType.Equals, FilterBuilder.Type.Text, "company");
+
+        var listResponse = client.Get(
+          resource +
+          $"?page[number]=1&page[limit]=1&filter[scope]=public_and_tenant&quickfilter=&gridfilter={filterBuilder.Get()}"
+        );
+
+        if (client.StatusCode != 200 || string.IsNullOrWhiteSpace(listResponse))
+          return null;
+
+        var listRoot = JsonConvert.DeserializeObject<ListRoot>(listResponse);
+        var foundContact = listRoot?.Data?.FirstOrDefault();
+        var foundId = foundContact?.Attributes?.Id ?? foundContact?.Id;
+        return string.IsNullOrWhiteSpace(foundId) ? null : foundId;
+      }
+
+      var resolvedContactId = TryFindCompanyByLastName();
+
+      if (!string.IsNullOrWhiteSpace(resolvedContactId))
+      {
+        contactsByName[normalizedCompanyName] = resolvedContactId;
+        checkedContacts[checkedByNameKey] = resolvedContactId;
+        return resolvedContactId;
+      }
+
+      checkedContacts[checkedByNameKey] = string.Empty;
+      contactsByName[normalizedCompanyName] = string.Empty;
+
+      if (!createOnTheFly)
+        return null;
+
+      var payload = JsonConvert.SerializeObject(new
+      {
+        data = new Dictionary<string, object?>
+        {
+          ["last_name"] = normalizedCompanyName,
+          ["contact_type"] = "company",
+          ["categories"] = new List<string> { "manufacturer" },
+          ["status"] = "tenant"
+        }
+      });
+
+      var createResponse = client.Post(resource, payload);
+      if (client.StatusCode >= 200 && client.StatusCode < 300)
+      {
+        resolvedContactId = Helper.ExtractDataId(createResponse);
+      }
+
+      resolvedContactId ??= TryFindCompanyByLastName();
+
+      if (string.IsNullOrWhiteSpace(resolvedContactId))
+      {
+        helper.Message(
+          $"Failed to resolve/create manufacturer contact (name='{normalizedCompanyName}', context_id='{contextId}', context_title='{contextTitle}', status={client.StatusCode} {client.Status}, response_status='{client.LastResponseStatus}', error='{client.LastError}').",
+          1,
+          "WARN"
+        );
+        return null;
+      }
+
+      contactsByName[normalizedCompanyName] = resolvedContactId;
+      checkedContacts[checkedByNameKey] = resolvedContactId;
+      helper.Message($"Manufacturer contact created on the fly: '{normalizedCompanyName}' -> {resolvedContactId}", 2);
+      return resolvedContactId;
+    }
+
     public static DataSet CreateContactDataSet()
     {
       var ds = new DataSet("Contacts");

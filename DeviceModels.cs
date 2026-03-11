@@ -470,6 +470,163 @@ namespace SamedisExternalSync
       return resolvedCatalogId;
     }
 
+    public static string? ResolveOrCreateTenantCatalogIdForInventory(
+      RequestData client,
+      string deviceModelsResource,
+      string deviceTypesResource,
+      string contactsResource,
+      string tenantId,
+      string modelTitle,
+      string manufacturer,
+      string deviceTypeTitle,
+      IDictionary<string, string> deviceTypesByTitle,
+      IDictionary<string, string> checkedDeviceTypes,
+      IDictionary<string, string> manufacturersByName,
+      IDictionary<string, string> checkedManufacturers,
+      IDictionary<string, string> tenantModelLookupCache,
+      IDictionary<string, string> catalogLookupCache,
+      Helper helper,
+      string contextId = "",
+      string inventoryNumber = "")
+    {
+      var normalizedModelTitle = modelTitle?.Trim() ?? string.Empty;
+      if (string.IsNullOrWhiteSpace(normalizedModelTitle))
+        return null;
+
+      var normalizedManufacturer = manufacturer?.Trim() ?? string.Empty;
+      var normalizedDeviceTypeTitle = deviceTypeTitle?.Trim() ?? string.Empty;
+      var tenantModelKey = $"{normalizedModelTitle}|{normalizedManufacturer}|{normalizedDeviceTypeTitle}";
+
+      if (tenantModelLookupCache.TryGetValue(tenantModelKey, out var cachedTenantModelId))
+        return string.IsNullOrWhiteSpace(cachedTenantModelId) ? null : cachedTenantModelId;
+
+      if (string.IsNullOrWhiteSpace(normalizedDeviceTypeTitle))
+      {
+        helper.Message(
+          $"Local device model creation skipped: device_type_title missing (model_title='{normalizedModelTitle}', manufacturer='{normalizedManufacturer}', source_id='{contextId}', inventory_number='{inventoryNumber}').",
+          1,
+          "WARN"
+        );
+        tenantModelLookupCache[tenantModelKey] = string.Empty;
+        return null;
+      }
+
+      if (string.IsNullOrWhiteSpace(normalizedManufacturer))
+      {
+        helper.Message(
+          $"Local device model creation skipped: manufacturer missing (model_title='{normalizedModelTitle}', device_type_title='{normalizedDeviceTypeTitle}', source_id='{contextId}', inventory_number='{inventoryNumber}').",
+          1,
+          "WARN"
+        );
+        tenantModelLookupCache[tenantModelKey] = string.Empty;
+        return null;
+      }
+
+      var resolvedDeviceTypeId = DeviceTypes.ResolveDeviceTypeId(
+        client,
+        deviceTypesResource,
+        normalizedDeviceTypeTitle,
+        createOnTheFly: true,
+        deviceTypesByTitle,
+        checkedDeviceTypes,
+        helper,
+        tenantId,
+        contextId,
+        normalizedModelTitle
+      );
+      if (string.IsNullOrWhiteSpace(resolvedDeviceTypeId))
+      {
+        tenantModelLookupCache[tenantModelKey] = string.Empty;
+        return null;
+      }
+
+      var resolvedManufacturerId = Contacts.ResolveCompanyContactId(
+        client,
+        contactsResource,
+        normalizedManufacturer,
+        createOnTheFly: true,
+        manufacturersByName,
+        checkedManufacturers,
+        helper,
+        contextId,
+        normalizedModelTitle
+      );
+      if (string.IsNullOrWhiteSpace(resolvedManufacturerId))
+      {
+        tenantModelLookupCache[tenantModelKey] = string.Empty;
+        return null;
+      }
+
+      string? ResolveTenantModel()
+      {
+        var filterBuilder = new FilterBuilder();
+        filterBuilder.Clear();
+        filterBuilder.Add("title", FilterBuilder.FilterType.Equals, FilterBuilder.Type.Text, normalizedModelTitle);
+        filterBuilder.Add("device_type_id", FilterBuilder.FilterType.Equals, FilterBuilder.Type.ObjectId, resolvedDeviceTypeId);
+        filterBuilder.Add("manufacturer_according_to_type_plate", FilterBuilder.FilterType.Equals, FilterBuilder.Type.Text, normalizedManufacturer);
+
+        var listResponse = client.Get(
+          deviceModelsResource +
+          $"?page[number]=1&page[limit]=1&filter[scope]=public_and_tenant&quickfilter=&gridfilter={filterBuilder.Get()}"
+        );
+        if (client.StatusCode != 200 || string.IsNullOrWhiteSpace(listResponse))
+          return null;
+
+        var listRoot = JsonConvert.DeserializeObject<Root>(listResponse);
+        var found = listRoot?.Data?.FirstOrDefault();
+        var foundId = found?.Attributes?.Id ?? found?.Id;
+        return string.IsNullOrWhiteSpace(foundId) ? null : foundId;
+      }
+
+      var tenantCatalogId = ResolveTenantModel();
+      if (string.IsNullOrWhiteSpace(tenantCatalogId))
+      {
+        var payload = JsonConvert.SerializeObject(new
+        {
+          data = new Dictionary<string, object?>
+          {
+            ["title"] = normalizedModelTitle,
+            ["device_type_id"] = resolvedDeviceTypeId,
+            ["manufacturer_according_to_type_plate"] = normalizedManufacturer,
+            ["current_responsible_manufacturer"] = normalizedManufacturer,
+            ["manufacturer_company_contact_id"] = resolvedManufacturerId,
+            ["responsible_company_contact_id"] = resolvedManufacturerId,
+            ["is_public"] = false
+          }
+        });
+
+        var createResponse = client.Post(deviceModelsResource, payload);
+        if (client.StatusCode >= 200 && client.StatusCode < 300)
+        {
+          tenantCatalogId = Helper.ExtractDataId(createResponse);
+          if (string.IsNullOrWhiteSpace(tenantCatalogId))
+            tenantCatalogId = ResolveTenantModel();
+        }
+        else
+        {
+          helper.Message(
+            $"Failed to create local device model (title='{normalizedModelTitle}', manufacturer='{normalizedManufacturer}', device_type_title='{normalizedDeviceTypeTitle}', source_id='{contextId}', inventory_number='{inventoryNumber}', status={client.StatusCode} {client.Status}, response_status='{client.LastResponseStatus}', error='{client.LastError}'). Response: {createResponse}",
+            1,
+            "WARN"
+          );
+        }
+      }
+
+      if (string.IsNullOrWhiteSpace(tenantCatalogId))
+      {
+        tenantModelLookupCache[tenantModelKey] = string.Empty;
+        return null;
+      }
+
+      tenantModelLookupCache[tenantModelKey] = tenantCatalogId;
+      catalogLookupCache[$"{normalizedModelTitle}|{normalizedManufacturer}"] = tenantCatalogId;
+      helper.Message(
+        $"Local tenant device model resolved/created: title='{normalizedModelTitle}', manufacturer='{normalizedManufacturer}', device_type_title='{normalizedDeviceTypeTitle}' -> catalog_id '{tenantCatalogId}'.",
+        2
+      );
+      return tenantCatalogId;
+    }
+
   }
 
   public class WithServiceInterval

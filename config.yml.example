@@ -10,6 +10,7 @@ paths:
   from_samedis: "data/from_samedis"
   to_samedis: "data/to_samedis"
 sync:
+  archive_to_samedis_csv_files: true
   device_types: false
   contacts: false
   device_models: true
@@ -21,6 +22,7 @@ sync:
   inventories_download: false
   inventories_upload: false
   inventories_upload_fallback_by_device_number: false
+  create_local_device_models_on_inventory_lookup: false
   inventories_upload_create_departments_on_the_fly: false
   inventories_upload_create_locations_on_the_fly: false
   tasks_download: false

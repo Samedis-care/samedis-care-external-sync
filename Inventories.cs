@@ -1,5 +1,7 @@
 using System.Data;
+using System.Globalization;
 using Newtonsoft.Json;
+using Newtonsoft.Json.Linq;
 
 namespace SamedisExternalSync
 {
@@ -363,6 +365,13 @@ namespace SamedisExternalSync
       public Meta? Meta { get; set; }
     }
 
+    public class SourceLocationExportInfo
+    {
+      public string SourceLocationId { get; set; } = string.Empty;
+      public string SourceLocationType { get; set; } = string.Empty;
+      public string SourceLocationNumber { get; set; } = string.Empty;
+    }
+
     public static DataSet CreateInventoryDataSet()
     {
       var ds = new DataSet("Inventories");
@@ -373,29 +382,40 @@ namespace SamedisExternalSync
       dt.Columns.Add("inventory_number", typeof(string));           // device_number
       dt.Columns.Add("serial_number", typeof(string));              // serial_number
       dt.Columns.Add("catalog_id", typeof(string));                 // device_model_catalog_id
-      dt.Columns.Add("title", typeof(string));                      // device_model_title
+      dt.Columns.Add("device_model_title", typeof(string));         // device_model_title
       dt.Columns.Add("device_type_title", typeof(string));          // device_type_title
       dt.Columns.Add("manufacturer", typeof(string));               // device_model_manufacturer_according_to_type_plate
       dt.Columns.Add("responsible_manufacturer", typeof(string));   // device_model_current_responsible_manufacturer
       dt.Columns.Add("facility_name", typeof(string));              // tenant_name
       dt.Columns.Add("location_id", typeof(string));                // device_location_id
       dt.Columns.Add("location", typeof(string));                   // device_location_title
+      dt.Columns.Add("additional_location_info", typeof(string));   // device_location_path
       dt.Columns.Add("department_id", typeof(string));              // department_id
       dt.Columns.Add("department", typeof(string));                 // device_location_path
+      dt.Columns.Add("department_station", typeof(string));         // upload compatibility
+      dt.Columns.Add("cost_center_number", typeof(string));         // upload compatibility
+      dt.Columns.Add("cost_center_description", typeof(string));    // upload compatibility
       dt.Columns.Add("construction_year", typeof(string));
       dt.Columns.Add("commissioning_at", typeof(string));
       dt.Columns.Add("service_partner", typeof(string));
       dt.Columns.Add("comments_field", typeof(string));
+      dt.Columns.Add("description", typeof(string));                // upload compatibility
       dt.Columns.Add("operation_status", typeof(string));
       dt.Columns.Add("last_maintenance", typeof(string));
       dt.Columns.Add("next_maintenance", typeof(string));
-      dt.Columns.Add("ce_marking", typeof(string));                 // regulatory.ce
-      dt.Columns.Add("ce_notified_body", typeof(string));           // device_model_notified_body_ce
-      dt.Columns.Add("according_to_annex", typeof(string));         // device_model_operator_ordinance
-      dt.Columns.Add("risk_level", typeof(string));                 // device_model_risk_level
       dt.Columns.Add("purchase_price", typeof(string));
+      dt.Columns.Add("currency_code", typeof(string));
       dt.Columns.Add("depreciation_in_years", typeof(string));
       dt.Columns.Add("retirement_date", typeof(string));
+      dt.Columns.Add("date_of_acquisition", typeof(string));
+      dt.Columns.Add("warranty_period", typeof(string));
+      dt.Columns.Add("ownership", typeof(string));
+      dt.Columns.Add("source_location_number", typeof(string));
+      dt.Columns.Add("source_location_type", typeof(string));
+      dt.Columns.Add("source_location_id", typeof(string));
+      dt.Columns.Add("software_version", typeof(string));
+      dt.Columns.Add("changed_at", typeof(string));
+      dt.Columns.Add("created_at", typeof(string));
 
       // ✅ Primary key = Id
       var idColumn = dt.Columns["Id"] ?? throw new InvalidOperationException("The 'Id' column was not found in the DataTable.");
@@ -405,7 +425,10 @@ namespace SamedisExternalSync
       return ds;
     }
 
-    public static void FillInventoryDataSet(DataSet ds, string json)
+    public static void FillInventoryDataSet(
+      DataSet ds,
+      string json,
+      Func<Attributes, SourceLocationExportInfo?>? sourceLocationResolver = null)
     {
       var root = JsonConvert.DeserializeObject<Inventories.Root>(json);
       if (root?.Data == null || root.Data.Count == 0)
@@ -429,29 +452,42 @@ namespace SamedisExternalSync
         row["inventory_number"] = attr.DeviceNumber ?? "";
         row["serial_number"] = attr.SerialNumber ?? "";
         row["catalog_id"] = attr.CatalogId ?? "";
-        row["title"] = attr.DeviceModelTitle ?? "";
+        row["device_model_title"] = attr.DeviceModelTitle ?? "";
         row["device_type_title"] = attr.DeviceTypeTitle ?? "";
         row["manufacturer"] = attr.DeviceModelManufacturerAccordingToTypePlate ?? "";
         row["responsible_manufacturer"] = attr.DeviceModelCurrentResponsibleManufacturer ?? "";
         row["facility_name"] = attr.TenantName ?? "";
         row["location_id"] = attr.DeviceLocationId ?? "";
         row["location"] = attr.DeviceLocationTitle ?? "";
+        row["additional_location_info"] = attr.DeviceLocationPath ?? "";
         row["department_id"] = attr.DepartmentId ?? "";
         row["department"] = attr.DepartmentTitle ?? "";
+        row["department_station"] = attr.DepartmentTitle ?? "";
+        row["cost_center_number"] = "";
+        row["cost_center_description"] = "";
         row["construction_year"] = attr.ConstructionYear?.ToString() ?? "";
         row["commissioning_at"] = attr.CommissioningAt ?? "";
         row["service_partner"] = attr.ServicePartner ?? "";
         row["comments_field"] = attr.CommentsField ?? "";
+        row["description"] = attr.CommentsField ?? "";
         row["operation_status"] = attr.OperationStatus ?? "";
         row["last_maintenance"] = attr.LastMaintenance ?? "";
         row["next_maintenance"] = attr.NextMaintenance ?? "";
-        row["ce_marking"] = (attr.Regulatory != null && attr.Regulatory.ContainsKey("ce")) ? "Yes" : "No";
-        row["ce_notified_body"] = attr.DeviceModelNotifiedBodyCe ?? "";
-        row["according_to_annex"] = Helper.OrdinanceMap(attr.DeviceModelOperatorOrdinance ?? string.Empty);
-        row["risk_level"] = Helper.RiskClassMap(attr.DeviceModelRiskLevel ?? string.Empty);
         row["purchase_price"] = attr.PurchasePrice?.ToString("F2") ?? "";
+        row["currency_code"] = attr.CurrencyCode ?? "";
         row["depreciation_in_years"] = attr.DepreciationInYears?.ToString() ?? "";
         row["retirement_date"] = attr.RetirementDate ?? "";
+        row["date_of_acquisition"] = attr.DateOfAcquisition ?? "";
+        row["warranty_period"] = attr.WarrantyPeriod ?? "";
+        row["ownership"] = attr.Ownership ?? "";
+        row["software_version"] = attr.SoftwareVersion ?? "";
+        row["changed_at"] = attr.UpdatedAt?.ToString("o", CultureInfo.InvariantCulture) ?? "";
+        row["created_at"] = attr.CreatedAt?.ToString("o", CultureInfo.InvariantCulture) ?? "";
+
+        var sourceLocation = sourceLocationResolver?.Invoke(attr);
+        row["source_location_number"] = sourceLocation?.SourceLocationNumber ?? "";
+        row["source_location_type"] = sourceLocation?.SourceLocationType ?? "";
+        row["source_location_id"] = sourceLocation?.SourceLocationId ?? "";
 
         table.Rows.Add(row);
       }
@@ -461,19 +497,23 @@ namespace SamedisExternalSync
       RequestData client,
       string resource,
       string inventoryId,
+      string inventoryExternalId,
       string inventoryNumber,
       string inventoryModelTitle,
       string inventoryManufacturer,
       bool fallbackByDeviceNumber,
       IDictionary<string, string> inventoryById,
+      IDictionary<string, string> inventoryByExternalId,
       IDictionary<string, string> inventoryByDeviceNumber,
       IDictionary<string, string> inventoryByModelAndManufacturer,
       ISet<string> checkedInventoryIds,
+      ISet<string> checkedInventoryExternalIds,
       ISet<string> checkedInventoryNumbers,
       ISet<string> checkedInventoryModelAndManufacturer)
     {
       string? candidateId = null;
       string? candidateDeviceNumber = null;
+      var normalizedExternalId = inventoryExternalId?.Trim() ?? string.Empty;
 
       if (!string.IsNullOrWhiteSpace(inventoryId))
       {
@@ -511,6 +551,47 @@ namespace SamedisExternalSync
           }
         }
       }
+
+      if (string.IsNullOrWhiteSpace(candidateId) && !string.IsNullOrWhiteSpace(normalizedExternalId))
+      {
+        if (inventoryByExternalId.TryGetValue(normalizedExternalId, out var cachedByExternalId))
+        {
+          if (!string.IsNullOrWhiteSpace(cachedByExternalId))
+            candidateId = cachedByExternalId;
+        }
+
+        if (string.IsNullOrWhiteSpace(candidateId) && !checkedInventoryExternalIds.Contains(normalizedExternalId))
+        {
+          checkedInventoryExternalIds.Add(normalizedExternalId);
+
+          var resolvedByExternalId = Helper.ExternalIdExists(client, resource, normalizedExternalId);
+          if (!string.IsNullOrWhiteSpace(resolvedByExternalId))
+          {
+            candidateId = resolvedByExternalId;
+            inventoryByExternalId[normalizedExternalId] = resolvedByExternalId;
+            inventoryById[resolvedByExternalId] = resolvedByExternalId;
+
+            var detailResponse = client.Get(resource + "/" + Uri.EscapeDataString(resolvedByExternalId));
+            if (client.StatusCode == 200)
+            {
+              var detailRoot = string.IsNullOrEmpty(detailResponse) ? null : JsonConvert.DeserializeObject<Inventories.Root>(detailResponse);
+              var resolvedDeviceNumber = detailRoot?.Data?.FirstOrDefault()?.Attributes?.DeviceNumber;
+              if (!string.IsNullOrWhiteSpace(resolvedDeviceNumber))
+              {
+                inventoryByDeviceNumber[resolvedDeviceNumber] = resolvedByExternalId;
+                candidateDeviceNumber = resolvedDeviceNumber;
+              }
+            }
+          }
+          else
+          {
+            inventoryByExternalId[normalizedExternalId] = string.Empty;
+          }
+        }
+      }
+
+      if (!string.IsNullOrWhiteSpace(candidateId) && !string.IsNullOrWhiteSpace(normalizedExternalId))
+        inventoryByExternalId[normalizedExternalId] = candidateId;
 
       if (!string.IsNullOrWhiteSpace(candidateId) &&
           !string.IsNullOrWhiteSpace(candidateDeviceNumber) &&
@@ -613,9 +694,39 @@ namespace SamedisExternalSync
       return candidateId;
     }
 
-    public static Dictionary<string, object> BuildInventoryAttributes(DataRow row, string? departmentId, string? locationId, string? catalogIdOverride = null)
+    public static Dictionary<string, object> BuildInventoryAttributes(
+      DataRow row,
+      string? departmentId,
+      string? locationId,
+      string? catalogIdOverride = null,
+      bool applyCreateDefaults = false)
     {
       var attributes = new Dictionary<string, object>();
+      var modelTitle = Helper.GetRowValue(row, "device_model_title");
+      if (string.IsNullOrWhiteSpace(modelTitle))
+        modelTitle = Helper.GetRowValue(row, "title");
+
+      var manufacturer = Helper.GetRowValue(row, "manufacturer");
+      if (string.IsNullOrWhiteSpace(manufacturer))
+        manufacturer = Helper.GetRowValue(row, "responsible_manufacturer");
+      if (string.IsNullOrWhiteSpace(manufacturer))
+        manufacturer = Helper.GetRowValue(row, "company");
+
+      var deviceTypeTitle = Helper.GetRowValue(row, "device_type_title");
+      var placeholderManufacturer = Helper.GetRowValue(row, "placeholder_device_model_manufacturer");
+      var placeholderModelTitle = Helper.GetRowValue(row, "placeholder_device_model_title");
+      var placeholderDeviceTypeTitle = Helper.GetRowValue(row, "placeholder_device_type_title");
+      var isPlaceholder = IsPlaceholderDeviceModel(row);
+
+      if (isPlaceholder)
+      {
+        if (string.IsNullOrWhiteSpace(placeholderManufacturer))
+          placeholderManufacturer = manufacturer;
+        if (string.IsNullOrWhiteSpace(placeholderModelTitle))
+          placeholderModelTitle = modelTitle;
+        if (string.IsNullOrWhiteSpace(placeholderDeviceTypeTitle))
+          placeholderDeviceTypeTitle = deviceTypeTitle;
+      }
 
       Helper.AddStringAttribute(attributes, "external_id", Helper.GetRowValue(row, "external_id"));
       Helper.AddStringAttribute(attributes, "device_number", Helper.GetRowValue(row, "inventory_number"));
@@ -643,11 +754,23 @@ namespace SamedisExternalSync
       Helper.AddStringAttribute(attributes, "software_version", Helper.GetRowValue(row, "software_version"));
       Helper.AddStringAttribute(attributes, "ip_address", Helper.GetRowValue(row, "ip_address"));
       Helper.AddStringAttribute(attributes, "mac_address", Helper.GetRowValue(row, "mac_address"));
-      Helper.AddStringAttribute(attributes, "qr_code_token", Helper.GetRowValue(row, "qr_code_token"));
+      var qrCodeToken = Helper.GetRowValue(row, "qr_code_token");
+      if (string.IsNullOrWhiteSpace(qrCodeToken))
+        qrCodeToken = Helper.GetRowValue(row, "qr_code_resource_token");
+      Helper.AddStringAttribute(attributes, "qr_code_token", qrCodeToken);
       Helper.AddStringAttribute(attributes, "commissioning_through", Helper.GetRowValue(row, "commissioning_through"));
       Helper.AddStringAttribute(attributes, "linked_image_id", Helper.GetRowValue(row, "linked_image_id"));
       Helper.AddStringAttribute(attributes, "main_inventory_id", Helper.GetRowValue(row, "main_inventory_id"));
+      Helper.AddStringAttribute(attributes, "main_inventory_number", Helper.GetRowValue(row, "main_inventory_number"));
       Helper.AddStringAttribute(attributes, "supplier_company_contact_id", Helper.GetRowValue(row, "supplier_company_contact_id"));
+      Helper.AddStringAttribute(attributes, "supplier_company_name", Helper.GetRowValue(row, "supplier_company_name"));
+      Helper.AddStringAttribute(attributes, "placeholder_device_model_manufacturer", placeholderManufacturer);
+      Helper.AddStringAttribute(attributes, "placeholder_device_model_title", placeholderModelTitle);
+      Helper.AddStringAttribute(attributes, "placeholder_device_type_title", placeholderDeviceTypeTitle);
+      Helper.AddStringAttribute(attributes, "variant", Helper.GetRowValue(row, "variant"));
+      Helper.AddStringAttribute(attributes, "type_plate", Helper.GetRowValue(row, "type_plate"));
+      Helper.AddStringAttribute(attributes, "type_plate_data_uri", Helper.GetRowValue(row, "type_plate_data_uri"));
+      Helper.AddStringAttribute(attributes, "depreciation_date", Helper.NormalizeDate(Helper.GetRowValue(row, "depreciation_date")));
 
       // API docs define construction_year as string.
       Helper.AddStringAttribute(attributes, "construction_year", Helper.GetRowValue(row, "construction_year"));
@@ -670,14 +793,50 @@ namespace SamedisExternalSync
       if (Helper.TryParseBool(Helper.GetRowValue(row, "contains_patient_data"), out var containsPatientData))
         attributes["contains_patient_data"] = containsPatientData;
 
+      if (applyCreateDefaults)
+        attributes["do_maintenance"] = true;
       if (Helper.TryParseBool(Helper.GetRowValue(row, "do_maintenance"), out var doMaintenance))
         attributes["do_maintenance"] = doMaintenance;
 
+      if (applyCreateDefaults)
+        attributes["no_medical_device"] = false;
       if (Helper.TryParseBool(Helper.GetRowValue(row, "no_medical_device"), out var noMedicalDevice))
         attributes["no_medical_device"] = noMedicalDevice;
 
-      if (Helper.TryParseBool(Helper.GetRowValue(row, "device_model_is_placeholder"), out var isPlaceholder))
-        attributes["device_model_is_placeholder"] = isPlaceholder;
+      if (isPlaceholder)
+      {
+        attributes["device_model_is_placeholder"] = true;
+      }
+      else if (Helper.TryParseBool(Helper.GetRowValue(row, "device_model_is_placeholder"), out var isPlaceholderValue))
+      {
+        attributes["device_model_is_placeholder"] = isPlaceholderValue;
+      }
+
+      if (Helper.TryParseBool(Helper.GetRowValue(row, "has_warranty"), out var hasWarranty))
+        attributes["has_warranty"] = hasWarranty;
+
+      if (Helper.TryParseBool(Helper.GetRowValue(row, "is_device_system"), out var isDeviceSystem))
+        attributes["is_device_system"] = isDeviceSystem;
+
+      var serviceCompanyIds = ParseStringList(Helper.GetRowValue(row, "service_company_ids"));
+      if (serviceCompanyIds.Count > 0)
+        attributes["service_company_ids"] = serviceCompanyIds;
+
+      var teamIds = ParseStringList(Helper.GetRowValue(row, "team_ids"));
+      if (teamIds.Count > 0)
+        attributes["team_ids"] = teamIds;
+
+      var withServiceIntervals = ParseJsonValue(Helper.GetRowValue(row, "with_service_intervals"));
+      if (withServiceIntervals != null)
+        attributes["with_service_intervals"] = withServiceIntervals;
+
+      var nics = ParseJsonValue(Helper.GetRowValue(row, "nics"));
+      if (nics != null)
+        attributes["nics"] = nics;
+
+      var takeAuthority = BuildTakeAuthority(row);
+      if (takeAuthority != null)
+        attributes["take_authority"] = takeAuthority;
 
       if (!string.IsNullOrWhiteSpace(departmentId))
         attributes["department_id"] = departmentId;
@@ -685,7 +844,157 @@ namespace SamedisExternalSync
       if (!string.IsNullOrWhiteSpace(locationId))
         attributes["device_location_id"] = locationId;
 
+      // Device-model-only fields must never be sent via inventory import payload.
+      attributes.Remove("ce_marking");
+      attributes.Remove("ce_notified_body");
+      attributes.Remove("according_to_annex");
+      attributes.Remove("risk_level");
+      attributes.Remove("last_maintenance");
+      attributes.Remove("next_maintenance");
+
       return attributes;
+    }
+
+    public static bool IsPlaceholderDeviceModel(DataRow row)
+    {
+      return Helper.TryParseBool(Helper.GetRowValue(row, "device_model_is_placeholder"), out var isPlaceholder) && isPlaceholder;
+    }
+
+    private static List<string> ParseStringList(string value)
+    {
+      if (string.IsNullOrWhiteSpace(value))
+        return new List<string>();
+
+      var normalized = value.Trim();
+      if (normalized.StartsWith("[") && normalized.EndsWith("]"))
+        normalized = normalized[1..^1];
+
+      return normalized
+        .Split([',', '|'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+        .Select(item => item.Trim().Trim('"', '\''))
+        .Where(item => !string.IsNullOrWhiteSpace(item))
+        .Distinct(StringComparer.OrdinalIgnoreCase)
+        .ToList();
+    }
+
+    private static object? ParseJsonValue(string value)
+    {
+      if (string.IsNullOrWhiteSpace(value))
+        return null;
+
+      try
+      {
+        return JsonConvert.DeserializeObject<object>(value);
+      }
+      catch
+      {
+        return null;
+      }
+    }
+
+    private static object? BuildTakeAuthority(DataRow row)
+    {
+      var authority = new Dictionary<string, object>();
+      var hasAuthorityValues = false;
+
+      static bool TryParseBoolToken(JToken token, out bool value)
+      {
+        if (token.Type == JTokenType.Boolean)
+        {
+          value = token.Value<bool>();
+          return true;
+        }
+
+        return Helper.TryParseBool(token.ToString(), out value);
+      }
+
+      static List<string> ParseProtectedFieldsToken(JToken token)
+      {
+        if (token.Type == JTokenType.Array)
+        {
+          var values = token.Values<string>()
+            .Select(value => value?.Trim() ?? string.Empty)
+            .Where(value => !string.IsNullOrWhiteSpace(value))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+          return values;
+        }
+
+        return ParseStringList(token.ToString());
+      }
+
+      var rawAuthority = Helper.GetRowValue(row, "take_authority");
+      if (!string.IsNullOrWhiteSpace(rawAuthority))
+      {
+        try
+        {
+          var parsed = JToken.Parse(rawAuthority);
+          if (parsed is JObject authorityObject)
+          {
+            if (authorityObject.TryGetValue("drop", StringComparison.OrdinalIgnoreCase, out var dropToken) &&
+                dropToken != null &&
+                TryParseBoolToken(dropToken, out var dropValue))
+            {
+              authority["drop"] = dropValue;
+              hasAuthorityValues = true;
+            }
+
+            if (authorityObject.TryGetValue("locked", StringComparison.OrdinalIgnoreCase, out var lockedToken) &&
+                lockedToken != null &&
+                TryParseBoolToken(lockedToken, out var lockedValue))
+            {
+              authority["locked"] = lockedValue;
+              hasAuthorityValues = true;
+            }
+
+            if (authorityObject.TryGetValue("protected_fields", StringComparison.OrdinalIgnoreCase, out var protectedFieldsToken) &&
+                protectedFieldsToken != null)
+            {
+              var protectedFields = ParseProtectedFieldsToken(protectedFieldsToken);
+              authority["protected_fields"] = protectedFields;
+              hasAuthorityValues = true;
+            }
+          }
+        }
+        catch
+        {
+          // Invalid JSON in take_authority column is ignored.
+        }
+      }
+
+      var rawDrop = Helper.GetRowValue(row, "take_authority_drop");
+      if (Helper.TryParseBool(rawDrop, out var drop))
+      {
+        authority["drop"] = drop;
+        hasAuthorityValues = true;
+      }
+
+      var rawLocked = Helper.GetRowValue(row, "take_authority_locked");
+      if (Helper.TryParseBool(rawLocked, out var locked))
+      {
+        authority["locked"] = locked;
+        hasAuthorityValues = true;
+      }
+
+      var rawProtectedFields = Helper.GetRowValue(row, "take_authority_protected_fields");
+      if (!string.IsNullOrWhiteSpace(rawProtectedFields))
+      {
+        List<string> protectedFields;
+        try
+        {
+          var parsedProtectedFields = JToken.Parse(rawProtectedFields);
+          protectedFields = ParseProtectedFieldsToken(parsedProtectedFields);
+        }
+        catch
+        {
+          protectedFields = ParseStringList(rawProtectedFields);
+        }
+
+        authority["protected_fields"] = protectedFields;
+        hasAuthorityValues = true;
+      }
+
+      return hasAuthorityValues ? authority : null;
     }
 
     public static bool IsRetiredOperationStatus(string value)

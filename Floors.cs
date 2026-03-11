@@ -18,6 +18,9 @@ namespace SamedisExternalSync
       [JsonProperty("id")]
       public string? Id { get; set; }
 
+      [JsonProperty("external_id")]
+      public string? ExternalId { get; set; }
+
       [JsonProperty("tenant_id")]
       public string? TenantId { get; set; }
 
@@ -117,14 +120,89 @@ namespace SamedisExternalSync
       string inventoryTitle,
       IDictionary<string, string> floorsByKey,
       IDictionary<string, string> checkedFloors,
-      Helper helper)
+      Helper helper,
+      string externalId = "",
+      bool updateOnExisting = false)
     {
-      if (string.IsNullOrWhiteSpace(buildingId) || string.IsNullOrWhiteSpace(floorTitle))
-        return null;
-
       var normalizedTitle = floorTitle.Trim();
+      var normalizedExternalId = externalId?.Trim() ?? string.Empty;
       var key = buildingId + "|" + normalizedTitle;
       var checkedKey = "title:" + key;
+      var useScopedExternalLookup = !updateOnExisting;
+      var externalScopeKey = useScopedExternalLookup
+        ? (string.IsNullOrWhiteSpace(buildingId) ? string.Empty : buildingId + "|") + normalizedExternalId
+        : normalizedExternalId;
+      var checkedExternalKey = "external_id:" + externalScopeKey;
+
+      Dictionary<string, object?> BuildPayload()
+      {
+        var payload = new Dictionary<string, object?>
+        {
+          ["title"] = normalizedTitle,
+          ["building_id"] = buildingId
+        };
+
+        if (!string.IsNullOrWhiteSpace(normalizedExternalId))
+          payload["external_id"] = normalizedExternalId;
+
+        return payload;
+      }
+
+      void SyncExistingFloor(string resolvedId, string matchedBy)
+      {
+        if (!updateOnExisting || string.IsNullOrWhiteSpace(resolvedId))
+          return;
+
+        var updatePayload = JsonConvert.SerializeObject(new
+        {
+          data = BuildPayload()
+        });
+        var updateResponse = client.Put(resource, resolvedId, updatePayload);
+        if (client.StatusCode >= 200 && client.StatusCode < 300)
+        {
+          helper.Message(
+            $"Floor synced via PUT (match_by='{matchedBy}', id='{resolvedId}', title='{normalizedTitle}', external_id='{normalizedExternalId}').",
+            2
+          );
+        }
+        else
+        {
+          helper.Message(
+            $"Failed to sync floor via PUT (match_by='{matchedBy}', id='{resolvedId}', title='{normalizedTitle}', building_id='{buildingId}', external_id='{normalizedExternalId}', status={client.StatusCode} {client.Status}, response_status='{client.LastResponseStatus}', error='{client.LastError}'). Response: {updateResponse}",
+            1,
+            "WARN"
+          );
+        }
+      }
+
+      if (!string.IsNullOrWhiteSpace(normalizedExternalId))
+      {
+        if (checkedFloors.TryGetValue(checkedExternalKey, out var checkedByExternalId))
+        {
+          if (!string.IsNullOrWhiteSpace(checkedByExternalId))
+            return checkedByExternalId;
+        }
+        else
+        {
+          var resolvedByExternalId = Helper.ExternalIdExists(client, resource, normalizedExternalId);
+          if (!string.IsNullOrWhiteSpace(resolvedByExternalId))
+          {
+            checkedFloors[checkedExternalKey] = resolvedByExternalId;
+            if (!string.IsNullOrWhiteSpace(buildingId) && !string.IsNullOrWhiteSpace(normalizedTitle))
+            {
+              floorsByKey[key] = resolvedByExternalId;
+              checkedFloors[checkedKey] = resolvedByExternalId;
+            }
+            SyncExistingFloor(resolvedByExternalId, "external_id");
+            return resolvedByExternalId;
+          }
+
+          checkedFloors[checkedExternalKey] = string.Empty;
+        }
+      }
+
+      if (string.IsNullOrWhiteSpace(buildingId) || string.IsNullOrWhiteSpace(normalizedTitle))
+        return null;
 
       if (floorsByKey.TryGetValue(key, out var cachedFloorId))
       {
@@ -146,7 +224,7 @@ namespace SamedisExternalSync
 
       var filterBuilder = new FilterBuilder();
       filterBuilder.Clear();
-      filterBuilder.Add("title", FilterBuilder.FilterType.Equals, FilterBuilder.Type.Text, Uri.EscapeDataString(normalizedTitle));
+      filterBuilder.Add("title", FilterBuilder.FilterType.Equals, FilterBuilder.Type.Text, normalizedTitle);
       filterBuilder.Add("building_id", FilterBuilder.FilterType.Equals, FilterBuilder.Type.ObjectId, buildingId);
 
       var listResponse = client.Get(resource + $"?page[number]=1&page[limit]=1&gridfilter={filterBuilder.Get()}");
@@ -159,6 +237,7 @@ namespace SamedisExternalSync
         {
           floorsByKey[key] = resolvedId;
           checkedFloors[checkedKey] = resolvedId;
+          SyncExistingFloor(resolvedId, "title");
           return resolvedId;
         }
       }
@@ -171,11 +250,7 @@ namespace SamedisExternalSync
 
       var payload = JsonConvert.SerializeObject(new
       {
-        data = new Dictionary<string, object?>
-        {
-          ["title"] = normalizedTitle,
-          ["building_id"] = buildingId
-        }
+        data = BuildPayload()
       });
 
       var response = client.Post(resource, payload);
@@ -202,6 +277,8 @@ namespace SamedisExternalSync
 
       floorsByKey[key] = newFloorId;
       checkedFloors[checkedKey] = newFloorId;
+      if (!string.IsNullOrWhiteSpace(normalizedExternalId))
+        checkedFloors[checkedExternalKey] = newFloorId;
       helper.Message($"Floor created on the fly: '{normalizedTitle}' (building_id='{buildingId}') -> {newFloorId}", 2);
       return newFloorId;
     }

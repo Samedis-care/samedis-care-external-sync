@@ -76,7 +76,7 @@ namespace SamedisExternalSync
 
       var filterBuilder = new FilterBuilder();
       filterBuilder.Clear();
-      filterBuilder.Add("title", FilterBuilder.FilterType.Equals, FilterBuilder.Type.Text, Uri.EscapeDataString(normalizedTitle));
+      filterBuilder.Add("title", FilterBuilder.FilterType.Equals, FilterBuilder.Type.Text, normalizedTitle);
 
       var listResponse = client.Get(resource + $"?page[number]=1&page[limit]=1&gridfilter={filterBuilder.Get()}");
       if (client.StatusCode == 200 && !string.IsNullOrWhiteSpace(listResponse))

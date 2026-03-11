@@ -190,5 +190,208 @@ namespace SamedisExternalSync
       return "No error message found.";
     }
 
+    public static string? ResolveDeviceTypeId(
+      RequestData client,
+      string resource,
+      string deviceTypeTitle,
+      bool createOnTheFly,
+      IDictionary<string, string> deviceTypesByTitle,
+      IDictionary<string, string> checkedDeviceTypes,
+      Helper helper,
+      string tenantId = "",
+      string contextId = "",
+      string contextTitle = "")
+    {
+      if (string.IsNullOrWhiteSpace(deviceTypeTitle))
+        return null;
+
+      var normalizedTitle = deviceTypeTitle.Trim();
+      var checkedByTitleKey = "title:" + normalizedTitle;
+
+      if (deviceTypesByTitle.TryGetValue(normalizedTitle, out var cachedDeviceTypeId))
+      {
+        if (!string.IsNullOrWhiteSpace(cachedDeviceTypeId))
+          return cachedDeviceTypeId;
+
+        return null;
+      }
+
+      if (checkedDeviceTypes.TryGetValue(checkedByTitleKey, out var checkedByTitle))
+      {
+        if (!string.IsNullOrWhiteSpace(checkedByTitle))
+          return checkedByTitle;
+
+        return null;
+      }
+
+      var filterBuilder = new FilterBuilder();
+      filterBuilder.Clear();
+      filterBuilder.Add("title", FilterBuilder.FilterType.Equals, FilterBuilder.Type.Text, normalizedTitle);
+
+      var listResponse = client.Get(
+        resource +
+        $"?page[number]=1&page[limit]=1&filter[scope]=public_and_tenant&quickfilter=&gridfilter={filterBuilder.Get()}"
+      );
+
+      if (client.StatusCode == 200 && !string.IsNullOrWhiteSpace(listResponse))
+      {
+        var listRoot = JsonConvert.DeserializeObject<Root>(listResponse);
+        var foundDeviceType = listRoot?.Data?.FirstOrDefault();
+        var resolvedId = foundDeviceType?.Attributes?.Id ?? foundDeviceType?.Id;
+        if (!string.IsNullOrWhiteSpace(resolvedId))
+        {
+          deviceTypesByTitle[normalizedTitle] = resolvedId;
+          checkedDeviceTypes[checkedByTitleKey] = resolvedId;
+          return resolvedId;
+        }
+      }
+      else if (client.StatusCode != 200)
+      {
+        helper.Message(
+          $"Device type lookup request failed for '{normalizedTitle}' (status={client.StatusCode} {client.Status}, response_status='{client.LastResponseStatus}', error='{client.LastError}', context_id='{contextId}', context_title='{contextTitle}').",
+          2,
+          "WARN"
+        );
+      }
+
+      checkedDeviceTypes[checkedByTitleKey] = string.Empty;
+      deviceTypesByTitle[normalizedTitle] = string.Empty;
+
+      if (!createOnTheFly)
+        return null;
+
+      string? ResolveTenantRootDeviceTypeId()
+      {
+        const string rootCacheKey = "tenant_root_device_type";
+        if (checkedDeviceTypes.TryGetValue(rootCacheKey, out var cachedRootId))
+          return string.IsNullOrWhiteSpace(cachedRootId) ? null : cachedRootId;
+
+        var rootFilterBuilder = new FilterBuilder();
+        rootFilterBuilder.Clear();
+        if (!string.IsNullOrWhiteSpace(tenantId))
+          rootFilterBuilder.Add("tenant_id", FilterBuilder.FilterType.Equals, FilterBuilder.Type.ObjectId, tenantId);
+        rootFilterBuilder.Add("parent_id", FilterBuilder.FilterType.Empty, FilterBuilder.Type.ObjectId);
+
+        var rootResponse = client.Get(
+          resource +
+          $"?page[number]=1&page[limit]=1&filter[scope]=tenant&quickfilter=&gridfilter={rootFilterBuilder.Get()}"
+        );
+        if (client.StatusCode == 200 && !string.IsNullOrWhiteSpace(rootResponse))
+        {
+          var rootList = JsonConvert.DeserializeObject<Root>(rootResponse);
+          var root = rootList?.Data?.FirstOrDefault();
+          var rootId = root?.Attributes?.Id ?? root?.Id;
+          if (!string.IsNullOrWhiteSpace(rootId))
+          {
+            checkedDeviceTypes[rootCacheKey] = rootId;
+            return rootId;
+          }
+        }
+
+        checkedDeviceTypes[rootCacheKey] = string.Empty;
+        return null;
+      }
+
+      var tenantRootDeviceTypeId = ResolveTenantRootDeviceTypeId();
+      if (string.IsNullOrWhiteSpace(tenantRootDeviceTypeId))
+      {
+        helper.Message(
+          $"Failed to create device type '{normalizedTitle}' because tenant root device type could not be resolved (context_id='{contextId}', context_title='{contextTitle}').",
+          1,
+          "WARN"
+        );
+        return null;
+      }
+
+      string? ResolveTenantByTitle()
+      {
+        var tenantFilterBuilder = new FilterBuilder();
+        tenantFilterBuilder.Clear();
+        tenantFilterBuilder.Add("title", FilterBuilder.FilterType.Equals, FilterBuilder.Type.Text, normalizedTitle);
+        if (!string.IsNullOrWhiteSpace(tenantId))
+          tenantFilterBuilder.Add("tenant_id", FilterBuilder.FilterType.Equals, FilterBuilder.Type.ObjectId, tenantId);
+
+        var tenantListResponse = client.Get(
+          resource +
+          $"?page[number]=1&page[limit]=1&filter[scope]=tenant&quickfilter=&gridfilter={tenantFilterBuilder.Get()}"
+        );
+        if (client.StatusCode != 200 || string.IsNullOrWhiteSpace(tenantListResponse))
+          return null;
+
+        var tenantListRoot = JsonConvert.DeserializeObject<Root>(tenantListResponse);
+        var tenantMatch = tenantListRoot?.Data?.FirstOrDefault();
+        var tenantMatchId = tenantMatch?.Attributes?.Id ?? tenantMatch?.Id;
+        return string.IsNullOrWhiteSpace(tenantMatchId) ? null : tenantMatchId;
+      }
+
+      var createPayloads = new[]
+      {
+        JsonConvert.SerializeObject(new
+        {
+          data = new Dictionary<string, object?>
+          {
+            ["title"] = normalizedTitle,
+            ["parent_id"] = tenantRootDeviceTypeId
+          }
+        }),
+        JsonConvert.SerializeObject(new
+        {
+          data = new Dictionary<string, object?>
+          {
+            ["attributes"] = new Dictionary<string, object?>
+            {
+              ["title"] = normalizedTitle,
+              ["parent_id"] = tenantRootDeviceTypeId
+            }
+          }
+        }),
+        JsonConvert.SerializeObject(new
+        {
+          data = new Dictionary<string, object?>
+          {
+            ["title"] = normalizedTitle,
+            ["title_labels"] = new Dictionary<string, string>
+            {
+              ["de"] = normalizedTitle
+            },
+            ["parent_id"] = tenantRootDeviceTypeId
+          }
+        })
+      };
+
+      string? createResponse = null;
+      string? newDeviceTypeId = null;
+
+      foreach (var createPayload in createPayloads)
+      {
+        createResponse = client.Post(resource, createPayload);
+        if (client.StatusCode < 200 || client.StatusCode >= 300)
+          continue;
+
+        newDeviceTypeId = Helper.ExtractDataId(createResponse);
+        if (!string.IsNullOrWhiteSpace(newDeviceTypeId))
+          break;
+
+        newDeviceTypeId = ResolveTenantByTitle();
+        if (!string.IsNullOrWhiteSpace(newDeviceTypeId))
+          break;
+      }
+
+      if (string.IsNullOrWhiteSpace(newDeviceTypeId))
+      {
+        helper.Message(
+          $"Failed to create device type (title='{normalizedTitle}', context_id='{contextId}', context_title='{contextTitle}', status={client.StatusCode} {client.Status}, response_status='{client.LastResponseStatus}', error='{client.LastError}'). Response: {createResponse}",
+          1,
+          "WARN"
+        );
+        return null;
+      }
+
+      deviceTypesByTitle[normalizedTitle] = newDeviceTypeId;
+      checkedDeviceTypes[checkedByTitleKey] = newDeviceTypeId;
+      helper.Message($"Device type created on the fly: '{normalizedTitle}' -> {newDeviceTypeId}", 2);
+      return newDeviceTypeId;
+    }
+
   }
 }

@@ -73,6 +73,7 @@ namespace SamedisExternalSync
     public bool InventoriesDownload { get; set; } = false;
     public bool InventoriesUpload { get; set; } = false;
     public bool InventoriesUploadFallbackByDeviceNumber { get; set; } = false;
+    public bool CreateLocalDeviceModelsOnInventoryLookup { get; set; } = false;
     public bool InventoriesUploadCreateDepartmentsOnTheFly { get; set; } = false;
     public bool InventoriesUploadCreateLocationsOnTheFly { get; set; } = false;
     public string? LocationsRoomPlaceholder { get; set; } = "Keine Raumzuordnung";
@@ -84,5 +85,6 @@ namespace SamedisExternalSync
     public bool RequestsDownload { get; set; } = false;
     public bool RequestsUpload { get; set; } = false;
     public bool Trainings { get; set; } = false;
+    public bool ArchiveToSamedisCsvFiles { get; set; } = true;
   }
 }

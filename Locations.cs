@@ -19,6 +19,9 @@ namespace SamedisExternalSync
       [JsonProperty("id")]
       public string? Id { get; set; }
 
+      [JsonProperty("external_id")]
+      public string? ExternalId { get; set; }
+
       [JsonProperty("tenant_id")]
       public string? TenantId { get; set; }
 
@@ -277,18 +280,111 @@ namespace SamedisExternalSync
       string? propertyId = null,
       string? buildingId = null,
       string? floorId = null,
-      string? locationNotes = null)
+      string? locationNotes = null,
+      string externalId = "",
+      bool updateOnExisting = false)
     {
       if (!string.IsNullOrWhiteSpace(locationId) && locationsById.TryGetValue(locationId, out var existingId) && !string.IsNullOrWhiteSpace(existingId))
         return existingId;
 
       var normalizedLocationTitle = locationTitle?.Trim() ?? string.Empty;
+      var normalizedExternalId = externalId?.Trim() ?? string.Empty;
+      var normalizedLocationNotes = locationNotes?.Trim() ?? string.Empty;
       var hasHierarchyScope = !string.IsNullOrWhiteSpace(propertyId) || !string.IsNullOrWhiteSpace(buildingId) || !string.IsNullOrWhiteSpace(floorId);
       var scopeKey = hasHierarchyScope ? $"{propertyId ?? string.Empty}|{buildingId ?? string.Empty}|{floorId ?? string.Empty}" : string.Empty;
       var titleLookupKey = hasHierarchyScope ? $"{scopeKey}|{normalizedLocationTitle}" : normalizedLocationTitle;
+      var useScopedExternalLookup = hasHierarchyScope && !updateOnExisting;
+      var externalLookupKey = useScopedExternalLookup ? $"{scopeKey}|{normalizedExternalId}" : normalizedExternalId;
+
+      Dictionary<string, object?> BuildPayload(bool includeEmptyNotes)
+      {
+        var payload = new Dictionary<string, object?>
+        {
+          ["title"] = normalizedLocationTitle
+        };
+        if (!string.IsNullOrWhiteSpace(normalizedExternalId))
+          payload["external_id"] = normalizedExternalId;
+        if (!string.IsNullOrWhiteSpace(propertyId))
+          payload["property_id"] = propertyId;
+        if (!string.IsNullOrWhiteSpace(buildingId))
+          payload["building_id"] = buildingId;
+        if (!string.IsNullOrWhiteSpace(floorId))
+          payload["floor_id"] = floorId;
+        if (includeEmptyNotes || !string.IsNullOrWhiteSpace(normalizedLocationNotes))
+          payload["notes"] = normalizedLocationNotes;
+
+        return payload;
+      }
+
+      void SyncExistingLocation(string resolvedId, string matchedBy)
+      {
+        if (!updateOnExisting || string.IsNullOrWhiteSpace(resolvedId) || string.IsNullOrWhiteSpace(normalizedLocationTitle))
+          return;
+
+        var updatePayload = JsonConvert.SerializeObject(new
+        {
+          data = BuildPayload(includeEmptyNotes: true)
+        });
+        var updateResponse = client.Put(resource, resolvedId, updatePayload);
+        if (client.StatusCode >= 200 && client.StatusCode < 300)
+        {
+          helper.Message(
+            $"Location synced via PUT (match_by='{matchedBy}', id='{resolvedId}', title='{normalizedLocationTitle}', external_id='{normalizedExternalId}').",
+            2
+          );
+        }
+        else
+        {
+          helper.Message(
+            $"Failed to sync location via PUT (match_by='{matchedBy}', id='{resolvedId}', title='{normalizedLocationTitle}', property_id='{propertyId}', building_id='{buildingId}', floor_id='{floorId}', external_id='{normalizedExternalId}', status={client.StatusCode} {client.Status}, response_status='{client.LastResponseStatus}', error='{client.LastError}'). Response: {updateResponse}",
+            1,
+            "WARN"
+          );
+        }
+      }
+
+      if (!string.IsNullOrWhiteSpace(normalizedExternalId))
+      {
+        var checkedByExternalKey = "external_id:" + externalLookupKey;
+        if (checkedLocations.TryGetValue(checkedByExternalKey, out var checkedByExternal))
+        {
+          if (!string.IsNullOrWhiteSpace(checkedByExternal))
+          {
+            SyncExistingLocation(checkedByExternal, "external_id_cache");
+            return checkedByExternal;
+          }
+        }
+        else
+        {
+          var resolvedExternalId = Helper.ExternalIdExists(client, resource, normalizedExternalId);
+          if (!string.IsNullOrWhiteSpace(resolvedExternalId))
+          {
+            locationsById[resolvedExternalId] = resolvedExternalId;
+            checkedLocations[checkedByExternalKey] = resolvedExternalId;
+            if (!string.IsNullOrWhiteSpace(normalizedLocationTitle))
+            {
+              locationsByTitle[titleLookupKey] = resolvedExternalId;
+              checkedLocations["title:" + titleLookupKey] = resolvedExternalId;
+            }
+            SyncExistingLocation(resolvedExternalId, "external_id");
+            return resolvedExternalId;
+          }
+
+          helper.Message(
+            $"Location lookup by external_id returned no match (external_id='{normalizedExternalId}', property_id='{propertyId}', building_id='{buildingId}', floor_id='{floorId}', status={client.StatusCode} {client.Status}).",
+            2,
+            "WARN"
+          );
+
+          checkedLocations[checkedByExternalKey] = string.Empty;
+        }
+      }
 
       if (!string.IsNullOrWhiteSpace(normalizedLocationTitle) && locationsByTitle.TryGetValue(titleLookupKey, out existingId) && !string.IsNullOrWhiteSpace(existingId))
+      {
+        SyncExistingLocation(existingId, "title_cache");
         return existingId;
+      }
 
       if (!string.IsNullOrWhiteSpace(locationId))
       {
@@ -296,7 +392,10 @@ namespace SamedisExternalSync
         if (checkedLocations.TryGetValue(checkedByIdKey, out var checkedById))
         {
           if (!string.IsNullOrWhiteSpace(checkedById))
+          {
+            SyncExistingLocation(checkedById, "id_cache");
             return checkedById;
+          }
         }
         else
         {
@@ -319,6 +418,7 @@ namespace SamedisExternalSync
             }
 
             checkedLocations[checkedByIdKey] = resolvedId;
+            SyncExistingLocation(resolvedId, "id");
             return resolvedId;
           }
 
@@ -339,7 +439,7 @@ namespace SamedisExternalSync
         {
           var filterBuilder = new FilterBuilder();
           filterBuilder.Clear();
-          filterBuilder.Add("title", FilterBuilder.FilterType.Equals, FilterBuilder.Type.Text, Uri.EscapeDataString(normalizedLocationTitle));
+          filterBuilder.Add("title", FilterBuilder.FilterType.Equals, FilterBuilder.Type.Text, normalizedLocationTitle);
           if (!string.IsNullOrWhiteSpace(propertyId))
             filterBuilder.Add("property_id", FilterBuilder.FilterType.Equals, FilterBuilder.Type.ObjectId, propertyId);
           if (!string.IsNullOrWhiteSpace(buildingId))
@@ -361,6 +461,7 @@ namespace SamedisExternalSync
               locationsById[resolvedId] = resolvedId;
               locationsByTitle[titleLookupKey] = resolvedId;
               checkedLocations[checkedByTitleKey] = resolvedId;
+              SyncExistingLocation(resolvedId, "title");
               return resolvedId;
             }
           }
@@ -376,22 +477,9 @@ namespace SamedisExternalSync
       if (string.IsNullOrWhiteSpace(normalizedLocationTitle))
         return null;
 
-      var createPayload = new Dictionary<string, object?>
-      {
-        ["title"] = normalizedLocationTitle
-      };
-      if (!string.IsNullOrWhiteSpace(propertyId))
-        createPayload["property_id"] = propertyId;
-      if (!string.IsNullOrWhiteSpace(buildingId))
-        createPayload["building_id"] = buildingId;
-      if (!string.IsNullOrWhiteSpace(floorId))
-        createPayload["floor_id"] = floorId;
-      if (!string.IsNullOrWhiteSpace(locationNotes))
-        createPayload["notes"] = locationNotes;
-
       var payload = JsonConvert.SerializeObject(new
       {
-        data = createPayload
+        data = BuildPayload(includeEmptyNotes: false)
       });
 
       var response = client.Post(resource, payload);
