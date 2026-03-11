@@ -61,6 +61,7 @@ dotnet publish -c Release -r win-x64 --self-contained true /p:PublishSingleFile=
 - If `lastrun.txt` is missing or invalid, fallback is `2022-01-01T00:00:00.000<local-offset>`.
 - On every run, `<paths.from_samedis>` is deleted and recreated.
 - `<paths.to_samedis>` is created if missing and kept (not cleaned).
+- If `sync.archive_to_samedis_csv_files` is `true` (default), CSV files in `<paths.to_samedis>` are moved after run to `<parent>/archive/<folder>` with timestamp suffix (`<name>_yyyyMMdd_HHmmss.csv`).
 - Tenant settings are loaded via `/api/{version}/user/tenants/{tenant_id}`.
 - If tenant settings cannot be loaded, fallback is `standard` location mode.
 
@@ -104,9 +105,11 @@ Configuration keys are deserialized in snake_case (YAML) to C# classes.
 | `sync.locations_upload` | bool | `false` | no | Flag exists, but upload flow is not implemented. |
 | `sync.inventories_download` | bool | `false` | yes | Downloads inventories to `inventories.csv`. |
 | `sync.inventories_upload` | bool | `false` | yes | Uploads inventories from `<to_samedis>/inventories.csv`. |
-| `sync.inventories_upload_fallback_by_device_number` | bool | `false` | yes | If ID lookup fails/missing, resolve target inventory by `inventory_number` (`device_number`). |
+| `sync.inventories_upload_fallback_by_device_number` | bool | `false` | yes | If `id` and `external_id` lookup fail/missing, resolve target inventory by `inventory_number` (`device_number`). |
+| `sync.create_local_device_models_on_inventory_lookup` | bool | `false` | yes | If `catalog_id` is missing and model lookup fails, resolves/creates device type + manufacturer contact and creates a tenant-local device model for inventory import. |
 | `sync.inventories_upload_create_departments_on_the_fly` | bool | `false` | yes | Allows creating missing departments from CSV title. |
-| `sync.inventories_upload_create_locations_on_the_fly` | bool | `false` | yes | Allows creating missing locations; in property mode also property/building/floor. |
+| `sync.inventories_upload_create_locations_on_the_fly` | bool | `false` | yes | Standard mode only: allows creating missing locations from the `location` column. Ignored for row-level assignment in property mode. |
+| `sync.archive_to_samedis_csv_files` | bool | `true` | yes | Archives CSVs from `<paths.to_samedis>` to `<parent>/archive/<folder>` with timestamped filenames to avoid reprocessing. |
 | `sync.tasks_download` | bool | `false` | yes | Downloads tasks to `tasks.csv`, plus task documents/protocol files into `task_documents/`. |
 | `sync.tasks_upload` | bool | `false` | no | Flag exists, but upload flow is not implemented. |
 | `sync.task_download_types` | string | `maintenance` | yes | Passed as `filter[issue_type]`. Comma-separated values are supported by API. |
@@ -153,16 +156,40 @@ Format:
 
 Important lookup columns:
 - `id` (preferred target ID for update)
-- `inventory_number` (required; also used for fallback lookup)
+- `external_id` (fallback target reference for update when `id` is empty/not found)
+- `inventory_number` (required; fallback lookup after `id` and `external_id`)
 - `catalog_id` (optional direct model reference)
 - `title`, `device_model_title`, `manufacturer`, `responsible_manufacturer` (used for catalog auto-resolution if `catalog_id` is empty)
+- `device_type_title` (required when `sync.create_local_device_models_on_inventory_lookup: true` and catalog/model lookup fails)
+- `device_model_is_placeholder` (optional bool; when `true`, importer skips catalog/device-model lookup and local type/manufacturer/model creation)
+- `placeholder_device_model_manufacturer`, `placeholder_device_model_title`, `placeholder_device_type_title` (used for placeholder rows; if empty and `device_model_is_placeholder=true`, importer auto-fills from `manufacturer`/`responsible_manufacturer`, `device_model_title`/`title`, `device_type_title`)
 - `department_id`, `department`, `cost_center_number`, `cost_center_description`, `Abteilung`
 - `location_id`, `location`, `source_location_id`, `source_location_type`, `source_location_number`
-- `StandorteGeba*.csv`, `StandorteEbe*.csv`, `StandorteRau*.csv` in `<paths.to_samedis>` are used to resolve source location hierarchy in tenant property mode
+- `take_authority` (optional JSON object for record/field protection with keys `drop`, `locked`, `protected_fields`)
+- `take_authority_drop`, `take_authority_locked`, `take_authority_protected_fields` (optional column-based alternative to `take_authority`; overrides JSON when provided)
+- `buildings.csv`, `floors.csv`, `rooms.csv` (or legacy `StandorteGeba*`, `StandorteEbe*`, `StandorteRau*`) in `<paths.to_samedis>` are used for property-mode hierarchy sync
+- In property mode, `source_location_id` is resolved against API `external_id` for rooms/floors/buildings when CSV mapping is missing (using `/via/external_id/{id}` lookups).
+- During hierarchy import, created buildings/floors/rooms are written with `external_id` from source CSV (`lid`, fallback `id`).
+- During building creation in hierarchy import, `buildings.csv` columns `street`, `postal_code`, `city` are mapped to API fields `street`, `zip`, `town`.
+- During hierarchy sync reruns, buildings/floors/rooms are matched by `external_id` first (fallback: title + parent scope) and existing records are updated via `PUT` (title/external_id and hierarchy fields).
+- In tenant property mode, hierarchy sync runs before inventory import: first all buildings, then floors (with building parent), then rooms (with floor parent)
 - For floor/building source references, importer resolves/creates a room placeholder under the hierarchy using `sync.locations_room_placeholder` (default: `Keine Raumzuordnung`)
-- In tenant property mode, rows are skipped if `source_location_id` is missing/unresolvable or if building/floor/room hierarchy cannot be resolved to a valid room target
+- In tenant property mode, if `source_location_id` is missing/unresolvable, inventory rows continue without location reference
+
+Location assignment modes:
+- Standard mode (`location` column): importer resolves `location_id` / `location`; if `sync.inventories_upload_create_locations_on_the_fly=true`, missing locations are created on the fly.
+- Property mode (`source_location_id` + hierarchy CSV): importer first resolves/creates hierarchy from `buildings.csv`, `floors.csv`, `rooms.csv`. During inventory row processing, locations are only resolved against this hierarchy; no on-the-fly creation is done per row. If not resolvable, inventory is uploaded without `device_location_id`.
+
+`take_authority` mapping details:
+- Supported keys are exactly `drop` (bool), `locked` (bool), `protected_fields` (string array).
+- CSV `take_authority` should be valid JSON (example: `{"drop":false,"locked":true,"protected_fields":["serial_number","device_location_id"]}`).
+- As an alternative, set `take_authority_drop` / `take_authority_locked` (`true|false|1|0|yes|no`) and `take_authority_protected_fields` (comma/pipe separated or JSON array).
 
 Rows with `operation_status` resolved to `retired` are skipped only if the inventory already exists; otherwise they are created as retired devices.
+
+Create defaults:
+- For create operations, `do_maintenance` defaults to `true` when CSV value is empty.
+- For create operations, `no_medical_device` defaults to `false` when CSV value is empty.
 
 ## Output Files
 
@@ -176,6 +203,10 @@ Depending on enabled sync flags, these files are generated in `<paths.from_samed
 - `devicemanufacturers.csv`
 - `inventories.csv`
 - `task_documents/*` (task documents and protocol files)
+
+Inventory download note:
+- In tenant property mode (`use_extended_device_locations=true`), `inventories.csv` includes `source_location_id`.
+- Export value mapping is: room (`device_location`) `external_id`; if empty, fallback to parent floor `external_id`.
 
 Additional files in project root:
 - `lastrun.txt`

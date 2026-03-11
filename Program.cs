@@ -515,17 +515,27 @@ internal class Program
       var inventoryResource = $"/api/{samedisApiVersion}/tenants/{samedisTenantId}/inventories";
       var inventoryWriteResource = inventoryResource + "?locale=en";
       var departmentsResource = $"/api/{samedisApiVersion}/tenants/{samedisTenantId}/departments";
+      var profitCentersResource = $"/api/{samedisApiVersion}/tenants/{samedisTenantId}/profit_centers";
       var propertiesResource = $"/api/{samedisApiVersion}/tenants/{samedisTenantId}/properties";
       var buildingsResource = $"/api/{samedisApiVersion}/tenants/{samedisTenantId}/buildings";
       var floorsResource = $"/api/{samedisApiVersion}/tenants/{samedisTenantId}/floors";
       var locationsResource = $"/api/{samedisApiVersion}/tenants/{samedisTenantId}/device_locations";
       var deviceModelsResource = $"/api/{samedisApiVersion}/tenants/{samedisTenantId}/device_models";
+      var deviceTypesResource = $"/api/{samedisApiVersion}/tenants/{samedisTenantId}/device_types";
+      var contactsResource = $"/api/{samedisApiVersion}/tenants/{samedisTenantId}/contacts";
+      var createLocalDeviceModelsOnInventoryLookup = config.Sync.CreateLocalDeviceModelsOnInventoryLookup;
       var inventoryCsvPath = Path.Combine(uploadRoot, "inventories.csv");
+      var departmentsCsvPath = Path.Combine(uploadRoot, "departments.csv");
 
       helper.CanDo(samedisClient, inventoryResource);
       helper.CanDo(samedisClient, departmentsResource);
       helper.CanDo(samedisClient, locationsResource);
       helper.CanDo(samedisClient, deviceModelsResource);
+      if (createLocalDeviceModelsOnInventoryLookup)
+      {
+        helper.CanDo(samedisClient, deviceTypesResource);
+        helper.CanDo(samedisClient, contactsResource);
+      }
       if (useExtendedDeviceLocations)
       {
         helper.CanDo(samedisClient, propertiesResource);
@@ -566,15 +576,19 @@ internal class Program
         else
         {
           var inventoryById = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+          var inventoryByExternalId = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
           var inventoryByDeviceNumber = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
           var inventoryByModelAndManufacturer = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
           var checkedInventoryIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+          var checkedInventoryExternalIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
           var checkedInventoryNumbers = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
           var checkedInventoryModelAndManufacturer = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
           var departmentsById = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
           var departmentsByCostCenter = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
           var departmentsByTitle = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
           var checkedDepartments = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+          var profitCentersByTitle = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+          var checkedProfitCenters = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
           var locationsById = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
           var locationsByTitle = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
           var checkedLocations = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
@@ -585,6 +599,11 @@ internal class Program
           var floorsByKey = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
           var checkedFloors = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
           var deviceModelCatalogLookup = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+          var deviceTypesByTitle = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+          var checkedDeviceTypes = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+          var manufacturersByName = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+          var checkedManufacturers = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+          var tenantDeviceModelLookup = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
 
           var sourceLocationCsvFiles = Directory.Exists(uploadRoot)
             ? Directory.GetFiles(uploadRoot, "*.csv")
@@ -607,6 +626,334 @@ internal class Program
             ? "Keine Raumzuordnung"
             : config.Sync.LocationsRoomPlaceholder.Trim();
           var hasDepartmentNotesColumn = uploadTable.Columns.Contains("wirtschaftende_einheit");
+          var createStandardLocationsOnTheFly = !useExtendedDeviceLocations && config.Sync.InventoriesUploadCreateLocationsOnTheFly;
+          var createPropertyHierarchyOnImport = useExtendedDeviceLocations;
+          string? propertyIdForHierarchySync = null;
+
+          if (useExtendedDeviceLocations)
+          {
+            if (config.Sync.InventoriesUploadCreateLocationsOnTheFly)
+            {
+              helper.Message(
+                "Property mode: sync.inventories_upload_create_locations_on_the_fly is only used in standard mode. Property mode uses hierarchy pre-sync and row-level location assignment resolves references only.",
+                1
+              );
+            }
+
+            if (sourceBuildings.Count == 0 && sourceFloors.Count == 0 && sourceRooms.Count == 0)
+            {
+              helper.Message("Property mode hierarchy pre-sync skipped because no buildings/floors/rooms CSV data was found.", 1, "WARN");
+            }
+            else
+            {
+              var propertyTitle = string.IsNullOrWhiteSpace(tenantSettings.Name) ? "Default Property" : tenantSettings.Name;
+              propertyIdForHierarchySync = Properties.ResolvePropertyId(
+                samedisClient,
+                propertiesResource,
+                propertyTitle,
+                createPropertyHierarchyOnImport,
+                propertiesByTitle,
+                checkedProperties,
+                helper
+              );
+
+              if (string.IsNullOrWhiteSpace(propertyIdForHierarchySync))
+              {
+                helper.Message(
+                  $"Property mode hierarchy pre-sync skipped because property '{propertyTitle}' could not be resolved/created.",
+                  1,
+                  "WARN"
+                );
+              }
+              else
+              {
+                helper.Message(
+                  $"Property mode hierarchy pre-sync starting. Source buildings: {sourceBuildings.Count}, floors: {sourceFloors.Count}, rooms: {sourceRooms.Count}",
+                  1
+                );
+
+                var sourceBuildingToApiId = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+                var sourceFloorToApiId = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+                var sourceFloorToBuildingApiId = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+
+                var buildingsResolved = 0;
+                var buildingsUnresolved = 0;
+                var buildingsSkippedNoTitle = 0;
+
+                foreach (var sourceBuilding in sourceBuildings.Values.OrderBy(item => item.SourceId, StringComparer.OrdinalIgnoreCase))
+                {
+                  if (string.IsNullOrWhiteSpace(sourceBuilding.Title))
+                  {
+                    buildingsSkippedNoTitle++;
+                    continue;
+                  }
+
+                  var resolvedBuildingId = Buildings.ResolveBuildingId(
+                    samedisClient,
+                    buildingsResource,
+                    propertyIdForHierarchySync,
+                    sourceBuilding.Title,
+                    createPropertyHierarchyOnImport,
+                    sourceBuilding.SourceId,
+                    sourceBuilding.Title,
+                    buildingsByKey,
+                    checkedBuildings,
+                    helper,
+                    sourceBuilding.SourceId,
+                    sourceBuilding.Street,
+                    sourceBuilding.Zip,
+                    sourceBuilding.Town,
+                    true
+                  );
+
+                  if (string.IsNullOrWhiteSpace(resolvedBuildingId))
+                  {
+                    buildingsUnresolved++;
+                    continue;
+                  }
+
+                  sourceBuildingToApiId[sourceBuilding.SourceId] = resolvedBuildingId;
+                  buildingsResolved++;
+                }
+
+                var floorsResolved = 0;
+                var floorsUnresolved = 0;
+                var floorsMissingBuildingParent = 0;
+                var floorsSkippedNoTitle = 0;
+
+                foreach (var sourceFloor in sourceFloors.Values.OrderBy(item => item.SourceId, StringComparer.OrdinalIgnoreCase))
+                {
+                  if (string.IsNullOrWhiteSpace(sourceFloor.SourceBuildingId) || !sourceBuildingToApiId.TryGetValue(sourceFloor.SourceBuildingId, out var parentBuildingId))
+                  {
+                    floorsMissingBuildingParent++;
+                    continue;
+                  }
+
+                  if (string.IsNullOrWhiteSpace(sourceFloor.Title))
+                  {
+                    floorsSkippedNoTitle++;
+                    continue;
+                  }
+
+                  var resolvedFloorId = Floors.ResolveFloorId(
+                    samedisClient,
+                    floorsResource,
+                    parentBuildingId,
+                    sourceFloor.Title,
+                    createPropertyHierarchyOnImport,
+                    sourceFloor.SourceId,
+                    sourceFloor.Title,
+                    floorsByKey,
+                    checkedFloors,
+                    helper,
+                    sourceFloor.SourceId,
+                    true
+                  );
+
+                  if (string.IsNullOrWhiteSpace(resolvedFloorId))
+                  {
+                    floorsUnresolved++;
+                    continue;
+                  }
+
+                  sourceFloorToApiId[sourceFloor.SourceId] = resolvedFloorId;
+                  sourceFloorToBuildingApiId[sourceFloor.SourceId] = parentBuildingId;
+                  floorsResolved++;
+                }
+
+                var roomsResolved = 0;
+                var roomsUnresolved = 0;
+                var roomsMissingFloorParent = 0;
+                var roomsSkippedNoTitle = 0;
+
+                foreach (var sourceRoom in sourceRooms.Values.OrderBy(item => item.SourceId, StringComparer.OrdinalIgnoreCase))
+                {
+                  if (string.IsNullOrWhiteSpace(sourceRoom.SourceFloorId) || !sourceFloorToApiId.TryGetValue(sourceRoom.SourceFloorId, out var parentFloorId))
+                  {
+                    roomsMissingFloorParent++;
+                    continue;
+                  }
+
+                  if (string.IsNullOrWhiteSpace(sourceRoom.Title))
+                  {
+                    roomsSkippedNoTitle++;
+                    continue;
+                  }
+
+                  sourceFloorToBuildingApiId.TryGetValue(sourceRoom.SourceFloorId, out var parentBuildingId);
+                  var roomNotes = string.IsNullOrWhiteSpace(sourceRoom.PlisCode) ? string.Empty : $"PLIS Code: {sourceRoom.PlisCode.Trim()}";
+
+                  var resolvedRoomId = Locations.ResolveLocationId(
+                    samedisClient,
+                    locationsResource,
+                    string.Empty,
+                    sourceRoom.Title,
+                    createPropertyHierarchyOnImport,
+                    sourceRoom.SourceId,
+                    sourceRoom.Title,
+                    locationsById,
+                    locationsByTitle,
+                    checkedLocations,
+                    helper,
+                    propertyIdForHierarchySync,
+                    parentBuildingId,
+                    parentFloorId,
+                    roomNotes,
+                    sourceRoom.SourceId,
+                    true
+                  );
+
+                  if (string.IsNullOrWhiteSpace(resolvedRoomId))
+                  {
+                    roomsUnresolved++;
+                    continue;
+                  }
+
+                  locationsById[sourceRoom.SourceId] = resolvedRoomId;
+                  roomsResolved++;
+                }
+
+                helper.Message(
+                  $"Property mode hierarchy pre-sync finished. Buildings resolved: {buildingsResolved}, unresolved: {buildingsUnresolved}, missing title: {buildingsSkippedNoTitle}.",
+                  1
+                );
+                helper.Message(
+                  $"Property mode hierarchy pre-sync finished. Floors resolved: {floorsResolved}, unresolved: {floorsUnresolved}, missing building parent: {floorsMissingBuildingParent}, missing title: {floorsSkippedNoTitle}.",
+                  1
+                );
+                helper.Message(
+                  $"Property mode hierarchy pre-sync finished. Rooms resolved: {roomsResolved}, unresolved: {roomsUnresolved}, missing floor parent: {roomsMissingFloorParent}, missing title: {roomsSkippedNoTitle}.",
+                  1
+                );
+              }
+            }
+          }
+          else if (sourceBuildings.Count > 0 || sourceFloors.Count > 0 || sourceRooms.Count > 0)
+          {
+            helper.Message(
+              "Tenant location mode is standard. buildings/floors/rooms CSV data was detected but hierarchy pre-sync is skipped.",
+              1,
+              "WARN"
+            );
+          }
+
+          if (File.Exists(departmentsCsvPath))
+          {
+            DataTable departmentsTable;
+            try
+            {
+              departmentsTable = Helper.ImportCsvToDataTable(departmentsCsvPath, "DepartmentsUpload");
+            }
+            catch (Exception ex)
+            {
+              helper.Message($"Departments preload failed to read CSV {departmentsCsvPath}: {ex.Message}", 1, "WARN");
+              departmentsTable = new DataTable("DepartmentsUpload");
+            }
+
+            if (departmentsTable.Rows.Count > 0)
+            {
+              var hasDepartmentCsvNotesColumn = departmentsTable.Columns.Contains("notes") || departmentsTable.Columns.Contains("wirtschaftende_einheit");
+              var hasDepartmentCsvProfitCenterColumn = departmentsTable.Columns.Contains("profit_center");
+              helper.Message($"Departments preload source rows: {departmentsTable.Rows.Count}", 1);
+
+              foreach (DataRow departmentRow in departmentsTable.Rows)
+              {
+                var departmentRowId = Helper.GetRowValue(departmentRow, "id");
+                var departmentApiIdFromCsv = Helper.GetRowValue(departmentRow, "department_id");
+                var departmentCostCenterFromCsv = Helper.GetRowValue(departmentRow, "cost_center_number");
+
+                var departmentTitleFromCsv = Helper.GetRowValue(departmentRow, "department");
+                if (string.IsNullOrWhiteSpace(departmentTitleFromCsv))
+                  departmentTitleFromCsv = Helper.GetRowValue(departmentRow, "cost_center_description");
+                if (string.IsNullOrWhiteSpace(departmentTitleFromCsv))
+                  departmentTitleFromCsv = Helper.GetRowValue(departmentRow, "abteilung");
+
+                var departmentNotesFromCsv = string.Empty;
+                if (hasDepartmentCsvNotesColumn)
+                {
+                  departmentNotesFromCsv = Helper.GetRowValue(departmentRow, "notes");
+                  if (string.IsNullOrWhiteSpace(departmentNotesFromCsv))
+                    departmentNotesFromCsv = Helper.GetRowValue(departmentRow, "wirtschaftende_einheit");
+                }
+
+                var departmentProfitCenterTitle = string.Empty;
+                if (useProfitCenters)
+                {
+                  if (hasDepartmentCsvProfitCenterColumn)
+                    departmentProfitCenterTitle = Helper.GetRowValue(departmentRow, "profit_center");
+                  if (string.IsNullOrWhiteSpace(departmentProfitCenterTitle) && departmentsTable.Columns.Contains("wirtschaftende_einheit"))
+                    departmentProfitCenterTitle = Helper.GetRowValue(departmentRow, "wirtschaftende_einheit");
+                }
+                var departmentProfitCenterId = string.Empty;
+
+                if (!string.IsNullOrWhiteSpace(departmentProfitCenterTitle))
+                {
+                  departmentProfitCenterId = ProfitCenters.ResolveProfitCenterId(
+                    samedisClient,
+                    profitCentersResource,
+                    departmentProfitCenterTitle,
+                    config.Sync.InventoriesUploadCreateDepartmentsOnTheFly,
+                    departmentRowId,
+                    departmentTitleFromCsv,
+                    profitCentersByTitle,
+                    checkedProfitCenters,
+                    helper
+                  ) ?? string.Empty;
+
+                  if (string.IsNullOrWhiteSpace(departmentProfitCenterId))
+                  {
+                    helper.Message(
+                      $"Departments preload: profit center '{departmentProfitCenterTitle}' could not be resolved/created (department_title='{departmentTitleFromCsv}', cost_center_number='{departmentCostCenterFromCsv}', source_id='{departmentRowId}'). Department will be synced without profit center.",
+                      1,
+                      "WARN"
+                    );
+                    departmentProfitCenterTitle = string.Empty;
+                  }
+                }
+
+                if (string.IsNullOrWhiteSpace(departmentTitleFromCsv) && string.IsNullOrWhiteSpace(departmentCostCenterFromCsv))
+                  continue;
+
+                var preloadedDepartmentId = Departments.ResolveDepartmentId(
+                  samedisClient,
+                  departmentsResource,
+                  departmentApiIdFromCsv,
+                  departmentCostCenterFromCsv,
+                  departmentTitleFromCsv,
+                  departmentNotesFromCsv,
+                  config.Sync.InventoriesUploadCreateDepartmentsOnTheFly,
+                  departmentRowId,
+                  departmentTitleFromCsv,
+                  departmentsById,
+                  departmentsByCostCenter,
+                  departmentsByTitle,
+                  checkedDepartments,
+                  helper,
+                  departmentProfitCenterTitle
+                );
+
+                if (string.IsNullOrWhiteSpace(preloadedDepartmentId))
+                {
+                  helper.Message(
+                    $"Departments preload: could not resolve/create department (title='{departmentTitleFromCsv}', cost_center_number='{departmentCostCenterFromCsv}', source_id='{departmentRowId}').",
+                    1,
+                    "WARN"
+                  );
+                }
+                else if (!string.IsNullOrWhiteSpace(departmentProfitCenterId))
+                {
+                  ProfitCenters.EnsureDepartmentAssigned(
+                    samedisClient,
+                    profitCentersResource,
+                    departmentProfitCenterId,
+                    preloadedDepartmentId,
+                    checkedProfitCenters,
+                    helper
+                  );
+                }
+              }
+            }
+          }
 
           helper.Message($"Inventories Upload source rows: {uploadTable.Rows.Count}", 1);
           helper.Message($"Inventories Upload location mode: {(useExtendedDeviceLocations ? "property (building/floor/room)" : "standard (room only)")}", 1);
@@ -624,11 +971,14 @@ internal class Program
               inventoryTitle = Helper.GetRowValue(row, "device_model_title");
 
             var inventoryNumber = Helper.GetRowValue(row, "inventory_number");
+            var inventoryExternalId = Helper.GetRowValue(row, "external_id");
             var departmentCostCenterNumber = Helper.GetRowValue(row, "cost_center_number");
             var departmentTitle = Helper.GetRowValue(row, "department");
             if (string.IsNullOrWhiteSpace(departmentTitle))
               departmentTitle = Helper.GetRowValue(row, "cost_center_description");
             var departmentNotes = hasDepartmentNotesColumn ? Helper.GetRowValue(row, "wirtschaftende_einheit") : string.Empty;
+            var departmentProfitCenterTitle = useProfitCenters ? departmentNotes : string.Empty;
+            var departmentProfitCenterId = string.Empty;
 
             var locationTitle = Helper.GetRowValue(row, "location");
 
@@ -653,6 +1003,9 @@ internal class Program
               lookupManufacturer = Helper.GetRowValue(row, "responsible_manufacturer");
             if (string.IsNullOrWhiteSpace(lookupManufacturer))
               lookupManufacturer = Helper.GetRowValue(row, "company");
+
+            var lookupDeviceTypeTitle = Helper.GetRowValue(row, "device_type_title");
+            var isPlaceholderDeviceModel = Inventories.IsPlaceholderDeviceModel(row);
 
             if (!string.IsNullOrWhiteSpace(sourceLocationId))
             {
@@ -724,14 +1077,17 @@ internal class Program
               samedisClient,
               inventoryResource,
               rowId,
+              inventoryExternalId,
               inventoryNumber,
               lookupTitle,
               lookupManufacturer,
               config.Sync.InventoriesUploadFallbackByDeviceNumber,
               inventoryById,
+              inventoryByExternalId,
               inventoryByDeviceNumber,
               inventoryByModelAndManufacturer,
               checkedInventoryIds,
+              checkedInventoryExternalIds,
               checkedInventoryNumbers,
               checkedInventoryModelAndManufacturer
             );
@@ -749,21 +1105,98 @@ internal class Program
 
             if (string.IsNullOrWhiteSpace(catalogId))
             {
-              catalogId = DeviceModels.ResolveCatalogId(
+              if (isPlaceholderDeviceModel)
+              {
+                helper.Message(
+                  $"Placeholder device model row detected. Skipping catalog/device-model lookup and local model/type/manufacturer creation (inventory_number='{inventoryNumber}', title='{lookupTitle}').",
+                  2
+                );
+              }
+              else
+              {
+                catalogId = DeviceModels.ResolveCatalogId(
+                  samedisClient,
+                  deviceModelsResource,
+                  lookupTitle,
+                  lookupManufacturer,
+                  deviceModelCatalogLookup
+                ) ?? string.Empty;
+
+                if (!string.IsNullOrWhiteSpace(catalogId))
+                {
+                  helper.Message($"Resolved catalog_id '{catalogId}' via device model lookup (title='{lookupTitle}', manufacturer='{lookupManufacturer}').", 2);
+                }
+                else if (createLocalDeviceModelsOnInventoryLookup)
+                {
+                  catalogId = DeviceModels.ResolveOrCreateTenantCatalogIdForInventory(
+                    samedisClient,
+                    deviceModelsResource,
+                    deviceTypesResource,
+                    contactsResource,
+                    samedisTenantId,
+                    lookupTitle,
+                    lookupManufacturer,
+                    lookupDeviceTypeTitle,
+                    deviceTypesByTitle,
+                    checkedDeviceTypes,
+                    manufacturersByName,
+                    checkedManufacturers,
+                    tenantDeviceModelLookup,
+                    deviceModelCatalogLookup,
+                    helper,
+                    rowId,
+                    inventoryNumber
+                  ) ?? string.Empty;
+
+                  if (!string.IsNullOrWhiteSpace(catalogId))
+                  {
+                    helper.Message(
+                      $"Resolved catalog_id '{catalogId}' via local tenant device model lookup/create (title='{lookupTitle}', manufacturer='{lookupManufacturer}', device_type_title='{lookupDeviceTypeTitle}', inventory_number='{inventoryNumber}').",
+                      2
+                    );
+                  }
+                  else if (!string.IsNullOrWhiteSpace(lookupTitle))
+                  {
+                    helper.Message(
+                      $"No device model match found and local tenant device model creation failed/skipped (title='{lookupTitle}', manufacturer='{lookupManufacturer}', device_type_title='{lookupDeviceTypeTitle}', inventory_number='{inventoryNumber}').",
+                      2,
+                      "WARN"
+                    );
+                  }
+                }
+                else if (!string.IsNullOrWhiteSpace(lookupTitle))
+                {
+                  helper.Message(
+                    $"No device model match found for catalog lookup (title='{lookupTitle}', manufacturer='{lookupManufacturer}', inventory_number='{inventoryNumber}').",
+                    2,
+                    "WARN"
+                  );
+                }
+              }
+            }
+
+            if (!string.IsNullOrWhiteSpace(departmentProfitCenterTitle))
+            {
+              departmentProfitCenterId = ProfitCenters.ResolveProfitCenterId(
                 samedisClient,
-                deviceModelsResource,
-                lookupTitle,
-                lookupManufacturer,
-                deviceModelCatalogLookup
+                profitCentersResource,
+                departmentProfitCenterTitle,
+                config.Sync.InventoriesUploadCreateDepartmentsOnTheFly,
+                rowId,
+                inventoryTitle,
+                profitCentersByTitle,
+                checkedProfitCenters,
+                helper
               ) ?? string.Empty;
 
-              if (!string.IsNullOrWhiteSpace(catalogId))
+              if (string.IsNullOrWhiteSpace(departmentProfitCenterId))
               {
-                helper.Message($"Resolved catalog_id '{catalogId}' via device model lookup (title='{lookupTitle}', manufacturer='{lookupManufacturer}').", 2);
-              }
-              else if (!string.IsNullOrWhiteSpace(lookupTitle))
-              {
-                helper.Message($"No device model match found for catalog lookup (title='{lookupTitle}', manufacturer='{lookupManufacturer}', inventory_number='{inventoryNumber}').", 2, "WARN");
+                helper.Message(
+                  $"Profit center '{departmentProfitCenterTitle}' could not be resolved/created for inventory row (id='{rowId}', inventory_number='{inventoryNumber}'). Department will be synced without profit center.",
+                  1,
+                  "WARN"
+                );
+                departmentProfitCenterTitle = string.Empty;
               }
             }
 
@@ -781,7 +1214,8 @@ internal class Program
               departmentsByCostCenter,
               departmentsByTitle,
               checkedDepartments,
-              helper
+              helper,
+              departmentProfitCenterTitle
             );
 
             if ((!string.IsNullOrWhiteSpace(departmentTitle) || !string.IsNullOrWhiteSpace(departmentCostCenterNumber)) && string.IsNullOrWhiteSpace(departmentId))
@@ -790,6 +1224,17 @@ internal class Program
                 $"Department could not be resolved/created (title='{departmentTitle}', cost_center_number='{departmentCostCenterNumber}', id='{rowId}', inventory_number='{inventoryNumber}'). Proceeding without department reference.",
                 1,
                 "WARN"
+              );
+            }
+            else if (!string.IsNullOrWhiteSpace(departmentId) && !string.IsNullOrWhiteSpace(departmentProfitCenterId))
+            {
+              ProfitCenters.EnsureDepartmentAssigned(
+                samedisClient,
+                profitCentersResource,
+                departmentProfitCenterId,
+                departmentId,
+                checkedProfitCenters,
+                helper
               );
             }
 
@@ -806,15 +1251,123 @@ internal class Program
               }
               else if (!sourceLocationResolved)
               {
+                var resolvedByExternalId = false;
+
+                var roomByExternalId = Locations.ResolveLocationId(
+                  samedisClient,
+                  locationsResource,
+                  string.Empty,
+                  string.Empty,
+                  false,
+                  rowId,
+                  inventoryTitle,
+                  locationsById,
+                  locationsByTitle,
+                  checkedLocations,
+                  helper,
+                  null,
+                  null,
+                  null,
+                  null,
+                  sourceLocationId
+                );
+                if (!string.IsNullOrWhiteSpace(roomByExternalId))
+                {
+                  locationId = roomByExternalId;
+                  resolvedByExternalId = true;
+                }
+
+                string? floorByExternalId = null;
+                if (!resolvedByExternalId)
+                {
+                  floorByExternalId = Floors.ResolveFloorId(
+                    samedisClient,
+                    floorsResource,
+                    string.Empty,
+                    string.Empty,
+                    false,
+                    rowId,
+                    inventoryTitle,
+                    floorsByKey,
+                    checkedFloors,
+                    helper,
+                    sourceLocationId
+                  );
+                  if (!string.IsNullOrWhiteSpace(floorByExternalId))
+                  {
+                    locationId = Locations.ResolveLocationId(
+                      samedisClient,
+                      locationsResource,
+                      string.Empty,
+                      roomPlaceholderTitle,
+                      false,
+                      rowId,
+                      inventoryTitle,
+                      locationsById,
+                      locationsByTitle,
+                      checkedLocations,
+                      helper,
+                      propertyIdForHierarchySync,
+                      null,
+                      floorByExternalId
+                    );
+                    resolvedByExternalId = !string.IsNullOrWhiteSpace(locationId);
+                  }
+                }
+
+                if (!resolvedByExternalId)
+                {
+                  var buildingByExternalId = Buildings.ResolveBuildingId(
+                    samedisClient,
+                    buildingsResource,
+                    propertyIdForHierarchySync ?? string.Empty,
+                    string.Empty,
+                    false,
+                    rowId,
+                    inventoryTitle,
+                    buildingsByKey,
+                    checkedBuildings,
+                    helper,
+                    sourceLocationId
+                  );
+                  if (!string.IsNullOrWhiteSpace(buildingByExternalId))
+                  {
+                    locationId = Locations.ResolveLocationId(
+                      samedisClient,
+                      locationsResource,
+                      string.Empty,
+                      roomPlaceholderTitle,
+                      false,
+                      rowId,
+                      inventoryTitle,
+                      locationsById,
+                      locationsByTitle,
+                      checkedLocations,
+                      helper,
+                      propertyIdForHierarchySync,
+                      buildingByExternalId
+                    );
+                    resolvedByExternalId = !string.IsNullOrWhiteSpace(locationId);
+                  }
+                }
+
+                if (resolvedByExternalId)
+                {
                   helper.Message(
-                  $"Property mode: source_location_id '{sourceLocationId}' could not be mapped to building/floor/room from location CSV files (id='{rowId}', inventory_number='{inventoryNumber}'). Proceeding without location reference.",
+                    $"Property mode: resolved source_location_id '{sourceLocationId}' via API external_id lookup (id='{rowId}', inventory_number='{inventoryNumber}').",
+                    2
+                  );
+                  goto SkipPropertyLocationAssignment;
+                }
+
+                helper.Message(
+                  $"Property mode: source_location_id '{sourceLocationId}' could not be mapped from CSV or resolved by API external_id (id='{rowId}', inventory_number='{inventoryNumber}'). Proceeding without location reference.",
                   1,
                   "WARN"
                 );
               }
               else
               {
-                var propertyTitle = string.IsNullOrWhiteSpace(tenantSettings.Name) ? "Default Property" : tenantSettings.Name;
                 var roomTitle = string.IsNullOrWhiteSpace(sourceRoomTitle) ? locationTitle : sourceRoomTitle;
                 var roomIdFromCsv = string.Empty;
                 var roomNotes = string.Empty;
@@ -831,6 +1384,24 @@ internal class Program
                   normalizedSourceLocationType.Contains("raum") ||
                   !string.IsNullOrWhiteSpace(sourceRoomTitle);
 
+                if (isRoomSourceReference && resolvedSourceRoom == null && (resolvedSourceFloor != null || resolvedSourceBuilding != null))
+                {
+                  var resolvedAs = resolvedSourceFloor != null ? "floor" : "building";
+                  helper.Message(
+                    $"Property mode: source_location_type '{sourceLocationType}' indicates room, but source_location_id '{sourceLocationId}' maps to a {resolvedAs} in CSV hierarchy. Falling back to placeholder room handling.",
+                    2,
+                    "WARN"
+                  );
+                  isRoomSourceReference = false;
+                  if (resolvedSourceFloor != null)
+                    isFloorSourceReference = true;
+                  else
+                    isBuildingSourceReference = true;
+                }
+
+                if (isRoomSourceReference && !string.IsNullOrWhiteSpace(sourceLocationId))
+                  roomIdFromCsv = sourceLocationId;
+
                 // A floor/building source location still needs a room target.
                 if (!isRoomSourceReference && (isFloorSourceReference || isBuildingSourceReference))
                 {
@@ -842,7 +1413,7 @@ internal class Program
                   roomNotes = $"PLIS Code: {resolvedSourceRoom.PlisCode.Trim()}";
                 }
 
-                if (string.IsNullOrWhiteSpace(roomTitle))
+                if (string.IsNullOrWhiteSpace(roomTitle) && string.IsNullOrWhiteSpace(roomIdFromCsv))
                 {
                   helper.Message(
                     $"Property mode: final room title could not be determined from source_location_id '{sourceLocationId}' (id='{rowId}', inventory_number='{inventoryNumber}'). Proceeding without location reference.",
@@ -851,110 +1422,60 @@ internal class Program
                   );
                   goto SkipPropertyLocationAssignment;
                 }
-
-                var propertyId = Properties.ResolvePropertyId(
-                  samedisClient,
-                  propertiesResource,
-                  propertyTitle,
-                  config.Sync.InventoriesUploadCreateLocationsOnTheFly,
-                  propertiesByTitle,
-                  checkedProperties,
-                  helper
-                );
-                if (string.IsNullOrWhiteSpace(propertyId))
+                else if (string.IsNullOrWhiteSpace(roomTitle) && !string.IsNullOrWhiteSpace(roomIdFromCsv))
                 {
                   helper.Message(
-                    $"Property mode: property '{propertyTitle}' could not be resolved/created (id='{rowId}', inventory_number='{inventoryNumber}'). Proceeding without location reference.",
+                    $"Property mode: room title missing for source_location_id '{sourceLocationId}' (id='{rowId}', inventory_number='{inventoryNumber}'). Attempting room resolution by external_id only.",
+                    2
+                  );
+                }
+
+                if (string.IsNullOrWhiteSpace(propertyIdForHierarchySync))
+                {
+                  helper.Message(
+                    $"Property mode: hierarchy property reference is missing (id='{rowId}', inventory_number='{inventoryNumber}'). Proceeding without location reference.",
                     1,
                     "WARN"
                   );
                   goto SkipPropertyLocationAssignment;
                 }
-                else
+
+                string? buildingId = null;
+                if (!string.IsNullOrWhiteSpace(sourceBuildingTitle))
                 {
-                  string? buildingId = null;
-                  if (!string.IsNullOrWhiteSpace(sourceBuildingTitle))
-                  {
-                    buildingId = Buildings.ResolveBuildingId(
-                      samedisClient,
-                      buildingsResource,
-                      propertyId,
-                      sourceBuildingTitle,
-                      config.Sync.InventoriesUploadCreateLocationsOnTheFly,
-                      rowId,
-                      inventoryTitle,
-                      buildingsByKey,
-                      checkedBuildings,
-                      helper
-                    );
-                    if (string.IsNullOrWhiteSpace(buildingId))
-                    {
-                      helper.Message(
-                        $"Property mode: building '{sourceBuildingTitle}' could not be resolved/created (id='{rowId}', inventory_number='{inventoryNumber}'). Proceeding without location reference.",
-                        1,
-                        "WARN"
-                      );
-                      goto SkipPropertyLocationAssignment;
-                    }
-                  }
-
-                  string? floorId = null;
-                  if (!string.IsNullOrWhiteSpace(sourceFloorTitle))
-                  {
-                    if (string.IsNullOrWhiteSpace(buildingId))
-                    {
-                      helper.Message(
-                        $"Property mode: floor '{sourceFloorTitle}' requires a resolved building from source hierarchy (id='{rowId}', inventory_number='{inventoryNumber}'). Proceeding without location reference.",
-                        1,
-                        "WARN"
-                      );
-                      goto SkipPropertyLocationAssignment;
-                    }
-                    else
-                    {
-                      floorId = Floors.ResolveFloorId(
-                        samedisClient,
-                        floorsResource,
-                        buildingId,
-                        sourceFloorTitle,
-                        config.Sync.InventoriesUploadCreateLocationsOnTheFly,
-                        rowId,
-                        inventoryTitle,
-                        floorsByKey,
-                        checkedFloors,
-                        helper
-                      );
-                      if (string.IsNullOrWhiteSpace(floorId))
-                      {
-                        helper.Message(
-                          $"Property mode: floor '{sourceFloorTitle}' could not be resolved/created (id='{rowId}', inventory_number='{inventoryNumber}'). Proceeding without location reference.",
-                          1,
-                          "WARN"
-                        );
-                        goto SkipPropertyLocationAssignment;
-                      }
-                    }
-                  }
-
-                  if (!string.IsNullOrWhiteSpace(roomTitle) &&
-                      isFloorSourceReference &&
-                      string.IsNullOrWhiteSpace(floorId) &&
-                      string.IsNullOrWhiteSpace(roomIdFromCsv))
+                  var sourceBuildingExternalId = resolvedSourceBuilding?.SourceId ?? (isBuildingSourceReference ? sourceLocationId : string.Empty);
+                  buildingId = Buildings.ResolveBuildingId(
+                    samedisClient,
+                    buildingsResource,
+                    propertyIdForHierarchySync,
+                    sourceBuildingTitle,
+                    false,
+                    rowId,
+                    inventoryTitle,
+                    buildingsByKey,
+                    checkedBuildings,
+                    helper,
+                    sourceBuildingExternalId
+                  );
+                  if (string.IsNullOrWhiteSpace(buildingId))
                   {
                     helper.Message(
-                      $"Property mode: room '{roomTitle}' needs a resolved floor from source hierarchy (id='{rowId}', inventory_number='{inventoryNumber}'). Proceeding without location reference.",
+                      $"Property mode: building '{sourceBuildingTitle}' could not be resolved in imported hierarchy (id='{rowId}', inventory_number='{inventoryNumber}'). Proceeding without location reference.",
                       1,
                       "WARN"
                     );
                     goto SkipPropertyLocationAssignment;
                   }
-                  else if (!string.IsNullOrWhiteSpace(roomTitle) &&
-                           isBuildingSourceReference &&
-                           string.IsNullOrWhiteSpace(buildingId) &&
-                           string.IsNullOrWhiteSpace(roomIdFromCsv))
+                }
+
+                string? floorId = null;
+                if (!string.IsNullOrWhiteSpace(sourceFloorTitle))
+                {
+                  var sourceFloorExternalId = resolvedSourceFloor?.SourceId ?? (isFloorSourceReference ? sourceLocationId : string.Empty);
+                  if (string.IsNullOrWhiteSpace(buildingId))
                   {
                     helper.Message(
-                      $"Property mode: room '{roomTitle}' needs a resolved building from source hierarchy (id='{rowId}', inventory_number='{inventoryNumber}'). Proceeding without location reference.",
+                      $"Property mode: floor '{sourceFloorTitle}' requires a resolved building from source hierarchy (id='{rowId}', inventory_number='{inventoryNumber}'). Proceeding without location reference.",
                       1,
                       "WARN"
                     );
@@ -962,33 +1483,135 @@ internal class Program
                   }
                   else
                   {
+                    floorId = Floors.ResolveFloorId(
+                      samedisClient,
+                      floorsResource,
+                      buildingId,
+                      sourceFloorTitle,
+                      false,
+                      rowId,
+                      inventoryTitle,
+                      floorsByKey,
+                      checkedFloors,
+                      helper,
+                      sourceFloorExternalId
+                    );
+                    if (string.IsNullOrWhiteSpace(floorId))
+                    {
+                      helper.Message(
+                        $"Property mode: floor '{sourceFloorTitle}' could not be resolved in imported hierarchy (id='{rowId}', inventory_number='{inventoryNumber}'). Proceeding without location reference.",
+                        1,
+                        "WARN"
+                      );
+                      goto SkipPropertyLocationAssignment;
+                    }
+                  }
+                }
+
+                if (!string.IsNullOrWhiteSpace(roomTitle) &&
+                    isFloorSourceReference &&
+                    string.IsNullOrWhiteSpace(floorId) &&
+                    string.IsNullOrWhiteSpace(roomIdFromCsv))
+                {
+                  helper.Message(
+                    $"Property mode: room '{roomTitle}' needs a resolved floor from source hierarchy (id='{rowId}', inventory_number='{inventoryNumber}'). Proceeding without location reference.",
+                    1,
+                    "WARN"
+                  );
+                  goto SkipPropertyLocationAssignment;
+                }
+                else if (!string.IsNullOrWhiteSpace(roomTitle) &&
+                         isBuildingSourceReference &&
+                         string.IsNullOrWhiteSpace(buildingId) &&
+                         string.IsNullOrWhiteSpace(roomIdFromCsv))
+                {
+                  helper.Message(
+                    $"Property mode: room '{roomTitle}' needs a resolved building from source hierarchy (id='{rowId}', inventory_number='{inventoryNumber}'). Proceeding without location reference.",
+                    1,
+                    "WARN"
+                  );
+                  goto SkipPropertyLocationAssignment;
+                }
+                else
+                {
+                  var resolveRoomByExternalOnly = !string.IsNullOrWhiteSpace(roomIdFromCsv);
+                  if (resolveRoomByExternalOnly)
+                  {
+                    if (locationsById.TryGetValue(roomIdFromCsv, out var mappedLocationId) && !string.IsNullOrWhiteSpace(mappedLocationId))
+                    {
+                      locationId = mappedLocationId;
+                      helper.Message(
+                        $"Property mode: resolved room from CSV/pre-sync cache by source_location_id '{roomIdFromCsv}' -> '{locationId}' (id='{rowId}', inventory_number='{inventoryNumber}').",
+                        2
+                      );
+                    }
+                    else
+                    {
+                      helper.Message(
+                        $"Property mode: source_location_id '{roomIdFromCsv}' not found in CSV/pre-sync cache. Resolving via API external_id only (type='{sourceLocationType}', id='{rowId}', inventory_number='{inventoryNumber}').",
+                        2
+                      );
+
+                      locationId = Locations.ResolveLocationId(
+                        samedisClient,
+                        locationsResource,
+                        string.Empty,
+                        string.Empty,
+                        false,
+                        rowId,
+                        inventoryTitle,
+                        locationsById,
+                        locationsByTitle,
+                        checkedLocations,
+                        helper,
+                        null,
+                        null,
+                        null,
+                        null,
+                        roomIdFromCsv
+                      );
+                    }
+
+                    if (string.IsNullOrWhiteSpace(locationId))
+                    {
+                      helper.Message(
+                        $"Property mode: room lookup via source_location_id '{roomIdFromCsv}' failed (source_location_type='{sourceLocationType}', id='{rowId}', inventory_number='{inventoryNumber}'). Proceeding without location reference.",
+                        1,
+                        "WARN"
+                      );
+                      goto SkipPropertyLocationAssignment;
+                    }
+                  }
+                  else
+                  {
                     locationId = Locations.ResolveLocationId(
                       samedisClient,
                       locationsResource,
-                      roomIdFromCsv,
+                      string.Empty,
                       roomTitle,
-                      config.Sync.InventoriesUploadCreateLocationsOnTheFly,
+                      false,
                       rowId,
                       inventoryTitle,
                       locationsById,
                       locationsByTitle,
                       checkedLocations,
                       helper,
-                      propertyId,
+                      propertyIdForHierarchySync,
                       buildingId,
                       floorId,
-                      roomNotes
+                      roomNotes,
+                      roomIdFromCsv
                     );
+                  }
 
-                    if (!string.IsNullOrWhiteSpace(roomTitle) && string.IsNullOrWhiteSpace(locationId))
-                    {
-                      helper.Message(
-                        $"Property mode: room '{roomTitle}' could not be resolved/created (id='{rowId}', inventory_number='{inventoryNumber}'). Proceeding without location reference.",
-                        1,
-                        "WARN"
-                      );
-                      goto SkipPropertyLocationAssignment;
-                    }
+                  if (!string.IsNullOrWhiteSpace(roomTitle) && string.IsNullOrWhiteSpace(locationId))
+                  {
+                    helper.Message(
+                      $"Property mode: room '{roomTitle}' could not be resolved in imported hierarchy (source_location_id='{sourceLocationId}', source_location_type='{sourceLocationType}', building_id='{buildingId}', floor_id='{floorId}', id='{rowId}', inventory_number='{inventoryNumber}'). Proceeding without location reference.",
+                      1,
+                      "WARN"
+                    );
+                    goto SkipPropertyLocationAssignment;
                   }
                 }
               }
@@ -1005,7 +1628,7 @@ internal class Program
                 locationsResource,
                 standardLocationId,
                 locationTitle,
-                config.Sync.InventoriesUploadCreateLocationsOnTheFly,
+                createStandardLocationsOnTheFly,
                 rowId,
                 inventoryTitle,
                 locationsById,
@@ -1022,7 +1645,8 @@ internal class Program
               }
             }
 
-            var attributes = Inventories.BuildInventoryAttributes(row, departmentId, locationId, catalogId);
+            var isCreateOperation = string.IsNullOrWhiteSpace(targetInventoryId);
+            var attributes = Inventories.BuildInventoryAttributes(row, departmentId, locationId, catalogId, isCreateOperation);
 
             if (attributes.Count == 0)
             {
@@ -1031,7 +1655,7 @@ internal class Program
               continue;
             }
 
-            if (string.IsNullOrWhiteSpace(targetInventoryId) && string.IsNullOrWhiteSpace(catalogId))
+            if (isCreateOperation && string.IsNullOrWhiteSpace(catalogId) && !isPlaceholderDeviceModel)
             {
               skippedCount++;
               helper.Message(
@@ -1042,13 +1666,16 @@ internal class Program
               continue;
             }
 
+            string? response;
+            var operation = isCreateOperation ? "create" : "update";
+            if (operation == "create")
+              attributes["status"] = "created";
+
             var requestPayload = JsonConvert.SerializeObject(new
             {
               data = attributes
             });
 
-            string? response;
-            var operation = string.IsNullOrWhiteSpace(targetInventoryId) ? "create" : "update";
             if (string.IsNullOrWhiteSpace(targetInventoryId))
             {
               response = samedisClient.Post(inventoryWriteResource, requestPayload);
@@ -1066,6 +1693,8 @@ internal class Program
                 inventoryById[resultingId] = resultingId;
                 if (!string.IsNullOrWhiteSpace(rowId))
                   inventoryById[rowId] = resultingId;
+                if (!string.IsNullOrWhiteSpace(inventoryExternalId))
+                  inventoryByExternalId[inventoryExternalId] = resultingId;
                 if (!string.IsNullOrWhiteSpace(inventoryNumber))
                   inventoryByDeviceNumber[inventoryNumber] = resultingId;
                 if (!string.IsNullOrWhiteSpace(lookupTitle))
@@ -1109,12 +1738,96 @@ internal class Program
     else
     {
       var urlResource = $"/api/{samedisApiVersion}/tenants/{samedisTenantId}/inventories";
+      var locationsResource = $"/api/{samedisApiVersion}/tenants/{samedisTenantId}/device_locations";
+      var floorsResource = $"/api/{samedisApiVersion}/tenants/{samedisTenantId}/floors";
       //urlResource = $"/api/{samedisApiVersion}/enterprise/tenants/{samedisTenantId}/inventories";
 
       helper.Message($"Using resource: {urlResource}", 1);
       helper.CanDo(samedisClient, urlResource);
+      if (useExtendedDeviceLocations)
+      {
+        helper.CanDo(samedisClient, locationsResource);
+        helper.CanDo(samedisClient, floorsResource);
+      }
 
       var filterBuilder = new FilterBuilder();
+      var includeSourceLocationDetails = useExtendedDeviceLocations;
+      var sourceLocationByLocationId = new Dictionary<string, Inventories.SourceLocationExportInfo>(StringComparer.OrdinalIgnoreCase);
+      var floorExternalIdByFloorId = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+
+      Inventories.SourceLocationExportInfo ResolveSourceLocationForExport(Inventories.Attributes inventoryAttributes)
+      {
+        var emptyResult = new Inventories.SourceLocationExportInfo();
+        var inventoryId = inventoryAttributes.Id ?? string.Empty;
+        var deviceLocationId = inventoryAttributes.DeviceLocationId?.Trim() ?? string.Empty;
+        if (string.IsNullOrWhiteSpace(deviceLocationId))
+          return emptyResult;
+
+        if (sourceLocationByLocationId.TryGetValue(deviceLocationId, out var cachedSourceLocation))
+          return cachedSourceLocation;
+
+        var locationResponse = samedisClient.Get(locationsResource + "/" + Uri.EscapeDataString(deviceLocationId));
+        if (samedisClient.StatusCode != 200 || string.IsNullOrWhiteSpace(locationResponse))
+        {
+          helper.Message(
+            $"Property mode export: failed room lookup for source_location_id fallback (inventory_id='{inventoryId}', location_id='{deviceLocationId}', status={samedisClient.StatusCode} {samedisClient.Status}).",
+            1,
+            "WARN"
+          );
+          sourceLocationByLocationId[deviceLocationId] = emptyResult;
+          return emptyResult;
+        }
+
+        var locationRoot = JsonConvert.DeserializeObject<Locations.Root>(locationResponse);
+        var locationAttributes = locationRoot?.Data?.FirstOrDefault()?.Attributes;
+        var roomExternalId = locationAttributes?.ExternalId?.Trim() ?? string.Empty;
+        if (!string.IsNullOrWhiteSpace(roomExternalId))
+        {
+          var roomResult = new Inventories.SourceLocationExportInfo
+          {
+            SourceLocationId = roomExternalId,
+            SourceLocationType = "room"
+          };
+          sourceLocationByLocationId[deviceLocationId] = roomResult;
+          return roomResult;
+        }
+
+        var floorId = locationAttributes?.FloorId?.Trim() ?? string.Empty;
+        if (string.IsNullOrWhiteSpace(floorId))
+        {
+          sourceLocationByLocationId[deviceLocationId] = emptyResult;
+          return emptyResult;
+        }
+
+        if (!floorExternalIdByFloorId.TryGetValue(floorId, out var floorExternalId))
+        {
+          floorExternalId = string.Empty;
+          var floorResponse = samedisClient.Get(floorsResource + "/" + Uri.EscapeDataString(floorId));
+          if (samedisClient.StatusCode == 200 && !string.IsNullOrWhiteSpace(floorResponse))
+          {
+            var floorRoot = JsonConvert.DeserializeObject<Floors.Root>(floorResponse);
+            floorExternalId = floorRoot?.Data?.FirstOrDefault()?.Attributes?.ExternalId?.Trim() ?? string.Empty;
+          }
+          else
+          {
+            helper.Message(
+              $"Property mode export: failed floor lookup for source_location_id fallback (inventory_id='{inventoryId}', floor_id='{floorId}', status={samedisClient.StatusCode} {samedisClient.Status}).",
+              1,
+              "WARN"
+            );
+          }
+
+          floorExternalIdByFloorId[floorId] = floorExternalId;
+        }
+
+        var floorResult = new Inventories.SourceLocationExportInfo
+        {
+          SourceLocationId = floorExternalId,
+          SourceLocationType = string.IsNullOrWhiteSpace(floorExternalId) ? string.Empty : "floor"
+        };
+        sourceLocationByLocationId[deviceLocationId] = floorResult;
+        return floorResult;
+      }
 
       filterBuilder.Clear();
       filterBuilder.Add("updated_at", FilterBuilder.FilterType.GreaterThan, FilterBuilder.Type.DateTime, lastRun);
@@ -1152,7 +1865,11 @@ internal class Program
             // detail to get service intervals and regulatories
             var detailResponse = samedisClient.Get(urlResource + "/" + attributes.Id);
             if (!string.IsNullOrEmpty(detailResponse))
-              Inventories.FillInventoryDataSet(iDs, detailResponse);
+              Inventories.FillInventoryDataSet(
+                iDs,
+                detailResponse,
+                includeSourceLocationDetails ? ResolveSourceLocationForExport : null
+              );
 
           }
           Helper.ExportDataSetToCsv(iDs, Path.Combine(downloadRoot, "inventories.csv"), "Inventories");
@@ -1161,7 +1878,11 @@ internal class Program
     }
     #endregion
 
+    if (config.Sync.ArchiveToSamedisCsvFiles)
+    {
+      helper.ArchiveUploadCsvFiles(uploadRoot, config.Sync.InventoriesUpload);
+    }
+
     helper.Message("Sync finised.", 1);
   }
-
 }

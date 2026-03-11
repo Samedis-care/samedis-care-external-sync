@@ -197,20 +197,71 @@ namespace SamedisExternalSync
       IDictionary<string, string> departmentsByCostCenter,
       IDictionary<string, string> departmentsByTitle,
       IDictionary<string, string> checkedDepartments,
-      Helper helper)
+      Helper helper,
+      string profitCenterTitle = "")
     {
       departmentId = departmentId ?? string.Empty;
       departmentCostCenterNumber = departmentCostCenterNumber ?? string.Empty;
       departmentTitle = departmentTitle ?? string.Empty;
       departmentNotes = departmentNotes ?? string.Empty;
+      profitCenterTitle = profitCenterTitle ?? string.Empty;
+
+      void EnsureProfitCenterAssignment(string resolvedDepartmentId, string? currentProfitCenterTitle = null)
+      {
+        if (string.IsNullOrWhiteSpace(resolvedDepartmentId))
+          return;
+
+        var targetProfitCenterTitle = profitCenterTitle.Trim();
+        if (string.IsNullOrWhiteSpace(targetProfitCenterTitle))
+          return;
+
+        var currentProfitCenter = currentProfitCenterTitle?.Trim() ?? string.Empty;
+        if (string.Equals(currentProfitCenter, targetProfitCenterTitle, StringComparison.OrdinalIgnoreCase))
+          return;
+
+        var syncKey = "profit_center_sync:" + resolvedDepartmentId + ":" + targetProfitCenterTitle;
+        if (checkedDepartments.ContainsKey(syncKey))
+          return;
+
+        var payload = JsonConvert.SerializeObject(new
+        {
+          data = new Dictionary<string, object?>
+          {
+            ["profit_center_title"] = targetProfitCenterTitle
+          }
+        });
+
+        var updateResponse = client.Put(resource, resolvedDepartmentId, payload);
+        if (client.StatusCode >= 200 && client.StatusCode < 300)
+        {
+          checkedDepartments[syncKey] = resolvedDepartmentId;
+          helper.Message(
+            $"Department profit center updated (department_id='{resolvedDepartmentId}', profit_center_title='{targetProfitCenterTitle}').",
+            2
+          );
+        }
+        else
+        {
+          checkedDepartments[syncKey] = string.Empty;
+          helper.Message(
+            $"Failed to set department profit center (department_id='{resolvedDepartmentId}', profit_center_title='{targetProfitCenterTitle}', status={client.StatusCode} {client.Status}, response_status='{client.LastResponseStatus}', error='{client.LastError}'). Response: {updateResponse}",
+            1,
+            "WARN"
+          );
+        }
+      }
 
       if (!string.IsNullOrWhiteSpace(departmentId) && departmentsById.TryGetValue(departmentId, out var existingId) && !string.IsNullOrWhiteSpace(existingId))
+      {
+        EnsureProfitCenterAssignment(existingId);
         return existingId;
+      }
 
       if (!string.IsNullOrWhiteSpace(departmentCostCenterNumber) &&
           departmentsByCostCenter.TryGetValue(departmentCostCenterNumber, out existingId) &&
           !string.IsNullOrWhiteSpace(existingId))
       {
+        EnsureProfitCenterAssignment(existingId);
         return existingId;
       }
 
@@ -218,6 +269,7 @@ namespace SamedisExternalSync
           departmentsByTitle.TryGetValue(departmentTitle, out existingId) &&
           !string.IsNullOrWhiteSpace(existingId))
       {
+        EnsureProfitCenterAssignment(existingId);
         return existingId;
       }
 
@@ -227,7 +279,10 @@ namespace SamedisExternalSync
         if (checkedDepartments.TryGetValue(checkedByIdKey, out var checkedById))
         {
           if (!string.IsNullOrWhiteSpace(checkedById))
+          {
+            EnsureProfitCenterAssignment(checkedById);
             return checkedById;
+          }
         }
         else
         {
@@ -248,6 +303,7 @@ namespace SamedisExternalSync
               departmentsByCostCenter[resolvedCostCenterNumber] = resolvedId;
 
             checkedDepartments[checkedByIdKey] = resolvedId;
+            EnsureProfitCenterAssignment(resolvedId, resolvedAttributes?.ProfitCenterTitle);
             return resolvedId;
           }
 
@@ -273,7 +329,10 @@ namespace SamedisExternalSync
         if (checkedDepartments.TryGetValue(checkedByCostCenterKey, out var checkedByCostCenter))
         {
           if (!string.IsNullOrWhiteSpace(checkedByCostCenter))
+          {
+            EnsureProfitCenterAssignment(checkedByCostCenter);
             return checkedByCostCenter;
+          }
         }
         else
         {
@@ -302,6 +361,7 @@ namespace SamedisExternalSync
               if (!string.IsNullOrWhiteSpace(resolvedTitle))
                 departmentsByTitle[resolvedTitle] = resolvedId;
               checkedDepartments[checkedByCostCenterKey] = resolvedId;
+              EnsureProfitCenterAssignment(resolvedId, foundDepartment?.Attributes?.ProfitCenterTitle);
               return resolvedId;
             }
 
@@ -325,7 +385,10 @@ namespace SamedisExternalSync
         if (checkedDepartments.TryGetValue(checkedByTitleKey, out var checkedByTitle))
         {
           if (!string.IsNullOrWhiteSpace(checkedByTitle))
+          {
+            EnsureProfitCenterAssignment(checkedByTitle);
             return checkedByTitle;
+          }
         }
         else
         {
@@ -356,6 +419,7 @@ namespace SamedisExternalSync
               if (!string.IsNullOrWhiteSpace(resolvedCostCenterNumber))
                 departmentsByCostCenter[resolvedCostCenterNumber] = resolvedId;
               checkedDepartments[checkedByTitleKey] = resolvedId;
+              EnsureProfitCenterAssignment(resolvedId, foundDepartment?.Attributes?.ProfitCenterTitle);
               return resolvedId;
             }
 
@@ -391,6 +455,8 @@ namespace SamedisExternalSync
         payloadData["cost_center_number"] = departmentCostCenterNumber;
       if (!string.IsNullOrWhiteSpace(departmentNotes))
         payloadData["notes"] = departmentNotes;
+      if (!string.IsNullOrWhiteSpace(profitCenterTitle))
+        payloadData["profit_center_title"] = profitCenterTitle;
 
       var payload = JsonConvert.SerializeObject(new
       {

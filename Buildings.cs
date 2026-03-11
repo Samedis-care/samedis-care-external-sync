@@ -11,12 +11,18 @@ namespace SamedisExternalSync
       public string ParentSourceId { get; set; } = string.Empty;
       public string Number { get; set; } = string.Empty;
       public string Title { get; set; } = string.Empty;
+      public string Street { get; set; } = string.Empty;
+      public string Zip { get; set; } = string.Empty;
+      public string Town { get; set; } = string.Empty;
     }
 
     public class Attributes
     {
       [JsonProperty("id")]
       public string? Id { get; set; }
+
+      [JsonProperty("external_id")]
+      public string? ExternalId { get; set; }
 
       [JsonProperty("tenant_id")]
       public string? TenantId { get; set; }
@@ -32,6 +38,15 @@ namespace SamedisExternalSync
 
       [JsonProperty("notes")]
       public string? Notes { get; set; }
+
+      [JsonProperty("street")]
+      public string? Street { get; set; }
+
+      [JsonProperty("zip")]
+      public string? Zip { get; set; }
+
+      [JsonProperty("town")]
+      public string? Town { get; set; }
     }
 
     public class Data
@@ -93,13 +108,23 @@ namespace SamedisExternalSync
         var number = Helper.GetRowValue(row, "Number");
         if (string.IsNullOrWhiteSpace(number))
           number = Helper.GetRowValue(row, "number");
+        var street = Helper.GetRowValue(row, "street");
+        var zip = Helper.GetRowValue(row, "postal_code");
+        if (string.IsNullOrWhiteSpace(zip))
+          zip = Helper.GetRowValue(row, "zip");
+        var town = Helper.GetRowValue(row, "city");
+        if (string.IsNullOrWhiteSpace(town))
+          town = Helper.GetRowValue(row, "town");
 
         result[sourceId] = new SourceBuilding
         {
           SourceId = sourceId,
           ParentSourceId = parentSourceId,
           Number = number,
-          Title = title
+          Title = title,
+          Street = street,
+          Zip = zip,
+          Town = town
         };
       }
 
@@ -117,14 +142,102 @@ namespace SamedisExternalSync
       string inventoryTitle,
       IDictionary<string, string> buildingsByKey,
       IDictionary<string, string> checkedBuildings,
-      Helper helper)
+      Helper helper,
+      string externalId = "",
+      string street = "",
+      string zip = "",
+      string town = "",
+      bool updateOnExisting = false)
     {
-      if (string.IsNullOrWhiteSpace(propertyId) || string.IsNullOrWhiteSpace(buildingTitle))
-        return null;
-
       var normalizedTitle = buildingTitle.Trim();
+      var normalizedExternalId = externalId?.Trim() ?? string.Empty;
+      var normalizedStreet = street?.Trim() ?? string.Empty;
+      var normalizedZip = zip?.Trim() ?? string.Empty;
+      var normalizedTown = town?.Trim() ?? string.Empty;
       var key = propertyId + "|" + normalizedTitle;
       var checkedKey = "title:" + key;
+      var useScopedExternalLookup = !updateOnExisting;
+      var externalScopeKey = useScopedExternalLookup
+        ? (string.IsNullOrWhiteSpace(propertyId) ? string.Empty : propertyId + "|") + normalizedExternalId
+        : normalizedExternalId;
+      var checkedExternalKey = "external_id:" + externalScopeKey;
+
+      Dictionary<string, object?> BuildPayload(bool includeEmptyAddress)
+      {
+        var payload = new Dictionary<string, object?>
+        {
+          ["title"] = normalizedTitle,
+          ["property_id"] = propertyId
+        };
+
+        if (!string.IsNullOrWhiteSpace(normalizedExternalId))
+          payload["external_id"] = normalizedExternalId;
+
+        if (includeEmptyAddress || !string.IsNullOrWhiteSpace(normalizedStreet))
+          payload["street"] = normalizedStreet;
+        if (includeEmptyAddress || !string.IsNullOrWhiteSpace(normalizedZip))
+          payload["zip"] = normalizedZip;
+        if (includeEmptyAddress || !string.IsNullOrWhiteSpace(normalizedTown))
+          payload["town"] = normalizedTown;
+
+        return payload;
+      }
+
+      void SyncExistingBuilding(string resolvedId, string matchedBy)
+      {
+        if (!updateOnExisting || string.IsNullOrWhiteSpace(resolvedId))
+          return;
+
+        var updatePayload = JsonConvert.SerializeObject(new
+        {
+          data = BuildPayload(includeEmptyAddress: true)
+        });
+        var updateResponse = client.Put(resource, resolvedId, updatePayload);
+        if (client.StatusCode >= 200 && client.StatusCode < 300)
+        {
+          helper.Message(
+            $"Building synced via PUT (match_by='{matchedBy}', id='{resolvedId}', title='{normalizedTitle}', external_id='{normalizedExternalId}').",
+            2
+          );
+        }
+        else
+        {
+          helper.Message(
+            $"Failed to sync building via PUT (match_by='{matchedBy}', id='{resolvedId}', title='{normalizedTitle}', property_id='{propertyId}', external_id='{normalizedExternalId}', status={client.StatusCode} {client.Status}, response_status='{client.LastResponseStatus}', error='{client.LastError}'). Response: {updateResponse}",
+            1,
+            "WARN"
+          );
+        }
+      }
+
+      if (!string.IsNullOrWhiteSpace(normalizedExternalId))
+      {
+        if (checkedBuildings.TryGetValue(checkedExternalKey, out var checkedByExternalId))
+        {
+          if (!string.IsNullOrWhiteSpace(checkedByExternalId))
+            return checkedByExternalId;
+        }
+        else
+        {
+          var resolvedByExternalId = Helper.ExternalIdExists(client, resource, normalizedExternalId);
+          if (!string.IsNullOrWhiteSpace(resolvedByExternalId))
+          {
+            checkedBuildings[checkedExternalKey] = resolvedByExternalId;
+            if (!string.IsNullOrWhiteSpace(propertyId) && !string.IsNullOrWhiteSpace(normalizedTitle))
+            {
+              buildingsByKey[key] = resolvedByExternalId;
+              checkedBuildings[checkedKey] = resolvedByExternalId;
+            }
+            SyncExistingBuilding(resolvedByExternalId, "external_id");
+            return resolvedByExternalId;
+          }
+
+          checkedBuildings[checkedExternalKey] = string.Empty;
+        }
+      }
+
+      if (string.IsNullOrWhiteSpace(propertyId) || string.IsNullOrWhiteSpace(normalizedTitle))
+        return null;
 
       if (buildingsByKey.TryGetValue(key, out var cachedBuildingId))
       {
@@ -146,7 +259,7 @@ namespace SamedisExternalSync
 
       var filterBuilder = new FilterBuilder();
       filterBuilder.Clear();
-      filterBuilder.Add("title", FilterBuilder.FilterType.Equals, FilterBuilder.Type.Text, Uri.EscapeDataString(normalizedTitle));
+      filterBuilder.Add("title", FilterBuilder.FilterType.Equals, FilterBuilder.Type.Text, normalizedTitle);
       filterBuilder.Add("property_id", FilterBuilder.FilterType.Equals, FilterBuilder.Type.ObjectId, propertyId);
 
       var listResponse = client.Get(resource + $"?page[number]=1&page[limit]=1&gridfilter={filterBuilder.Get()}");
@@ -159,6 +272,7 @@ namespace SamedisExternalSync
         {
           buildingsByKey[key] = resolvedId;
           checkedBuildings[checkedKey] = resolvedId;
+          SyncExistingBuilding(resolvedId, "title");
           return resolvedId;
         }
       }
@@ -171,11 +285,7 @@ namespace SamedisExternalSync
 
       var payload = JsonConvert.SerializeObject(new
       {
-        data = new Dictionary<string, object?>
-        {
-          ["title"] = normalizedTitle,
-          ["property_id"] = propertyId
-        }
+        data = BuildPayload(includeEmptyAddress: false)
       });
 
       var response = client.Post(resource, payload);
@@ -202,6 +312,8 @@ namespace SamedisExternalSync
 
       buildingsByKey[key] = newBuildingId;
       checkedBuildings[checkedKey] = newBuildingId;
+      if (!string.IsNullOrWhiteSpace(normalizedExternalId))
+        checkedBuildings[checkedExternalKey] = newBuildingId;
       helper.Message($"Building created on the fly: '{normalizedTitle}' (property_id='{propertyId}') -> {newBuildingId}", 2);
       return newBuildingId;
     }

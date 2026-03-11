@@ -90,6 +90,87 @@ namespace SamedisExternalSync
       Message($"Total: {totalRecords} Pages: {pages}", 2);
     }
 
+    public void ArchiveUploadCsvFiles(string uploadRoot, bool inventoriesUploadEnabled)
+    {
+      if (!inventoriesUploadEnabled)
+      {
+        Message("CSV archive step skipped because inventories upload is disabled.", 2);
+        return;
+      }
+
+      if (!Directory.Exists(uploadRoot))
+      {
+        Message($"CSV archive step skipped because upload folder does not exist: {uploadRoot}", 2);
+        return;
+      }
+
+      var sourceCsvFiles = Directory.GetFiles(uploadRoot, "*.csv", SearchOption.TopDirectoryOnly);
+      if (sourceCsvFiles.Length == 0)
+      {
+        Message($"CSV archive step skipped because no CSV files were found in {uploadRoot}.", 2);
+        return;
+      }
+
+      var uploadRootFull = Path.GetFullPath(uploadRoot)
+        .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+      var parentDirectory = Directory.GetParent(uploadRootFull)?.FullName;
+      var uploadRootName = Path.GetFileName(uploadRootFull);
+      if (string.IsNullOrWhiteSpace(parentDirectory) || string.IsNullOrWhiteSpace(uploadRootName))
+      {
+        Message($"CSV archive step skipped because archive path could not be determined from upload folder '{uploadRoot}'.", 1, "WARN");
+        return;
+      }
+
+      var archiveRoot = Path.Combine(parentDirectory, "archive", uploadRootName);
+      var archiveRootFull = Path.GetFullPath(archiveRoot)
+        .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+
+      if (string.Equals(uploadRootFull, archiveRootFull, StringComparison.OrdinalIgnoreCase))
+      {
+        Message("CSV archive step skipped because archive folder resolves to the upload folder.", 1, "WARN");
+        return;
+      }
+
+      Directory.CreateDirectory(archiveRoot);
+
+      var timestamp = DateTime.Now.ToString("yyyyMMdd_HHmmss");
+      var archivedCount = 0;
+      var archiveErrors = 0;
+
+      foreach (var sourcePath in sourceCsvFiles)
+      {
+        var originalFileName = Path.GetFileNameWithoutExtension(sourcePath);
+        var extension = Path.GetExtension(sourcePath);
+        var targetFileName = $"{originalFileName}_{timestamp}{extension}";
+        var targetPath = Path.Combine(archiveRoot, targetFileName);
+
+        var collisionIndex = 1;
+        while (File.Exists(targetPath))
+        {
+          targetFileName = $"{originalFileName}_{timestamp}_{collisionIndex}{extension}";
+          targetPath = Path.Combine(archiveRoot, targetFileName);
+          collisionIndex++;
+        }
+
+        try
+        {
+          File.Move(sourcePath, targetPath);
+          archivedCount++;
+          Message($"Archived upload CSV: {Path.GetFileName(sourcePath)} -> {targetPath}", 2);
+        }
+        catch (Exception ex)
+        {
+          archiveErrors++;
+          Message($"Failed to archive upload CSV '{sourcePath}' to '{targetPath}': {ex.Message}", 1, "WARN");
+        }
+      }
+
+      Message(
+        $"CSV archive step finished. Archived: {archivedCount}, Errors: {archiveErrors}, Target: {archiveRoot}",
+        1
+      );
+    }
+
     public static bool CheckColumnsExist(DataTable dataTable, string[] requiredColumns)
     {
       foreach (var columnName in requiredColumns)
@@ -131,12 +212,30 @@ namespace SamedisExternalSync
 
     public static string? ExternalIdExists(RequestData client, string resource, string id)
     {
-      var requestResource = resource + "/via/external_id/" + id;
+      if (string.IsNullOrWhiteSpace(id))
+        return "";
+
+      var normalizedId = id.Trim();
+      var requestResource = resource + "/via/external_id/" + normalizedId;
       var check = client.Get(requestResource);
-      if (client.StatusCode != 200) return "";
-      var record = string.IsNullOrEmpty(check) ? null : JsonConvert.DeserializeObject<JsonGeneric.Root>(check);
-      if (record?.Meta?.Total == 0 || record?.Data?.Count == 0) return "";
-      if (record?.Data?.Count > 0) return record?.Data[0].Id;
+      if (client.StatusCode == 200 && !string.IsNullOrWhiteSpace(check))
+      {
+        var extractedId = ExtractDataId(check);
+        if (!string.IsNullOrWhiteSpace(extractedId))
+          return extractedId;
+
+        try
+        {
+          var record = JsonConvert.DeserializeObject<JsonGeneric.Root>(check);
+          if (record?.Data?.Count > 0)
+            return record.Data[0].Id;
+        }
+        catch
+        {
+          // Keep resilient behavior for non-standard API payloads.
+        }
+      }
+
       return "";
     }
 
@@ -144,10 +243,24 @@ namespace SamedisExternalSync
     {
       var requestResource = resource + filter;
       var check = client.Get(requestResource);
-      if (client.StatusCode != 200) return "";
-      var record = string.IsNullOrEmpty(check) ? null : JsonConvert.DeserializeObject<JsonGeneric.Root>(check);
-      if (record?.Meta?.Total == 0 || record?.Data?.Count == 0) return "";
-      if (record?.Data?.Count > 0) return record?.Data[0].Id;
+      if (client.StatusCode != 200 || string.IsNullOrWhiteSpace(check))
+        return "";
+
+      var extractedId = ExtractDataId(check);
+      if (!string.IsNullOrWhiteSpace(extractedId))
+        return extractedId;
+
+      try
+      {
+        var record = JsonConvert.DeserializeObject<JsonGeneric.Root>(check);
+        if (record?.Data?.Count > 0)
+          return record.Data[0].Id;
+      }
+      catch
+      {
+        // Keep resilient behavior for non-standard API payloads.
+      }
+
       return "";
     }
 
@@ -472,6 +585,7 @@ namespace SamedisExternalSync
     public class Root
     {
       [JsonProperty("data")]
+      [JsonConverter(typeof(Helper.SingleOrArrayConverter<Data>))]
       public List<Data>? Data { get; set; }
 
       [JsonProperty("meta")]
