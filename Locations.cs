@@ -204,6 +204,7 @@ namespace SamedisExternalSync
       var dt = new DataTable("Locations");
 
       dt.Columns.Add("id", typeof(string));
+      dt.Columns.Add("external_id", typeof(string));
       dt.Columns.Add("tenant_id", typeof(string));
       dt.Columns.Add("building_id", typeof(string));
       dt.Columns.Add("floor_id", typeof(string));
@@ -246,6 +247,7 @@ namespace SamedisExternalSync
         var row = table.NewRow();
 
         row["id"] = attr.Id;
+        row["external_id"] = attr.ExternalId ?? "";
         row["tenant_id"] = attr.TenantId ?? "";
         row["building_id"] = attr.BuildingId ?? "";
         row["floor_id"] = attr.FloorId ?? "";
