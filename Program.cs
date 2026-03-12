@@ -49,7 +49,7 @@ internal class Program
 
     var lastRun = parsedLastRunOk ? parsedLastRun.ToString(lastRunFormat, CultureInfo.InvariantCulture) : lastRunFallback;
     helper.Message($"Last run: {lastRun}", 2);
-    File.WriteAllText(lastRunFilePath, DateTimeOffset.Now.ToString(lastRunFormat, CultureInfo.InvariantCulture));
+    var syncStartTime = DateTimeOffset.Now;
 
     // init authentication
     var authUri = config.Auth.Uri;
@@ -1883,6 +1883,7 @@ internal class Program
       helper.ArchiveUploadCsvFiles(uploadRoot, config.Sync.InventoriesUpload);
     }
 
+    File.WriteAllText(lastRunFilePath, syncStartTime.ToString(lastRunFormat, CultureInfo.InvariantCulture));
     helper.Message("Sync finised.", 1);
   }
 }
