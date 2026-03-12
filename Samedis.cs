@@ -267,7 +267,7 @@ namespace SamedisExternalSync
           .AddHeader("Authorization", $"Bearer {_token}");
 
       var response = client.ExecuteGet(request);
-      HandleRetry(response, request, client.ExecuteGet);
+      response = HandleRetry(response, request, client.ExecuteGet);
 
       Status = response.StatusCode;
       StatusCode = (int)Status;
@@ -288,7 +288,7 @@ namespace SamedisExternalSync
           .AddStringBody(content, DataFormat.Json);
 
       var response = client.ExecutePost(request);
-      HandleRetry(response, request, client.ExecutePost);
+      response = HandleRetry(response, request, client.ExecutePost);
 
       Status = response.StatusCode;
       StatusCode = (int)Status;
@@ -309,7 +309,7 @@ namespace SamedisExternalSync
           .AddFile("data[image]", filePath);
 
       var response = client.ExecutePost(request);
-      HandleRetry(response, request, client.ExecutePost);
+      response = HandleRetry(response, request, client.ExecutePost);
 
       Status = response.StatusCode;
       StatusCode = (int)Status;
@@ -341,7 +341,7 @@ namespace SamedisExternalSync
           .AddStringBody(content, DataFormat.Json);
 
       var response = client.ExecutePut(request);
-      HandleRetry(response, request, client.ExecutePut);
+      response = HandleRetry(response, request, client.ExecutePut);
 
       Status = response.StatusCode;
       StatusCode = (int)Status;
@@ -350,7 +350,7 @@ namespace SamedisExternalSync
       return response.Content ?? string.Empty;
     }
 
-    private static void HandleRetry(RestResponse response, RestRequest request, Func<RestRequest, RestResponse> execute)
+    private static RestResponse HandleRetry(RestResponse response, RestRequest request, Func<RestRequest, RestResponse> execute)
     {
       if (response.StatusCode == HttpStatusCode.TooManyRequests)
       {
@@ -364,6 +364,7 @@ namespace SamedisExternalSync
           }
         }
       }
+      return response;
     }
 
     private static readonly object DebugCsvLock = new object();
