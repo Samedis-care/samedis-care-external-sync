@@ -78,6 +78,9 @@ internal class Program
       ValidateCertificate = config.Http.ValidCertificate,
     };
 
+    if (!httpSettings.ValidateCertificate)
+      helper.Message("WARNING: TLS certificate validation is disabled (http.valid_certificate: false). Do not use in production.", 1, "WARN");
+
     var samedisAuth = new Authenticate(authUri, authClientId, authClientSecret, httpSettings, helper);
     helper.Message($"Credential checkup Status: {samedisAuth.StatusCode} {samedisAuth.Status} User: {samedisAuth.User}", 1);
     var bearerToken = samedisAuth.BearerToken;
