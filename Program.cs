@@ -628,7 +628,10 @@ internal class Program
           var roomPlaceholderTitle = string.IsNullOrWhiteSpace(config.Sync.LocationsRoomPlaceholder)
             ? "Keine Raumzuordnung"
             : config.Sync.LocationsRoomPlaceholder.Trim();
-          var hasDepartmentNotesColumn = uploadTable.Columns.Contains("wirtschaftende_einheit");
+          var hasDepartmentNotesColumn = uploadTable.Columns.Contains("notes");
+          var hasDepartmentProfitCenterColumn =
+            uploadTable.Columns.Contains("profit_center") ||
+            uploadTable.Columns.Contains("wirtschaftende_einheit");
           var createStandardLocationsOnTheFly = !useExtendedDeviceLocations && config.Sync.InventoriesUploadCreateLocationsOnTheFly;
           var createPropertyHierarchyOnImport = useExtendedDeviceLocations;
           string? propertyIdForHierarchySync = null;
@@ -855,8 +858,10 @@ internal class Program
 
             if (departmentsTable.Rows.Count > 0)
             {
-              var hasDepartmentCsvNotesColumn = departmentsTable.Columns.Contains("notes") || departmentsTable.Columns.Contains("wirtschaftende_einheit");
-              var hasDepartmentCsvProfitCenterColumn = departmentsTable.Columns.Contains("profit_center");
+              var hasDepartmentCsvNotesColumn = departmentsTable.Columns.Contains("notes");
+              var hasDepartmentCsvProfitCenterColumn =
+                departmentsTable.Columns.Contains("profit_center") ||
+                departmentsTable.Columns.Contains("wirtschaftende_einheit");
               helper.Message($"Departments preload source rows: {departmentsTable.Rows.Count}", 1);
 
               foreach (DataRow departmentRow in departmentsTable.Rows)
@@ -875,8 +880,6 @@ internal class Program
                 if (hasDepartmentCsvNotesColumn)
                 {
                   departmentNotesFromCsv = Helper.GetRowValue(departmentRow, "notes");
-                  if (string.IsNullOrWhiteSpace(departmentNotesFromCsv))
-                    departmentNotesFromCsv = Helper.GetRowValue(departmentRow, "wirtschaftende_einheit");
                 }
 
                 var departmentProfitCenterTitle = string.Empty;
@@ -979,8 +982,14 @@ internal class Program
             var departmentTitle = Helper.GetRowValue(row, "department");
             if (string.IsNullOrWhiteSpace(departmentTitle))
               departmentTitle = Helper.GetRowValue(row, "cost_center_description");
-            var departmentNotes = hasDepartmentNotesColumn ? Helper.GetRowValue(row, "wirtschaftende_einheit") : string.Empty;
-            var departmentProfitCenterTitle = useProfitCenters ? departmentNotes : string.Empty;
+            var departmentNotes = hasDepartmentNotesColumn ? Helper.GetRowValue(row, "notes") : string.Empty;
+            var departmentProfitCenterTitle = string.Empty;
+            if (useProfitCenters && hasDepartmentProfitCenterColumn)
+            {
+              departmentProfitCenterTitle = Helper.GetRowValue(row, "profit_center");
+              if (string.IsNullOrWhiteSpace(departmentProfitCenterTitle))
+                departmentProfitCenterTitle = Helper.GetRowValue(row, "wirtschaftende_einheit");
+            }
             var departmentProfitCenterId = string.Empty;
 
             var locationTitle = Helper.GetRowValue(row, "location");
@@ -1094,6 +1103,7 @@ internal class Program
               checkedInventoryNumbers,
               checkedInventoryModelAndManufacturer
             );
+            var isCreateOperation = string.IsNullOrWhiteSpace(targetInventoryId);
 
             if (isRetiredRow && !string.IsNullOrWhiteSpace(targetInventoryId))
             {
@@ -1648,8 +1658,9 @@ internal class Program
               }
             }
 
-            var isCreateOperation = string.IsNullOrWhiteSpace(targetInventoryId);
             var attributes = Inventories.BuildInventoryAttributes(row, departmentId, locationId, catalogId, isCreateOperation);
+            if (!isCreateOperation)
+              attributes.Remove("comments_field");
 
             if (attributes.Count == 0)
             {
