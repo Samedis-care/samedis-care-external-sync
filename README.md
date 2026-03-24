@@ -4,11 +4,10 @@ SamedisExternalSync is a .NET 8 console application that synchronizes data with 
 
 Current implementation focus:
 - Download sync: `tasks`, `requests`, `device_types`, `departments`, `locations`, `device_models`, `inventories`
-- Upload sync: `inventories` from CSV (`<to_samedis>/inventories.csv`)
+- Upload sync: `tasks` and `inventories` from CSV (`<to_samedis>/tasks.csv`, `<to_samedis>/inventories.csv`)
 - Task file download: task documents and test protocols
 
 Not implemented yet:
-- `tasks_upload`
 - `requests_upload`
 - `departments_upload`
 - `locations_upload`
@@ -90,7 +89,7 @@ Configuration keys are deserialized in snake_case (YAML) to C# classes.
 | Key | Type | Required | Default | Description |
 |---|---|---|---|---|
 | `paths.from_samedis` | string | no | `data/from_samedis` | Export target folder. Important: folder is wiped at start of each run. |
-| `paths.to_samedis` | string | no | `data/to_samedis` | Input folder for uploads. Currently used for `inventories.csv`. |
+| `paths.to_samedis` | string | no | `data/to_samedis` | Input folder for uploads. Used for `tasks.csv` and `inventories.csv`. |
 
 ### `sync`
 
@@ -111,7 +110,8 @@ Configuration keys are deserialized in snake_case (YAML) to C# classes.
 | `sync.inventories_upload_create_locations_on_the_fly` | bool | `false` | yes | Standard mode only: allows creating missing locations from the `location` column. Ignored for row-level assignment in property mode. |
 | `sync.archive_to_samedis_csv_files` | bool | `true` | yes | Archives CSVs from `<paths.to_samedis>` to `<parent>/archive/<folder>` with timestamped filenames to avoid reprocessing. |
 | `sync.tasks_download` | bool | `false` | yes | Downloads tasks to `tasks.csv`, plus task documents/protocol files into `task_documents/`. |
-| `sync.tasks_upload` | bool | `false` | no | Flag exists, but upload flow is not implemented. |
+| `sync.tasks_upload` | bool | `false` | yes | Uploads tasks from `<to_samedis>/tasks.csv`. |
+| `sync.tasks_upload_set_inventory_operation_status_on_failed_maintenance` | bool | `false` | yes | If `true`, failed maintenance tasks (`issue_type=maintenance` and `test_result=not_passed`) are sent with `inventory_operation_status=limited_use` in task payload. |
 | `sync.task_download_types` | string | `maintenance` | yes | Passed as `filter[issue_type]`. Comma-separated values are supported by API. |
 | `sync.task_archive_filter` | bool | `true` | yes | Passed as `filter[archive]=true/false`. |
 | `sync.task_download_status` | string | `done` | yes | Passed as `filter[status]`. |
@@ -143,6 +143,79 @@ The following keys are currently not read anywhere in code:
 - `import_mode`
 - `import_file`
 - `import_sql.*`
+
+## Tasks Upload CSV
+
+Source file:
+- `<paths.to_samedis>/tasks.csv`
+
+Format:
+- delimiter is `;`
+- header row required
+- required columns:
+  - `issue_number`
+  - `inventory_device_number`
+  - `issue_type`
+  - `title`
+  - `status`
+  - `done_at`
+  - `responsible_name`
+  - `maintenance_passed`
+  - `filename`
+- optional column:
+  - `test_result`
+  - `test_comment`
+  - `maintenance_type` (if empty and `issue_type=maintenance`, importer sends `maintenance`)
+  - alternative document filename columns (`document_filename` or `file_name` or `document_name` or `dateiname`)
+
+Lookup and upsert behavior:
+- `inventory_device_number` is resolved against inventory `device_number` to set `inventory_id`.
+- Existing task is resolved by `id` (if present in CSV), otherwise by `issue_number`.
+- If a task is found, importer updates it via `PUT`; otherwise it creates a new task via `POST`.
+
+Enum normalization:
+- `issue_type` is normalized to one of:
+  - `malfunction`
+  - `maintenance`
+  - `security_message`
+  - `occurrence`
+  - `device_retired`
+  - `recommission_device`
+- `status` is normalized to one of:
+  - `_new`
+  - `pending`
+  - `in_progress`
+  - `done`
+- `test_result` (if present) is normalized to one of:
+  - `passed`
+  - `passed_conditionally`
+  - `not_passed`
+
+`maintenance_passed` and `test_result`:
+- `maintenance_passed` is not sent to API directly.
+- `test_result` is derived from `maintenance_passed` when present (`true` => `passed`, `false` => `not_passed`).
+- If `maintenance_passed` is empty, optional `test_result` is used.
+- Supported boolean values for `maintenance_passed`: `true/false`, `yes/no`, `ja/nein`, `1/0`.
+
+Additional field mapping:
+- `external_id` is set from CSV `issue_number`.
+- `maintenance_performer` is set from CSV `responsible_name`.
+- `services` is sent as string array (from optional CSV `services`; fallback: CSV `issue_type` raw value as single array item).
+- If CSV `issue_type` contains keywords like `Wartung` or `Prüfung`, `issue_type` is forced to `maintenance`.
+
+Date mapping for task upload:
+- CSV `date` is ignored (not uploaded).
+- API fields `due_on` and `done_at` are both set from CSV `done_at` (normalized to `yyyy-MM-dd`).
+
+Task document upload:
+- If filename value is empty, row is skipped and no task is created/updated.
+- Importer requires the file to exist under `<paths.to_samedis>/task_documents/<filename>` (or `<filename>.pdf` if extension is missing); otherwise row is skipped and no task is created/updated.
+- If CSV value starts with `task_documents/`, that relative path is resolved under `<paths.to_samedis>/task_documents/`.
+- After successful task create/update, importer uploads that file to `/issues/{id}/uploads`.
+
+Optional inventory status update on failed maintenance:
+- Controlled by `sync.tasks_upload_set_inventory_operation_status_on_failed_maintenance`.
+- If enabled and uploaded task resolves to `issue_type=maintenance` with failed result (`test_result=not_passed`), importer sets task field `inventory_operation_status=limited_use`.
 
 ## Inventories Upload CSV
 

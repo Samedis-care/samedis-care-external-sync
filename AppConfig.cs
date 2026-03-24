@@ -79,6 +79,7 @@ namespace SamedisExternalSync
     public string? LocationsRoomPlaceholder { get; set; } = "Keine Raumzuordnung";
     public bool TasksDownload { get; set; } = false;
     public bool TasksUpload { get; set; } = false;
+    public bool TasksUploadSetInventoryOperationStatusOnFailedMaintenance { get; set; } = false;
     public string? TaskDownloadTypes { get; set; } = "maintenance";
     public bool TaskArchiveFilter { get; set; } = true;
     public string? TaskDownloadStatus { get; set; } = "done";
