@@ -10,6 +10,47 @@ namespace SamedisExternalSync
 {
   public class Helper
   {
+    private static readonly Encoding Utf8Strict = new UTF8Encoding(encoderShouldEmitUTF8Identifier: false, throwOnInvalidBytes: true);
+    private static readonly Encoding Utf8 = new UTF8Encoding(encoderShouldEmitUTF8Identifier: false);
+    private static readonly Encoding Windows1252 = CreateWindows1252Encoding();
+
+    private static Encoding CreateWindows1252Encoding()
+    {
+      Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+      return Encoding.GetEncoding(1252);
+    }
+
+    private static Encoding DetectCsvEncoding(string filePath)
+    {
+      using var stream = File.OpenRead(filePath);
+      Span<byte> bom = stackalloc byte[4];
+      var bytesRead = stream.Read(bom);
+
+      if (bytesRead >= 3 && bom[0] == 0xEF && bom[1] == 0xBB && bom[2] == 0xBF)
+        return Utf8;
+      if (bytesRead >= 4 && bom[0] == 0xFF && bom[1] == 0xFE && bom[2] == 0x00 && bom[3] == 0x00)
+        return Encoding.UTF32;
+      if (bytesRead >= 4 && bom[0] == 0x00 && bom[1] == 0x00 && bom[2] == 0xFE && bom[3] == 0xFF)
+        return new UTF32Encoding(bigEndian: true, byteOrderMark: true);
+      if (bytesRead >= 2 && bom[0] == 0xFF && bom[1] == 0xFE)
+        return Encoding.Unicode;
+      if (bytesRead >= 2 && bom[0] == 0xFE && bom[1] == 0xFF)
+        return Encoding.BigEndianUnicode;
+
+      stream.Position = 0;
+      try
+      {
+        using var utf8Reader = new StreamReader(stream, Utf8Strict, detectEncodingFromByteOrderMarks: false, leaveOpen: true);
+        var buffer = new char[4096];
+        while (utf8Reader.ReadBlock(buffer, 0, buffer.Length) > 0) { }
+        return Utf8;
+      }
+      catch (DecoderFallbackException)
+      {
+        return Windows1252;
+      }
+    }
+
     public static string SanitizeFileName(string value)
     {
       if (string.IsNullOrEmpty(value)) return string.Empty;
@@ -183,7 +224,8 @@ namespace SamedisExternalSync
 
     public static DataTable ImportCsvToDataTable(string filePath, string tableName)
     {
-      using var reader = new StreamReader(filePath, Encoding.UTF8);
+      var detectedEncoding = DetectCsvEncoding(filePath);
+      using var reader = new StreamReader(filePath, detectedEncoding, detectEncodingFromByteOrderMarks: true);
       using var csv = new CsvReader(reader, new CsvConfiguration(CultureInfo.InvariantCulture)
       {
         Delimiter = ";",

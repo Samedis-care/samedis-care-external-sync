@@ -27,6 +27,13 @@ sync:
   inventories_upload_create_locations_on_the_fly: false
   tasks_download: false
   tasks_upload: false
+  # if true: for failed maintenance tasks, send inventory_operation_status=limited_use in task payload
+  tasks_upload_set_inventory_operation_status_on_failed_maintenance: false
+  # tasks_upload expects <to_samedis>/tasks.csv with:
+  # issue_number;inventory_device_number;issue_type;title;status;done_at;responsible_name;maintenance_passed;filename
+  # optional legacy column: date (ignored on upload)
+  # optional: test_result + test_comment + maintenance_type + one of document_filename|file_name|document_name|dateiname
+  # required filename must exist in <to_samedis>/task_documents/<filename> (or .pdf added)
   # malfunction, maintenance, device_retired, recommission_device, occurrence, security_message
   task_download_types: maintenance
   task_archive_filter: true

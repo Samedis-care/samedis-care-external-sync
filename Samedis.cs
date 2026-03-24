@@ -318,6 +318,36 @@ namespace SamedisExternalSync
       return response.Content ?? string.Empty;
     }
 
+    public string? PostTaskDocumentUpload(string resource, string filePath, string fileName)
+    {
+      RestResponse ExecuteWithField(string fieldName)
+      {
+        using var client = new RestClient(_options);
+        var request = new RestRequest(resource, Method.Post)
+          .AddHeader("accept", "application/json")
+          .AddHeader("Content-Type", "multipart/form-data")
+          .AddHeader("Authorization", $"Bearer {_token}")
+          .AddParameter("data[name]", fileName)
+          .AddFile(fieldName, filePath);
+
+        var response = client.ExecutePost(request);
+        return HandleRetry(response, request, client.ExecutePost);
+      }
+
+      // Prefer issue document field, but keep fallbacks for tenant-specific upload validators.
+      var response = ExecuteWithField("data[document]");
+      if (response.StatusCode >= HttpStatusCode.BadRequest)
+        response = ExecuteWithField("data[file]");
+      if (response.StatusCode >= HttpStatusCode.BadRequest)
+        response = ExecuteWithField("data[image]");
+
+      Status = response.StatusCode;
+      StatusCode = (int)Status;
+      LastResponseStatus = response.ResponseStatus.ToString();
+      LastError = response.ErrorMessage ?? response.ErrorException?.Message ?? string.Empty;
+      return response.Content ?? string.Empty;
+    }
+
     public string? Put(string resource, string id, string content)
     {
       var putResource = resource;

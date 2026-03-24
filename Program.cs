@@ -121,7 +121,245 @@ internal class Program
     }
     else
     {
-      helper.Message("Tasks Upload sync enabled but not implemented.", 1, "WARN");
+      helper.Message("Tasks Upload sync starting.", 1);
+
+      var tasksResource = $"/api/{samedisApiVersion}/tenants/{samedisTenantId}/issues";
+      var tasksWriteResource = tasksResource + "?locale=en";
+      var inventoryResource = $"/api/{samedisApiVersion}/tenants/{samedisTenantId}/inventories";
+      var tasksCsvPath = Path.Combine(uploadRoot, "tasks.csv");
+      var setInventoryOperationStatusOnFailedMaintenance = config.Sync.TasksUploadSetInventoryOperationStatusOnFailedMaintenance;
+
+      helper.CanDo(samedisClient, tasksResource);
+      helper.CanDo(samedisClient, inventoryResource);
+
+      if (!File.Exists(tasksCsvPath))
+      {
+        helper.Message($"Tasks Upload skipped. CSV not found: {tasksCsvPath}", 1, "WARN");
+      }
+      else
+      {
+        DataTable uploadTable;
+        try
+        {
+          uploadTable = Helper.ImportCsvToDataTable(tasksCsvPath, "TasksUpload");
+        }
+        catch (Exception ex)
+        {
+          helper.Message($"Tasks Upload failed to read CSV {tasksCsvPath}: {ex.Message}", 1, "ERROR");
+          uploadTable = new DataTable("TasksUpload");
+        }
+
+        if (uploadTable.Rows.Count == 0)
+        {
+          helper.Message("Tasks Upload skipped because CSV contains no rows.", 1, "WARN");
+        }
+        else if (!Helper.CheckColumnsExist(uploadTable, Tasks.UploadRequiredColumns))
+        {
+          helper.Message(
+            $"Tasks Upload skipped. CSV missing one or more required columns: {string.Join(", ", Tasks.UploadRequiredColumns)}",
+            1,
+            "ERROR"
+          );
+        }
+        else
+        {
+          var issueByIssueNumber = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+          var inventoryByDeviceNumber = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+          var createdCount = 0;
+          var updatedCount = 0;
+          var skippedCount = 0;
+          var errorCount = 0;
+          var documentsUploadedCount = 0;
+          var documentsSkippedCount = 0;
+          var documentsErrorCount = 0;
+
+          var rowNumber = 0;
+          foreach (DataRow row in uploadTable.Rows)
+          {
+            rowNumber++;
+            var issueNumber = Helper.GetRowValue(row, "issue_number");
+            var inventoryDeviceNumber = Helper.GetRowValue(row, "inventory_device_number");
+            var documentFileName = Tasks.GetTaskDocumentFileName(row);
+            if (string.IsNullOrWhiteSpace(documentFileName))
+            {
+              skippedCount++;
+              documentsSkippedCount++;
+              helper.Message(
+                $"Skipped task row {rowNumber} because document filename is empty (issue_number='{issueNumber}', inventory_device_number='{inventoryDeviceNumber}').",
+                1,
+                "WARN"
+              );
+              continue;
+            }
+
+            var documentPath = Tasks.ResolveTaskDocumentPath(uploadRoot, documentFileName);
+            if (string.IsNullOrWhiteSpace(documentPath))
+            {
+              skippedCount++;
+              documentsSkippedCount++;
+              helper.Message(
+                $"Skipped task row {rowNumber} because document file '{documentFileName}' was not found (issue_number='{issueNumber}', inventory_device_number='{inventoryDeviceNumber}').",
+                1,
+                "WARN"
+              );
+              continue;
+            }
+
+            if (string.IsNullOrWhiteSpace(inventoryDeviceNumber))
+            {
+              skippedCount++;
+              helper.Message($"Skipped task row {rowNumber} because inventory_device_number is empty.", 1, "WARN");
+              continue;
+            }
+
+            var inventoryId = Tasks.ResolveInventoryIdByDeviceNumber(
+              samedisClient,
+              inventoryResource,
+              inventoryDeviceNumber,
+              inventoryByDeviceNumber
+            );
+            if (string.IsNullOrWhiteSpace(inventoryId))
+            {
+              skippedCount++;
+              helper.Message(
+                $"Skipped task row {rowNumber} because inventory_device_number '{inventoryDeviceNumber}' could not be resolved to an inventory id.",
+                1,
+                "WARN"
+              );
+              continue;
+            }
+
+            var targetIssueId = Helper.GetRowValue(row, "id");
+            if (string.IsNullOrWhiteSpace(targetIssueId) && !string.IsNullOrWhiteSpace(issueNumber))
+            {
+              targetIssueId = Tasks.ResolveIssueIdByIssueNumber(
+                samedisClient,
+                tasksResource,
+                issueNumber,
+                issueByIssueNumber
+              );
+            }
+
+            var taskAttributes = Tasks.BuildTaskAttributes(
+              row,
+              inventoryId,
+              setInventoryOperationStatusOnFailedMaintenance,
+              out var buildError,
+              out var buildWarning
+            );
+            if (taskAttributes == null)
+            {
+              errorCount++;
+              helper.Message(
+                $"Failed to process task row {rowNumber} (issue_number='{issueNumber}', inventory_device_number='{inventoryDeviceNumber}'): {buildError}",
+                1,
+                "ERROR"
+              );
+              continue;
+            }
+
+            if (!string.IsNullOrWhiteSpace(buildWarning))
+            {
+              helper.Message(
+                $"Task row {rowNumber} warning (issue_number='{issueNumber}', inventory_device_number='{inventoryDeviceNumber}'): {buildWarning}",
+                1,
+                "WARN"
+              );
+            }
+
+            var requestPayload = JsonConvert.SerializeObject(new
+            {
+              data = taskAttributes
+            });
+
+            var isCreateOperation = string.IsNullOrWhiteSpace(targetIssueId);
+            var response = isCreateOperation
+              ? samedisClient.Post(tasksWriteResource, requestPayload)
+              : samedisClient.Put(tasksWriteResource, targetIssueId, requestPayload);
+
+            if (samedisClient.StatusCode >= 200 && samedisClient.StatusCode < 300)
+            {
+              var resultingIssueId = Helper.ExtractDataId(response) ?? targetIssueId ?? string.Empty;
+              if (!string.IsNullOrWhiteSpace(issueNumber))
+                issueByIssueNumber[issueNumber] = resultingIssueId;
+
+              if (isCreateOperation)
+              {
+                createdCount++;
+                helper.Message(
+                  $"Task created (issue_number='{issueNumber}', inventory_device_number='{inventoryDeviceNumber}', id='{resultingIssueId}').",
+                  2
+                );
+              }
+              else
+              {
+                updatedCount++;
+                helper.Message(
+                  $"Task updated (issue_number='{issueNumber}', inventory_device_number='{inventoryDeviceNumber}', id='{targetIssueId}').",
+                  2
+                );
+              }
+
+              if (!File.Exists(documentPath))
+              {
+                documentsErrorCount++;
+                helper.Message(
+                  $"Task document upload failed because file vanished before upload (issue_number='{issueNumber}', task_id='{resultingIssueId}', file='{documentFileName}').",
+                  1,
+                  "ERROR"
+                );
+              }
+              else if (string.IsNullOrWhiteSpace(resultingIssueId))
+              {
+                documentsErrorCount++;
+                helper.Message(
+                  $"Task document upload failed because issue id is empty (issue_number='{issueNumber}', file='{documentFileName}').",
+                  1,
+                  "ERROR"
+                );
+              }
+              else
+              {
+                var uploadResource = $"{tasksResource}/{resultingIssueId}/uploads";
+                var uploadResponse = samedisClient.PostTaskDocumentUpload(uploadResource, documentPath, Path.GetFileName(documentPath));
+                if (samedisClient.StatusCode >= 200 && samedisClient.StatusCode < 300)
+                {
+                  documentsUploadedCount++;
+                  helper.Message(
+                    $"Task document uploaded (issue_number='{issueNumber}', task_id='{resultingIssueId}', file='{Path.GetFileName(documentPath)}').",
+                    2
+                  );
+                }
+                else
+                {
+                  documentsErrorCount++;
+                  helper.Message(
+                    $"Failed to upload task document (issue_number='{issueNumber}', task_id='{resultingIssueId}', file='{Path.GetFileName(documentPath)}', status={samedisClient.StatusCode}). Response: {uploadResponse}",
+                    1,
+                    "ERROR"
+                  );
+                }
+              }
+            }
+            else
+            {
+              errorCount++;
+              var failedIssueId = string.IsNullOrWhiteSpace(targetIssueId) ? issueNumber : targetIssueId;
+              var operation = isCreateOperation ? "create" : "update";
+              helper.Message(
+                $"Failed to {operation} task (id='{failedIssueId}', issue_number='{issueNumber}', inventory_device_number='{inventoryDeviceNumber}', status={samedisClient.StatusCode}). Response: {response}",
+                1,
+                "ERROR"
+              );
+            }
+          }
+
+          helper.Message(
+            $"Tasks Upload finished. Created: {createdCount}, Updated: {updatedCount}, Skipped: {skippedCount}, Errors: {errorCount}, Documents Uploaded: {documentsUploadedCount}, Documents Skipped: {documentsSkippedCount}, Document Errors: {documentsErrorCount}",
+            1
+          );
+        }
+      }
     }
     #endregion
 
