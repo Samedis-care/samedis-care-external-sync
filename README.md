@@ -137,13 +137,6 @@ When logfile mode is active, logs are written to `log/Logfile_<date>.log`.
 | `http.proxy_username` | string | empty | Optional proxy username. |
 | `http.proxy_password` | string | empty | Optional proxy password. |
 
-### Keys present in `config.yml.example` but currently unused
-
-The following keys are currently not read anywhere in code:
-- `import_mode`
-- `import_file`
-- `import_sql.*`
-
 ## Tasks Upload CSV
 
 Source file:
