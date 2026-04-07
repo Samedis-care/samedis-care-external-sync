@@ -364,6 +364,7 @@ internal class Program
     #endregion
 
     #region Tasks Download
+    // Document downloads retry up to 5 times on HTTP 202 (document generation pending)
     if (!config.Sync.TasksDownload)
     {
       helper.Message("Tasks Download sync disabled in config.yml", 1);
@@ -459,8 +460,11 @@ internal class Program
 
               try
               {
-                samedisClient.DownloadAsync(docUrl, outputPath).GetAwaiter().GetResult();
-                helper.Message($"Downloaded task document: {fileName}", 2);
+                var downloaded = samedisClient.DownloadAsync(docUrl, outputPath).GetAwaiter().GetResult();
+                if (downloaded)
+                  helper.Message($"Downloaded task document: {fileName}", 2);
+                else
+                  helper.Message($"Task document not ready after retries for task {taskId}: {fileName}", 1, "WARN");
               }
               catch (Exception ex)
               {
@@ -489,8 +493,11 @@ internal class Program
             {
               try
               {
-                samedisClient.DownloadAsync(protocolUrl, protocolPath).GetAwaiter().GetResult();
-                helper.Message($"Downloaded task protocol: {protocolFileName}", 2);
+                var downloaded = samedisClient.DownloadAsync(protocolUrl, protocolPath).GetAwaiter().GetResult();
+                if (downloaded)
+                  helper.Message($"Downloaded task protocol: {protocolFileName}", 2);
+                else
+                  helper.Message($"Task protocol not ready after retries for task {taskId}: {protocolFileName}", 1, "WARN");
               }
               catch (Exception ex)
               {
