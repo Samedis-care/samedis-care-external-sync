@@ -435,7 +435,7 @@ namespace SamedisExternalSync
       return needsQuotes ? $"\"{sanitized}\"" : sanitized;
     }
 
-    public async Task DownloadAsync(string url, string outputPath)
+    public async Task<bool> DownloadAsync(string url, string outputPath, int maxRetries = 5, int retryDelayMs = 5000)
     {
       var handler = new HttpClientHandler();
 
@@ -470,14 +470,30 @@ namespace SamedisExternalSync
 
       using (HttpClient client = new HttpClient(handler))
       {
-        var response = await client.GetAsync(url);
-        response.EnsureSuccessStatusCode();
-
-        using (var fileStream = new FileStream(outputPath, FileMode.Create, FileAccess.Write))
+        for (var attempt = 0; attempt <= maxRetries; attempt++)
         {
-          await response.Content.CopyToAsync(fileStream);
+          var response = await client.GetAsync(url);
+
+          if (response.StatusCode == System.Net.HttpStatusCode.Accepted) // 202
+          {
+            if (attempt < maxRetries)
+            {
+              await Task.Delay(retryDelayMs);
+              continue;
+            }
+            return false; // document not ready after all retries
+          }
+
+          response.EnsureSuccessStatusCode();
+
+          using (var fileStream = new FileStream(outputPath, FileMode.Create, FileAccess.Write))
+          {
+            await response.Content.CopyToAsync(fileStream);
+          }
+          return true;
         }
       }
+      return false;
     }
   }
 }
