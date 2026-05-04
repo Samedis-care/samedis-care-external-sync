@@ -1331,7 +1331,7 @@ internal class Program
                 sourceRoomTitle = resolvedSourceRoom?.Title ?? string.Empty;
             }
 
-            var isRetiredRow = false; //Inventories.IsRetiredOperationStatus(operationStatus);
+            var isRetiredRow = Inventories.IsRetiredOperationStatus(operationStatus);
             var targetInventoryId = Inventories.ResolveExistingInventoryId(
               samedisClient,
               inventoryResource,
