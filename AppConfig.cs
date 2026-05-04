@@ -9,6 +9,7 @@ namespace SamedisExternalSync
     public AuthConfig Auth { get; set; } = new AuthConfig();
     public SamedisConfig Samedis { get; set; } = new SamedisConfig();
     public PathsConfig Paths { get; set; } = new PathsConfig();
+    public FormattingConfig Formatting { get; set; } = new FormattingConfig();
     public LoggingConfig Logging { get; set; } = new LoggingConfig();
     public HttpConfig Http { get; set; } = new HttpConfig();
     public SyncSettings Sync { get; set; } = new SyncSettings();
@@ -44,6 +45,11 @@ namespace SamedisExternalSync
   }
 
 
+
+  public class FormattingConfig
+  {
+    public string? DecimalSeparator { get; set; } = ",";
+  }
 
   public class LoggingConfig
   {

@@ -13,7 +13,7 @@ sync:
   archive_to_samedis_csv_files: true
   device_types: false
   contacts: false
-  device_models: true
+  device_models: false
   departments_download: false
   departments_upload: false
   locations_download: false
@@ -42,6 +42,12 @@ sync:
   requests_download: false
   requests_upload: false
   trainings: false
+formatting:
+  # decimal separator used when reading/writing numeric fields in CSV
+  # (e.g. purchase_price). Default "," matches German locale; use "." for
+  # English locale. The opposite character is treated as the thousands
+  # separator.
+  decimal_separator: ","
 logging:
   # 0: off 1: on 2: debug
   level: 1
