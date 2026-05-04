@@ -473,7 +473,7 @@ namespace SamedisExternalSync
         row["operation_status"] = attr.OperationStatus ?? "";
         row["last_maintenance"] = attr.LastMaintenance ?? "";
         row["next_maintenance"] = attr.NextMaintenance ?? "";
-        row["purchase_price"] = attr.PurchasePrice?.ToString("F2") ?? "";
+        row["purchase_price"] = attr.PurchasePrice.HasValue ? Helper.FormatDecimal(attr.PurchasePrice.Value) : "";
         row["currency_code"] = attr.CurrencyCode ?? "";
         row["depreciation_in_years"] = attr.DepreciationInYears?.ToString() ?? "";
         row["retirement_date"] = attr.RetirementDate ?? "";

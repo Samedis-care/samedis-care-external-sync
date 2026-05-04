@@ -22,6 +22,8 @@ internal class Program
 
     AppConfig config = AppConfig.LoadFromYaml(ymlFilePath);
 
+    Helper.DecimalSeparator = config.Formatting?.DecimalSeparator ?? ",";
+
     helper.LogLevel = config.Logging.Level;
     helper.LogMode = config.Logging.Mode;
 
@@ -1329,7 +1331,7 @@ internal class Program
                 sourceRoomTitle = resolvedSourceRoom?.Title ?? string.Empty;
             }
 
-            var isRetiredRow = Inventories.IsRetiredOperationStatus(operationStatus);
+            var isRetiredRow = false; //Inventories.IsRetiredOperationStatus(operationStatus);
             var targetInventoryId = Inventories.ResolveExistingInventoryId(
               samedisClient,
               inventoryResource,

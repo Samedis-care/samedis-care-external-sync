@@ -350,11 +350,43 @@ namespace SamedisExternalSync
       return int.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out result);
     }
 
+    private static string s_decimalSeparator = ",";
+    private static NumberFormatInfo s_numberFormat = BuildNumberFormat(",");
+
+    public static string DecimalSeparator
+    {
+      get => s_decimalSeparator;
+      set
+      {
+        var sep = string.IsNullOrEmpty(value) ? "," : value;
+        if (sep != "," && sep != ".")
+          throw new ArgumentException("DecimalSeparator must be either ',' or '.'.", nameof(value));
+        s_decimalSeparator = sep;
+        s_numberFormat = BuildNumberFormat(sep);
+      }
+    }
+
+    public static NumberFormatInfo NumberFormat => s_numberFormat;
+
+    private static NumberFormatInfo BuildNumberFormat(string decimalSeparator)
+    {
+      return new NumberFormatInfo
+      {
+        NumberDecimalSeparator = decimalSeparator,
+        NumberGroupSeparator = decimalSeparator == "," ? "." : ",",
+        CurrencyDecimalSeparator = decimalSeparator,
+        CurrencyGroupSeparator = decimalSeparator == "," ? "." : ",",
+      };
+    }
+
     public static bool TryParseDecimal(string value, out decimal result)
     {
-      if (decimal.TryParse(value, NumberStyles.Number, CultureInfo.InvariantCulture, out result))
-        return true;
-      return decimal.TryParse(value.Replace(',', '.'), NumberStyles.Number, CultureInfo.InvariantCulture, out result);
+      return decimal.TryParse(value, NumberStyles.Number, s_numberFormat, out result);
+    }
+
+    public static string FormatDecimal(decimal value, string format = "F2")
+    {
+      return value.ToString(format, s_numberFormat);
     }
 
     public static bool TryParseLong(string value, out long result)
