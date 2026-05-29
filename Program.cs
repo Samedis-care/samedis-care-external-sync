@@ -1298,37 +1298,48 @@ internal class Program
               );
             }
 
+            // Resolve the property up front regardless of whether buildings/floors/rooms CSV
+            // data is present. The on-the-fly placeholder-location creation in the floor- and
+            // building-fallback paths (further down in the row loop) requires a valid
+            // property_id; without it the API rejects the POST with HTTP 400.
+            var propertyTitle = string.IsNullOrWhiteSpace(tenantSettings.Name) ? "Default Property" : tenantSettings.Name;
+            propertyIdForHierarchySync = Properties.ResolvePropertyId(
+              samedisClient,
+              propertiesResource,
+              propertyTitle,
+              createPropertyHierarchyOnImport,
+              propertiesByTitle,
+              checkedProperties,
+              helper
+            );
+
+            if (string.IsNullOrWhiteSpace(propertyIdForHierarchySync))
+            {
+              helper.Message(
+                $"Property mode: property '{propertyTitle}' could not be resolved/created. On-the-fly placeholder locations will not work for floor-/building-only references.",
+                1,
+                "WARN"
+              );
+            }
+
             if (sourceBuildings.Count == 0 && sourceFloors.Count == 0 && sourceRooms.Count == 0)
             {
               helper.Message("Property mode hierarchy pre-sync skipped because no buildings/floors/rooms CSV data was found.", 1, "WARN");
             }
+            else if (string.IsNullOrWhiteSpace(propertyIdForHierarchySync))
+            {
+              helper.Message(
+                $"Property mode hierarchy pre-sync skipped because property '{propertyTitle}' could not be resolved/created.",
+                1,
+                "WARN"
+              );
+            }
             else
             {
-              var propertyTitle = string.IsNullOrWhiteSpace(tenantSettings.Name) ? "Default Property" : tenantSettings.Name;
-              propertyIdForHierarchySync = Properties.ResolvePropertyId(
-                samedisClient,
-                propertiesResource,
-                propertyTitle,
-                createPropertyHierarchyOnImport,
-                propertiesByTitle,
-                checkedProperties,
-                helper
+              helper.Message(
+                $"Property mode hierarchy pre-sync starting. Source buildings: {sourceBuildings.Count}, floors: {sourceFloors.Count}, rooms: {sourceRooms.Count}",
+                1
               );
-
-              if (string.IsNullOrWhiteSpace(propertyIdForHierarchySync))
-              {
-                helper.Message(
-                  $"Property mode hierarchy pre-sync skipped because property '{propertyTitle}' could not be resolved/created.",
-                  1,
-                  "WARN"
-                );
-              }
-              else
-              {
-                helper.Message(
-                  $"Property mode hierarchy pre-sync starting. Source buildings: {sourceBuildings.Count}, floors: {sourceFloors.Count}, rooms: {sourceRooms.Count}",
-                  1
-                );
 
                 var sourceBuildingToApiId = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
                 var sourceFloorToApiId = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
@@ -1483,7 +1494,6 @@ internal class Program
                   $"Property mode hierarchy pre-sync finished. Rooms resolved: {roomsResolved}, unresolved: {roomsUnresolved}, missing floor parent: {roomsMissingFloorParent}, missing title: {roomsSkippedNoTitle}.",
                   1
                 );
-              }
             }
           }
           else if (sourceBuildings.Count > 0 || sourceFloors.Count > 0 || sourceRooms.Count > 0)
@@ -1960,12 +1970,15 @@ internal class Program
                   );
                   if (!string.IsNullOrWhiteSpace(floorByExternalId))
                   {
+                    // createOnTheFly: when only the floor matches via external_id we still need
+                    // a room to attach the inventory to. Create the "Keine Raumzuordnung"
+                    // placeholder under that floor on demand (same flag as the hierarchy pre-sync).
                     locationId = Locations.ResolveLocationId(
                       samedisClient,
                       locationsResource,
                       string.Empty,
                       roomPlaceholderTitle,
-                      false,
+                      createPropertyHierarchyOnImport,
                       rowId,
                       inventoryTitle,
                       locationsById,
@@ -1997,12 +2010,15 @@ internal class Program
                   );
                   if (!string.IsNullOrWhiteSpace(buildingByExternalId))
                   {
+                    // createOnTheFly: when only the building matches via external_id we still
+                    // need a room to attach the inventory to. Create the "Keine Raumzuordnung"
+                    // placeholder directly under that building on demand.
                     locationId = Locations.ResolveLocationId(
                       samedisClient,
                       locationsResource,
                       string.Empty,
                       roomPlaceholderTitle,
-                      false,
+                      createPropertyHierarchyOnImport,
                       rowId,
                       inventoryTitle,
                       locationsById,
