@@ -40,6 +40,13 @@ sync:
   # _new, pending, in_progress, due_in_6week, elapsed, not_done
   task_download_status: done
   requests_download: false
+  # requests_upload expects <to_samedis>/requests.csv to update existing requests with:
+  # id;incident_number;status;responsible_id;needs_transport;external_id;inventory_operation_status
+  # only non-empty cells are sent; id wins, else incident_number is resolved against the API
+  # and <to_samedis>/request-messages.csv to create new messages on existing requests with:
+  # id;incident_id;incident_number;content[;filename]
+  # rows with an empty id create a new message; rows with id are ignored
+  # optional filename must exist in <to_samedis>/request_documents/<filename> (or .pdf added)
   requests_upload: false
   trainings: false
 formatting:

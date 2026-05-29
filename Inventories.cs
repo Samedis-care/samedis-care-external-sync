@@ -1054,5 +1054,83 @@ namespace SamedisExternalSync
       return value.Trim().ToUpperInvariant();
     }
 
+    /// <summary>
+    /// Returns true if a 4xx API response indicates the device is retired and
+    /// therefore the regular update endpoint refused the request.
+    /// The API returns HTTP 400 with meta.msg.message = "Device retired.".
+    /// </summary>
+    public static bool IsDeviceRetiredError(string? response)
+    {
+      if (string.IsNullOrWhiteSpace(response))
+        return false;
+
+      try
+      {
+        var root = JObject.Parse(response);
+        var message = root.SelectToken("meta.msg.message")?.ToString();
+        if (string.IsNullOrWhiteSpace(message))
+          return false;
+
+        // Tolerant comparison; samedis currently returns "Device retired."
+        return message.Trim().StartsWith("Device retired", StringComparison.OrdinalIgnoreCase);
+      }
+      catch
+      {
+        return false;
+      }
+    }
+
+    /// <summary>
+    /// Creates a completed "recommission_device" issue, which the samedis API
+    /// uses to flip a retired device back to active. After this call succeeds
+    /// the inventory update endpoint will accept normal PUT requests again.
+    /// Returns the raw response on success, null on failure.
+    /// </summary>
+    public static string? PostRecommissionIssue(
+      RequestData client,
+      string issuesResource,
+      string inventoryId,
+      string inventoryNumber,
+      string inventoryTitle,
+      Helper helper)
+    {
+      if (string.IsNullOrWhiteSpace(inventoryId))
+        return null;
+
+      var today = DateTime.UtcNow.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
+      var safeTitle = string.IsNullOrWhiteSpace(inventoryTitle) ? inventoryNumber : inventoryTitle;
+
+      var payload = JsonConvert.SerializeObject(new
+      {
+        data = new Dictionary<string, object?>
+        {
+          ["inventory_id"] = inventoryId,
+          ["issue_type"] = "recommission_device",
+          ["title"] = $"Auto-recommission via external sync ({safeTitle})",
+          ["status"] = "done",
+          ["date"] = today,
+          ["done_at"] = today,
+          ["inventory_operation_status"] = "active"
+        }
+      });
+
+      var response = client.Post(issuesResource, payload);
+      if (client.StatusCode >= 200 && client.StatusCode < 300)
+      {
+        helper.Message(
+          $"Recommission issue created for inventory (inventory_number='{inventoryNumber}', id='{inventoryId}').",
+          2
+        );
+        return response;
+      }
+
+      helper.Message(
+        $"Recommission issue creation failed (inventory_number='{inventoryNumber}', id='{inventoryId}', status={client.StatusCode}). Response: {response}",
+        1,
+        "WARN"
+      );
+      return null;
+    }
+
   }
 }

@@ -222,6 +222,46 @@ namespace SamedisExternalSync
       return true;
     }
 
+    public static bool IsFileEffectivelyEmpty(string filePath)
+    {
+      // True if the file does not exist, is 0 bytes, contains only a BOM, or only whitespace.
+      // Used to avoid noisy ERROR/WARN log entries when the source system has not yet written data.
+      if (!File.Exists(filePath))
+        return true;
+
+      var info = new FileInfo(filePath);
+      if (info.Length == 0)
+        return true;
+
+      // Common case: UTF-8 BOM only (3 bytes: EF BB BF) -- many exporters create this for "no data".
+      if (info.Length <= 3)
+      {
+        try
+        {
+          var bytes = File.ReadAllBytes(filePath);
+          if (bytes.Length == 0) return true;
+          if (bytes.Length == 3 && bytes[0] == 0xEF && bytes[1] == 0xBB && bytes[2] == 0xBF) return true;
+        }
+        catch
+        {
+          return false;
+        }
+      }
+
+      // Larger but possibly whitespace-only: read text and trim.
+      try
+      {
+        var detectedEncoding = DetectCsvEncoding(filePath);
+        using var reader = new StreamReader(filePath, detectedEncoding, detectEncodingFromByteOrderMarks: true);
+        var content = reader.ReadToEnd();
+        return string.IsNullOrWhiteSpace(content);
+      }
+      catch
+      {
+        return false;
+      }
+    }
+
     public static DataTable ImportCsvToDataTable(string filePath, string tableName)
     {
       var detectedEncoding = DetectCsvEncoding(filePath);

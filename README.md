@@ -4,11 +4,11 @@ SamedisExternalSync is a .NET 8 console application that synchronizes data with 
 
 Current implementation focus:
 - Download sync: `tasks`, `requests`, `device_types`, `departments`, `locations`, `device_models`, `inventories`
-- Upload sync: `tasks` and `inventories` from CSV (`<to_samedis>/tasks.csv`, `<to_samedis>/inventories.csv`)
+- Upload sync: `tasks`, `inventories` and `requests` from CSV (`<to_samedis>/tasks.csv`, `<to_samedis>/inventories.csv`, `<to_samedis>/requests.csv`, `<to_samedis>/request-messages.csv`)
 - Task file download: task documents and test protocols
+- Request file download: incident uploads and message attachments
 
 Not implemented yet:
-- `requests_upload`
 - `departments_upload`
 - `locations_upload`
 - dedicated `contacts` / `trainings` sync flows
@@ -115,8 +115,8 @@ Configuration keys are deserialized in snake_case (YAML) to C# classes.
 | `sync.task_download_types` | string | `maintenance` | yes | Passed as `filter[issue_type]`. Comma-separated values are supported by API. |
 | `sync.task_archive_filter` | bool | `true` | yes | Passed as `filter[archive]=true/false`. |
 | `sync.task_download_status` | string | `done` | yes | Passed as `filter[status]`. |
-| `sync.requests_download` | bool | `false` | yes | Downloads requests to `requests.csv`. |
-| `sync.requests_upload` | bool | `false` | no | Flag exists, but upload flow is not implemented. |
+| `sync.requests_download` | bool | `false` | yes | Downloads requests to `requests.csv`, messages to `request-messages.csv`, and incident/message attachments to `<from_samedis>/request_documents/`. |
+| `sync.requests_upload` | bool | `false` | yes | Uploads status updates from `<to_samedis>/requests.csv` and creates new messages (with optional attachments) from `<to_samedis>/request-messages.csv`. |
 | `sync.trainings` | bool | `false` | no | Currently not used in control flow. |
 
 ### `logging`
@@ -209,6 +209,51 @@ Task document upload:
 Optional inventory status update on failed maintenance:
 - Controlled by `sync.tasks_upload_set_inventory_operation_status_on_failed_maintenance`.
 - If enabled and uploaded task resolves to `issue_type=maintenance` with failed result (`test_result=not_passed`), importer sets task field `inventory_operation_status=limited_use`.
+
+## Requests Upload CSV
+
+Status updates source file:
+- `<paths.to_samedis>/requests.csv`
+
+Format:
+- delimiter is `;`
+- header row required
+- required columns (must exist; cells may be empty):
+  - `id`
+  - `incident_number`
+- writable columns (only non-empty cells are sent):
+  - `status` (one of `new`, `pending`, `in_progress`, `done`)
+  - `responsible_id` (Staff or Contact reference id)
+  - `needs_transport` (boolean: `true/false`, `yes/no`, `ja/nein`, `1/0`)
+  - `external_id`
+  - `inventory_operation_status`
+
+Lookup and update behavior:
+- Each row updates exactly one existing request via `PUT /incidents/{id}`.
+- Target request is resolved by `id` (if non-empty); otherwise `incident_number` is resolved against the API.
+- Rows where neither resolves are skipped with a WARN.
+- Rows with no populated writable fields are skipped with no API call.
+- Other columns from the downloaded `requests.csv` (e.g. `inventory_id`, `device_model_*`) are ignored — those fields are not writable on the update endpoint.
+
+Messages source file:
+- `<paths.to_samedis>/request-messages.csv`
+
+Format:
+- delimiter is `;`
+- header row required
+- required columns (must exist; cells may be empty):
+  - `id`
+  - `incident_id`
+  - `incident_number`
+  - `content`
+- optional column:
+  - `filename` (file under `<paths.to_samedis>/request_documents/<filename>`, `.pdf` is appended if missing)
+
+Create behavior:
+- Only rows with empty `id` are processed; rows with non-empty `id` are skipped (the API does not update existing messages from this flow).
+- Parent request is resolved from `incident_id` (preferred) or `incident_number`.
+- Each row creates one new message via `POST /incidents/{incident_id}/messages` with `data.content`.
+- If `filename` is set, the file is uploaded after message creation via `POST /incidents/{incident_id}/messages/{message_id}/uploads`.
 
 ## Inventories Upload CSV
 
