@@ -1233,11 +1233,9 @@ internal class Program
           var inventoryById = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
           var inventoryByExternalId = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
           var inventoryByDeviceNumber = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-          var inventoryByModelAndManufacturer = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
           var checkedInventoryIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
           var checkedInventoryExternalIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
           var checkedInventoryNumbers = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-          var checkedInventoryModelAndManufacturer = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
           var departmentsById = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
           var departmentsByCostCenter = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
           var departmentsByTitle = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
@@ -1280,6 +1278,9 @@ internal class Program
           var roomPlaceholderTitle = string.IsNullOrWhiteSpace(config.Sync.LocationsRoomPlaceholder)
             ? "Keine Raumzuordnung"
             : config.Sync.LocationsRoomPlaceholder.Trim();
+          var floorPlaceholderTitle = string.IsNullOrWhiteSpace(config.Sync.LocationsFloorPlaceholder)
+            ? "Keine Ebenenzuordnung"
+            : config.Sync.LocationsFloorPlaceholder.Trim();
           var hasDepartmentNotesColumn = uploadTable.Columns.Contains("notes");
           var hasDepartmentProfitCenterColumn =
             uploadTable.Columns.Contains("profit_center") ||
@@ -1631,6 +1632,7 @@ internal class Program
           var skippedCount = 0;
           var errorCount = 0;
           var recommissionedCount = 0;
+          var retiredCount = 0;
 
           foreach (DataRow row in uploadTable.Rows)
           {
@@ -1754,29 +1756,85 @@ internal class Program
               rowId,
               inventoryExternalId,
               inventoryNumber,
-              lookupTitle,
-              lookupManufacturer,
               config.Sync.InventoriesUploadFallbackByDeviceNumber,
               inventoryById,
               inventoryByExternalId,
               inventoryByDeviceNumber,
-              inventoryByModelAndManufacturer,
               checkedInventoryIds,
               checkedInventoryExternalIds,
-              checkedInventoryNumbers,
-              checkedInventoryModelAndManufacturer
+              checkedInventoryNumbers
             );
             var isCreateOperation = string.IsNullOrWhiteSpace(targetInventoryId);
 
             if (isRetiredRow && !string.IsNullOrWhiteSpace(targetInventoryId))
             {
-              skippedCount++;
-              helper.Message(
-                $"Skipped retired inventory row because device already exists and retired devices are not updated (id='{targetInventoryId}', inventory_number='{inventoryNumber}', title='{inventoryTitle}').",
-                1
+              // Existing device that is retired ("Ausgemustert") in the source CSV.
+              // Retirement must go through a device_retired ISSUE -- retirement_date is
+              // read-only and a status-only PUT would leave the device non-recommissionable.
+              // The issue lets the backend set retirement_date and keeps the device
+              // reversible later via recommission_device. We do NOT run the normal
+              // update PUT for retired rows (it would be rejected with "Device retired."
+              // anyway), so we handle it here and move on to the next row.
+
+              // Idempotency: if the device is already retired in samedis, do nothing --
+              // posting another device_retired issue would just accumulate duplicate
+              // done issues without changing anything.
+              if (Inventories.IsInventoryDeviceRetired(samedisClient, inventoryResource, targetInventoryId))
+              {
+                skippedCount++;
+                helper.Message(
+                  $"Inventory already retired in samedis, no device_retired issue needed (id='{targetInventoryId}', inventory_number='{inventoryNumber}').",
+                  2
+                );
+                continue;
+              }
+
+              var retirementDateForIssue = Helper.NormalizeDate(Helper.GetRowValue(row, "retirement_date"));
+              var retiredResponse = Inventories.PostDeviceRetiredIssue(
+                samedisClient,
+                issuesResource,
+                targetInventoryId,
+                inventoryNumber,
+                inventoryTitle,
+                retirementDateForIssue,
+                helper
               );
+
+              if (samedisClient.StatusCode >= 200 && samedisClient.StatusCode < 300)
+              {
+                retiredCount++;
+                updatedCount++;
+                helper.Message(
+                  $"Inventory retired via device_retired issue (id='{targetInventoryId}', inventory_number='{inventoryNumber}', title='{inventoryTitle}').",
+                  2
+                );
+              }
+              else if (Inventories.IsAlreadyRetiredError(retiredResponse))
+              {
+                // Already retired in samedis -- nothing to do, no error.
+                skippedCount++;
+                helper.Message(
+                  $"Inventory already retired in samedis, no device_retired issue needed (id='{targetInventoryId}', inventory_number='{inventoryNumber}').",
+                  2
+                );
+              }
+              else
+              {
+                errorCount++;
+                helper.Message(
+                  $"Failed to retire inventory via device_retired issue (id='{targetInventoryId}', title='{inventoryTitle}', inventory_number='{inventoryNumber}', status={samedisClient.StatusCode}). Response: {retiredResponse}",
+                  1,
+                  "ERROR"
+                );
+              }
+
               continue;
             }
+
+            // Retired row whose device does NOT exist in samedis: it is created here
+            // like any other device, but ACTIVE (the backend rejects creating a device
+            // directly in retired state). After a successful create it is retired
+            // properly via a device_retired issue -- see the create-success handling.
 
             if (string.IsNullOrWhiteSpace(catalogId))
             {
@@ -1918,10 +1976,12 @@ internal class Program
             {
               if (string.IsNullOrWhiteSpace(sourceLocationId))
               {
+                // A completely empty source_location_id is an expected normal case
+                // (~35% of rows have no location at all), not a problem -- log it at
+                // debug level instead of flooding the WARN log.
                 helper.Message(
                   $"Property mode: source_location_id is missing for inventory row (id='{rowId}', inventory_number='{inventoryNumber}'). Proceeding without location reference.",
-                  1,
-                  "WARN"
+                  2
                 );
               }
               else if (!sourceLocationResolved)
@@ -2010,25 +2070,51 @@ internal class Program
                   );
                   if (!string.IsNullOrWhiteSpace(buildingByExternalId))
                   {
-                    // createOnTheFly: when only the building matches via external_id we still
-                    // need a room to attach the inventory to. Create the "Keine Raumzuordnung"
-                    // placeholder directly under that building on demand.
-                    locationId = Locations.ResolveLocationId(
+                    // createOnTheFly: when only the building matches via external_id we have
+                    // neither a floor nor a room to attach the inventory to. Rooms live below
+                    // floors, so create the "Keine Ebenenzuordnung" placeholder floor under that
+                    // building first, then the "Keine Raumzuordnung" placeholder room under that
+                    // floor on demand and assign the inventory to it.
+                    var buildingFloorPlaceholderId = Floors.ResolveFloorId(
                       samedisClient,
-                      locationsResource,
-                      string.Empty,
-                      roomPlaceholderTitle,
+                      floorsResource,
+                      buildingByExternalId,
+                      floorPlaceholderTitle,
                       createPropertyHierarchyOnImport,
                       rowId,
                       inventoryTitle,
-                      locationsById,
-                      locationsByTitle,
-                      checkedLocations,
-                      helper,
-                      propertyIdForHierarchySync,
-                      buildingByExternalId
+                      floorsByKey,
+                      checkedFloors,
+                      helper
                     );
-                    resolvedByExternalId = !string.IsNullOrWhiteSpace(locationId);
+                    if (!string.IsNullOrWhiteSpace(buildingFloorPlaceholderId))
+                    {
+                      locationId = Locations.ResolveLocationId(
+                        samedisClient,
+                        locationsResource,
+                        string.Empty,
+                        roomPlaceholderTitle,
+                        createPropertyHierarchyOnImport,
+                        rowId,
+                        inventoryTitle,
+                        locationsById,
+                        locationsByTitle,
+                        checkedLocations,
+                        helper,
+                        propertyIdForHierarchySync,
+                        buildingByExternalId,
+                        buildingFloorPlaceholderId
+                      );
+                      resolvedByExternalId = !string.IsNullOrWhiteSpace(locationId);
+                    }
+                    else
+                    {
+                      helper.Message(
+                        $"Property mode: building matched via external_id '{sourceLocationId}' but the placeholder floor '{floorPlaceholderTitle}' could not be created/resolved (id='{rowId}', inventory_number='{inventoryNumber}'). Proceeding without location reference.",
+                        1,
+                        "WARN"
+                      );
+                    }
                   }
                 }
 
@@ -2353,6 +2439,15 @@ internal class Program
             if (operation == "create")
               attributes["status"] = "created";
 
+            // A retired device cannot be created directly in retired state (backend
+            // rejects it). Create it ACTIVE; it is retired afterwards via a
+            // device_retired issue in the create-success handler below.
+            if (operation == "create" && isRetiredRow)
+            {
+              attributes["operation_status"] = "active";
+              attributes.Remove("retirement_date");
+            }
+
             var requestPayload = JsonConvert.SerializeObject(new
             {
               data = attributes
@@ -2379,14 +2474,30 @@ internal class Program
                   inventoryByExternalId[inventoryExternalId] = resultingId;
                 if (!string.IsNullOrWhiteSpace(inventoryNumber))
                   inventoryByDeviceNumber[inventoryNumber] = resultingId;
-                if (!string.IsNullOrWhiteSpace(lookupTitle))
-                  inventoryByModelAndManufacturer[$"{lookupTitle.Trim()}|{(lookupManufacturer ?? string.Empty).Trim()}"] = resultingId;
               }
 
               if (string.IsNullOrWhiteSpace(targetInventoryId))
               {
                 createdCount++;
                 helper.Message($"Inventory created (inventory_number='{inventoryNumber}', id='{resultingId}').", 2);
+
+                // Source row is retired: the device was just created ACTIVE -- retire
+                // it now via a device_retired issue so it ends up consistently retired.
+                if (isRetiredRow && !string.IsNullOrWhiteSpace(resultingId))
+                {
+                  var retDate = Helper.NormalizeDate(Helper.GetRowValue(row, "retirement_date"));
+                  var retResp = Inventories.PostDeviceRetiredIssue(
+                    samedisClient, issuesResource, resultingId, inventoryNumber, inventoryTitle, retDate, helper);
+                  if (samedisClient.StatusCode >= 200 && samedisClient.StatusCode < 300)
+                  {
+                    retiredCount++;
+                    helper.Message($"Newly created inventory retired via device_retired issue (inventory_number='{inventoryNumber}', id='{resultingId}').", 2);
+                  }
+                  else
+                  {
+                    helper.Message($"Inventory created but device_retired issue failed (inventory_number='{inventoryNumber}', id='{resultingId}', status={samedisClient.StatusCode}). Response: {retResp}", 1, "WARN");
+                  }
+                }
               }
               else
               {
@@ -2414,19 +2525,68 @@ internal class Program
                   && samedisClient.StatusCode == 400
                   && Inventories.IsDeviceRetiredError(response))
               {
+                // Resolve the canonical samedis inventory id via the full lookup
+                // priority (samedis id -> external_id -> inventory_number) before
+                // recommissioning. The source CSV may deliver a CHANGED inventory
+                // number for the same physical device, so external_id is the stable
+                // anchor; we must recommission and retry-update the exact device this
+                // row maps to, not whatever a (possibly changed) number points at.
+                var recommissionInventoryId = Inventories.ResolveExistingInventoryId(
+                  samedisClient,
+                  inventoryResource,
+                  rowId,
+                  inventoryExternalId,
+                  inventoryNumber,
+                  config.Sync.InventoriesUploadFallbackByDeviceNumber,
+                  inventoryById,
+                  inventoryByExternalId,
+                  inventoryByDeviceNumber,
+                  checkedInventoryIds,
+                  checkedInventoryExternalIds,
+                  checkedInventoryNumbers
+                );
+                if (string.IsNullOrWhiteSpace(recommissionInventoryId))
+                  recommissionInventoryId = targetInventoryId;
+
+                // recommission_device only reverses a retirement when the persisted
+                // device_retired flag is true (see Issue#propagate_recommission_device).
+                // If the device is in an inconsistent state -- retirement_date set (so the
+                // update PUT is blocked with "Device retired.") but device_retired=false --
+                // the recommission would be a silent no-op. In that case we first create a
+                // device_retired issue to normalize the state (device_retired=true), WITHOUT
+                // deleting the device's open tasks, so the recommission below can actually
+                // clear the retirement (device_retired=false, retirement_date=nil).
+                if (!Inventories.IsInventoryDeviceRetired(samedisClient, inventoryResource, recommissionInventoryId))
+                {
+                  helper.Message(
+                    $"Inconsistent retirement state (device_retired=false but update blocked). Creating a device_retired issue to normalize before recommission (id='{recommissionInventoryId}', inventory_number='{inventoryNumber}').",
+                    2
+                  );
+                  Inventories.PostDeviceRetiredIssue(
+                    samedisClient,
+                    issuesResource,
+                    recommissionInventoryId,
+                    inventoryNumber,
+                    inventoryTitle,
+                    null,
+                    helper,
+                    deleteOpenTasks: false
+                  );
+                }
+
                 // Stay silent at log level 1 when the recommission+retry succeeds --
                 // the resulting inventory update will already be counted via
                 // HandleInventorySuccess (which logs at level 2). Only escalate to
                 // WARN/ERROR if the recommission or the retry itself fails.
                 helper.Message(
-                  $"Inventory is retired in samedis but CSV row is active (id='{targetInventoryId}', inventory_number='{inventoryNumber}'). Attempting recommission and update retry.",
+                  $"Inventory is retired in samedis but CSV row is active (id='{recommissionInventoryId}', external_id='{inventoryExternalId}', inventory_number='{inventoryNumber}'). Attempting recommission and update retry.",
                   2
                 );
 
                 var recommissionResponse = Inventories.PostRecommissionIssue(
                   samedisClient,
                   issuesResource,
-                  targetInventoryId,
+                  recommissionInventoryId,
                   inventoryNumber,
                   inventoryTitle,
                   helper
@@ -2434,11 +2594,11 @@ internal class Program
 
                 if (recommissionResponse != null)
                 {
-                  response = samedisClient.Put(inventoryWriteResource, targetInventoryId, requestPayload);
+                  response = samedisClient.Put(inventoryWriteResource, recommissionInventoryId, requestPayload);
                   if (samedisClient.StatusCode >= 200 && samedisClient.StatusCode < 300)
                   {
                     helper.Message(
-                      $"Inventory recommissioned and updated after retry (inventory_number='{inventoryNumber}', id='{targetInventoryId}').",
+                      $"Inventory recommissioned and updated after retry (inventory_number='{inventoryNumber}', id='{recommissionInventoryId}').",
                       2
                     );
                     HandleInventorySuccess(response);
@@ -2461,7 +2621,7 @@ internal class Program
             }
           }
 
-          helper.Message($"Inventories Upload finished. Created: {createdCount}, Updated: {updatedCount} (incl. {recommissionedCount} recommissioned), Skipped: {skippedCount}, Errors: {errorCount}", 1);
+          helper.Message($"Inventories Upload finished. Created: {createdCount}, Updated: {updatedCount} (incl. {recommissionedCount} recommissioned, {retiredCount} retired), Skipped: {skippedCount}, Errors: {errorCount}", 1);
         }
       }
     }

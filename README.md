@@ -296,7 +296,17 @@ Location assignment modes:
 - CSV `take_authority` should be valid JSON (example: `{"drop":false,"locked":true,"protected_fields":["serial_number","device_location_id"]}`).
 - As an alternative, set `take_authority_drop` / `take_authority_locked` (`true|false|1|0|yes|no`) and `take_authority_protected_fields` (comma/pipe separated or JSON array).
 
-Rows with `operation_status` resolved to `retired` are skipped only if the inventory already exists; otherwise they are created as retired devices.
+Inventory identity resolution (decides update vs. create):
+- The target inventory is resolved strictly by stable identifiers, in order: `id` (samedis id) → `external_id` → `inventory_number` (`device_number`, only when `sync.inventories_upload_fallback_by_device_number=true`).
+- If none of these match, the row is treated as a NEW inventory and created. Matching by `device_model_title` + manufacturer is intentionally NOT used for identity — a model name is not an identifier and would attach the row to an unrelated existing device that merely shares the same model.
+
+Retired devices (`operation_status` resolved to `retired`, e.g. `Ausgemustert`):
+- Already retired in samedis: skipped (nothing to do).
+- Exists and active in samedis: retired via a `device_retired` issue (the canonical, reversible mechanism; `operation_status`/`retirement_date` are never written directly, and `retirement_date` is read-only on the inventory API anyway). Uses `delete_currently_open_tasks=true` like the backend's own auto-retire.
+- Not in samedis: created ACTIVE first (a device cannot be created directly in retired state), then retired via a `device_retired` issue using the CSV `retirement_date`.
+
+Recommission (re-activation):
+- If a CSV row is active but the matched device is retired in samedis, the importer creates a `recommission_device` issue and retries the update, so the device is re-activated before the update is applied.
 
 Create defaults:
 - For create operations, `do_maintenance` defaults to `true` when CSV value is empty.
