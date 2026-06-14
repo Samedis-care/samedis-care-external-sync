@@ -83,6 +83,7 @@ namespace SamedisExternalSync
     public bool InventoriesUploadCreateDepartmentsOnTheFly { get; set; } = false;
     public bool InventoriesUploadCreateLocationsOnTheFly { get; set; } = false;
     public string? LocationsRoomPlaceholder { get; set; } = "Keine Raumzuordnung";
+    public string? LocationsFloorPlaceholder { get; set; } = "Keine Ebenenzuordnung";
     public bool TasksDownload { get; set; } = false;
     public bool TasksUpload { get; set; } = false;
     public bool TasksUploadSetInventoryOperationStatusOnFailedMaintenance { get; set; } = false;
