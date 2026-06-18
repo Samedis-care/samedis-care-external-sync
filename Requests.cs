@@ -7,6 +7,20 @@ namespace SamedisExternalSync
   {
     public static readonly string[] UploadRequiredColumns = ["id", "incident_number"];
 
+    // Default base URL of the samedis.care web frontend, used to build a direct
+    // link to open a request in the browser (see "web_url" export column). Can be
+    // overridden via config.yml (samedis.web_uri).
+    public static readonly string DefaultWebBaseUrl = "https://app.samedis.care";
+
+    public static string BuildRequestWebUrl(string? webBaseUrl, string? tenantId, string? requestId)
+    {
+      if (string.IsNullOrWhiteSpace(tenantId) || string.IsNullOrWhiteSpace(requestId))
+        return string.Empty;
+
+      var baseUrl = (string.IsNullOrWhiteSpace(webBaseUrl) ? DefaultWebBaseUrl : webBaseUrl).Trim().TrimEnd('/');
+      return $"{baseUrl}/{tenantId.Trim()}/incidents/{requestId.Trim()}";
+    }
+
     public static readonly string[] MessageUploadRequiredColumns = ["id", "incident_id", "incident_number", "content"];
 
     private static readonly HashSet<string> AllowedStatusValues = new(StringComparer.OrdinalIgnoreCase)
@@ -450,9 +464,11 @@ namespace SamedisExternalSync
 
       dt.Columns.Add("id", typeof(string));
       dt.Columns.Add("external_id", typeof(string));
+      dt.Columns.Add("web_url", typeof(string));
       dt.Columns.Add("content", typeof(string));
       dt.Columns.Add("status", typeof(string));
       dt.Columns.Add("incident_number", typeof(string));
+      dt.Columns.Add("last_change", typeof(string));
       dt.Columns.Add("created_at", typeof(string));
       dt.Columns.Add("updated_at", typeof(string));
       dt.Columns.Add("created_by", typeof(string));
@@ -494,7 +510,7 @@ namespace SamedisExternalSync
       return ds;
     }
 
-    public static void FillRequestDataSet(DataSet ds, string json)
+    public static void FillRequestDataSet(DataSet ds, string json, string? tenantId = null, string? webBaseUrl = null)
     {
       var root = JsonConvert.DeserializeObject<Requests.Root>(json);
       if (root?.Data == null || root.Data.Count == 0)
@@ -515,9 +531,12 @@ namespace SamedisExternalSync
 
         row["id"] = attr.Id;
         row["external_id"] = attr.ExternalId ?? "";
+        row["web_url"] = BuildRequestWebUrl(webBaseUrl, !string.IsNullOrWhiteSpace(attr.TenantId) ? attr.TenantId : tenantId, attr.Id);
         row["content"] = attr.Content ?? "";
         row["status"] = attr.Status ?? "";
         row["incident_number"] = attr.IncidentNumber?.ToString() ?? "";
+        // Single canonical "last change" marker so CAFM systems can detect updates.
+        row["last_change"] = !string.IsNullOrWhiteSpace(attr.LastActivityAt) ? attr.LastActivityAt : (attr.UpdatedAt ?? "");
         row["created_at"] = attr.CreatedAt ?? "";
         row["updated_at"] = attr.UpdatedAt ?? "";
         row["created_by"] = attr.CreatedBy ?? "";
@@ -660,7 +679,10 @@ namespace SamedisExternalSync
     public static Dictionary<string, object>? BuildRequestUpdateAttributes(
       DataRow row,
       out string errorMessage,
-      out string warningMessage)
+      out string warningMessage,
+      string? resolvedResponsibleId = null,
+      string? resolvedResponsibleType = null,
+      string? resolvedInventoryId = null)
     {
       errorMessage = string.Empty;
       warningMessage = string.Empty;
@@ -679,9 +701,23 @@ namespace SamedisExternalSync
         attributes["status"] = normalizedStatus;
       }
 
-      Helper.AddStringAttribute(attributes, "responsible_id", Helper.GetRowValue(row, "responsible_id"));
+      // responsible_id: prefer the value resolved from responsible_email via the inventory's
+      // incident supporters, otherwise fall back to a value supplied directly in the CSV.
+      Helper.AddStringAttribute(attributes, "responsible_id",
+        !string.IsNullOrWhiteSpace(resolvedResponsibleId)
+          ? resolvedResponsibleId
+          : Helper.GetRowValue(row, "responsible_id"));
+      // responsible_type accompanies responsible_id because a supporter may be a staff
+      // member, an internal contact, or an external contact (enterprise tenant).
+      Helper.AddStringAttribute(attributes, "responsible_type",
+        !string.IsNullOrWhiteSpace(resolvedResponsibleType)
+          ? resolvedResponsibleType
+          : Helper.GetRowValue(row, "responsible_type"));
+      Helper.AddStringAttribute(attributes, "responsible_user_id", Helper.GetRowValue(row, "responsible_user_id"));
       Helper.AddStringAttribute(attributes, "external_id", Helper.GetRowValue(row, "external_id"));
       Helper.AddStringAttribute(attributes, "inventory_operation_status", Helper.GetRowValue(row, "inventory_operation_status"));
+      // inventory_id: resolved from samedis inventory id or inventory_device_number lookup.
+      Helper.AddStringAttribute(attributes, "inventory_id", resolvedInventoryId ?? "");
 
       var needsTransportRaw = Helper.GetRowValue(row, "needs_transport");
       if (!string.IsNullOrWhiteSpace(needsTransportRaw))

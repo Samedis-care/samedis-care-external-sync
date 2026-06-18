@@ -605,31 +605,67 @@ namespace SamedisExternalSync
         {
           checkedInventoryNumbers.Add(inventoryNumber);
 
-          var filterBuilder = new FilterBuilder();
-          filterBuilder.Clear();
-          filterBuilder.Add("device_number", FilterBuilder.FilterType.Equals, FilterBuilder.Type.Text, inventoryNumber);
-
-          var listResponse = client.Get(
-            resource +
-            $"?page[number]=1&page[limit]=1&variant=regular&gridfilter={filterBuilder.Get()}"
-          );
-          if (client.StatusCode == 200 && !string.IsNullOrWhiteSpace(listResponse))
+          var resolvedByDeviceNumberId = ResolveInventoryIdByDeviceNumber(client, resource, inventoryNumber, inventoryByDeviceNumber);
+          if (!string.IsNullOrWhiteSpace(resolvedByDeviceNumberId))
           {
-            var listRoot = JsonConvert.DeserializeObject<Root>(listResponse);
-            var resolvedByDeviceNumber = listRoot?.Data?.FirstOrDefault();
-            var resolvedByDeviceNumberId = resolvedByDeviceNumber?.Attributes?.Id ?? resolvedByDeviceNumber?.Id;
-            if (!string.IsNullOrWhiteSpace(resolvedByDeviceNumberId))
-            {
-              inventoryById[resolvedByDeviceNumberId] = resolvedByDeviceNumberId;
-              inventoryByDeviceNumber[inventoryNumber] = resolvedByDeviceNumberId;
-              return resolvedByDeviceNumberId;
-            }
+            inventoryById[resolvedByDeviceNumberId] = resolvedByDeviceNumberId;
+            return resolvedByDeviceNumberId;
           }
-
-          inventoryByDeviceNumber[inventoryNumber] = string.Empty;
         }
       }
       return candidateId;
+    }
+
+    // Canonical inventory lookup by device_number (a.k.a. inventory_number). Shared by the
+    // inventories import as well as the tasks and requests uploads so the lookup lives in one
+    // place. Caches both hits and misses (empty string) in inventoryByDeviceNumber.
+    public static string ResolveInventoryIdByDeviceNumber(
+      RequestData client,
+      string resource,
+      string deviceNumber,
+      IDictionary<string, string> inventoryByDeviceNumber)
+    {
+      if (string.IsNullOrWhiteSpace(deviceNumber))
+        return string.Empty;
+
+      var normalizedDeviceNumber = deviceNumber.Trim();
+      if (inventoryByDeviceNumber.TryGetValue(normalizedDeviceNumber, out var cachedInventoryId))
+        return cachedInventoryId;
+
+      var filterBuilder = new FilterBuilder();
+      filterBuilder.Clear();
+      filterBuilder.Add("device_number", FilterBuilder.FilterType.Equals, FilterBuilder.Type.Text, normalizedDeviceNumber);
+
+      var listResponse = client.Get(
+        resource +
+        $"?page[number]=1&page[limit]=1&variant=regular&gridfilter={filterBuilder.Get()}"
+      );
+
+      var resolvedInventoryId = string.Empty;
+      if (client.StatusCode >= 200 && client.StatusCode < 300 && !string.IsNullOrWhiteSpace(listResponse))
+      {
+        var listRoot = JsonConvert.DeserializeObject<Root>(listResponse);
+        var first = listRoot?.Data?.FirstOrDefault();
+        resolvedInventoryId = first?.Attributes?.Id ?? first?.Id ?? string.Empty;
+      }
+
+      inventoryByDeviceNumber[normalizedDeviceNumber] = resolvedInventoryId;
+      return resolvedInventoryId;
+    }
+
+    // Resolves an inventory id from a samedis inventory id when provided, otherwise falls back
+    // to a device_number lookup. Used by the requests upload.
+    public static string ResolveInventoryIdByIdOrDeviceNumber(
+      RequestData client,
+      string resource,
+      string inventoryId,
+      string deviceNumber,
+      IDictionary<string, string> inventoryByDeviceNumber)
+    {
+      if (!string.IsNullOrWhiteSpace(inventoryId))
+        return inventoryId.Trim();
+
+      return ResolveInventoryIdByDeviceNumber(client, resource, deviceNumber, inventoryByDeviceNumber);
     }
 
     public static Dictionary<string, object> BuildInventoryAttributes(

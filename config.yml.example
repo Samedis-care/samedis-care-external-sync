@@ -4,6 +4,8 @@ auth:
   client_secret: "your-sync-account-client-secret"
 samedis:
   uri: "https://sync.samedis.care"
+  # base URL of the web frontend, used to build the request "web_url" export link
+  web_uri: "https://app.samedis.care"
   api_version: "v4"
   tenant_id: "63f5c0491b57cc000df2b2c7"
 paths:

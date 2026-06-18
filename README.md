@@ -81,6 +81,7 @@ Configuration keys are deserialized in snake_case (YAML) to C# classes.
 | Key | Type | Required | Default | Description |
 |---|---|---|---|---|
 | `samedis.uri` | string | yes | none | Base URL for all Samedis API requests. |
+| `samedis.web_uri` | string | no | `https://app.samedis.care` | Base URL of the web frontend, used to build the request `web_url` export link. |
 | `samedis.api_version` | string | yes | none | API version path segment, e.g. `v4`. |
 | `samedis.tenant_id` | string | yes | none | Tenant ID used in tenant-scoped resources. |
 
@@ -223,17 +224,24 @@ Format:
   - `incident_number`
 - writable columns (only non-empty cells are sent):
   - `status` (one of `new`, `pending`, `in_progress`, `done`)
-  - `responsible_id` (Staff or Contact reference id)
+  - `responsible_id` (set directly, or resolved automatically from `responsible_email`)
+  - `responsible_type` (accompanies `responsible_id`; set directly or resolved from `responsible_email`)
+  - `responsible_email` (resolved against the inventory's incident supporters, see below)
+  - `responsible_user_id` (set directly)
   - `needs_transport` (boolean: `true/false`, `yes/no`, `ja/nein`, `1/0`)
-  - `external_id`
+  - `external_id` (CAFM database id)
   - `inventory_operation_status`
+  - `inventory_id` (samedis.care inventory id; assigns the inventory to the request)
+  - `inventory_device_number` (alias: `inventory_number`) — used to look up the inventory when `inventory_id` is empty
 
 Lookup and update behavior:
 - Each row updates exactly one existing request via `PUT /incidents/{id}`.
 - Target request is resolved by `id` (if non-empty); otherwise `incident_number` is resolved against the API.
-- Rows where neither resolves are skipped with a WARN.
+- Inventory is resolved first: by `inventory_id` if present, otherwise by `inventory_device_number`/`inventory_number` (lookup by `device_number`); the resolved id is sent as `inventory_id`. Unresolved device numbers are skipped with a WARN.
+- `responsible_email` is resolved against the resolved inventory's incident supporters (`GET /inventories/{inventory_id}/incident_supporter`) by matching the email, and sent as `responsible_id` (+ `responsible_type`). A supporter may be an internal contact, a staff member, or an external contact (enterprise tenant). Resolution requires an inventory; emails that cannot be matched are skipped with a WARN.
+- Rows where the request cannot be resolved are skipped with a WARN.
 - Rows with no populated writable fields are skipped with no API call.
-- Other columns from the downloaded `requests.csv` (e.g. `inventory_id`, `device_model_*`) are ignored — those fields are not writable on the update endpoint.
+- Remaining columns from the downloaded `requests.csv` (e.g. `device_model_*`) are ignored — those fields are not writable on the update endpoint.
 
 Messages source file:
 - `<paths.to_samedis>/request-messages.csv`
@@ -324,6 +332,10 @@ Depending on enabled sync flags, these files are generated in `<paths.from_samed
 - `devicemanufacturers.csv`
 - `inventories.csv`
 - `task_documents/*` (task documents and protocol files)
+
+Requests download note:
+- `requests.csv` includes a `last_change` column (the request's `last_activity_at`, falling back to `updated_at`) so CAFM systems can detect that a request has changed.
+- `requests.csv` includes a `web_url` column with a direct link to open the request in the web app (`{samedis.web_uri}/{tenant_id}/incidents/{id}`, default base `https://app.samedis.care`).
 
 Inventory download note:
 - In tenant property mode (`use_extended_device_locations=true`), `inventories.csv` includes `source_location_id`.
