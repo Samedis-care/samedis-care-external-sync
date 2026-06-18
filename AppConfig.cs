@@ -34,6 +34,7 @@ namespace SamedisExternalSync
   public class SamedisConfig
   {
     public string? Uri { get; set; }
+    public string? WebUri { get; set; } = "https://app.samedis.care";
     public string? ApiVersion { get; set; }
     public string? TenantId { get; set; }
   }

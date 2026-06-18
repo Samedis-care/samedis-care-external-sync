@@ -214,7 +214,7 @@ internal class Program
               continue;
             }
 
-            var inventoryId = Tasks.ResolveInventoryIdByDeviceNumber(
+            var inventoryId = Inventories.ResolveInventoryIdByDeviceNumber(
               samedisClient,
               inventoryResource,
               inventoryDeviceNumber,
@@ -528,7 +528,11 @@ internal class Program
 
       helper.CanDo(samedisClient, requestsResource);
 
+      var inventoriesResource = $"/api/{samedisApiVersion}/tenants/{samedisTenantId}/inventories";
+
       var incidentByIncidentNumber = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+      var inventoryByDeviceNumber = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+      var supporterByInventoryAndEmail = new Dictionary<string, Helper.ResponsibleSupporter?>(StringComparer.OrdinalIgnoreCase);
 
       // -- requests.csv: status / responsible / etc. updates on existing requests --
       if (!File.Exists(requestsCsvPath))
@@ -595,7 +599,50 @@ internal class Program
               continue;
             }
 
-            var attributes = Requests.BuildRequestUpdateAttributes(row, out var buildError, out var buildWarning);
+            // Resolve inventory first (prefer samedis inventory_id, otherwise look up by device_number).
+            // The responsible lookup below depends on a resolved inventory.
+            var csvInventoryDeviceNumber = Helper.GetRowValue(row, "inventory_device_number");
+            if (string.IsNullOrWhiteSpace(csvInventoryDeviceNumber))
+              csvInventoryDeviceNumber = Helper.GetRowValue(row, "inventory_number");
+
+            var resolvedInventoryId = Inventories.ResolveInventoryIdByIdOrDeviceNumber(
+              samedisClient,
+              inventoriesResource,
+              Helper.GetRowValue(row, "inventory_id"),
+              csvInventoryDeviceNumber,
+              inventoryByDeviceNumber
+            );
+            if (string.IsNullOrWhiteSpace(resolvedInventoryId) && !string.IsNullOrWhiteSpace(csvInventoryDeviceNumber))
+            {
+              helper.Message(
+                $"Request row {rowNumber} (id='{targetIncidentId}', incident_number='{incidentNumber}'): inventory_device_number '{csvInventoryDeviceNumber}' could not be resolved to an inventory.",
+                1,
+                "WARN"
+              );
+            }
+
+            // Resolve "verantwortlich" by email against the inventory's incident supporters
+            // (internal contact, staff member, or external enterprise contact).
+            var responsible = Helper.ResolveResponsibleByEmail(
+              samedisClient,
+              samedisApiVersion,
+              samedisTenantId,
+              resolvedInventoryId,
+              Helper.GetRowValue(row, "responsible_email"),
+              supporterByInventoryAndEmail,
+              helper
+            );
+            var resolvedResponsibleId = responsible?.Id ?? string.Empty;
+            var resolvedResponsibleType = responsible?.Type ?? string.Empty;
+
+            var attributes = Requests.BuildRequestUpdateAttributes(
+              row,
+              out var buildError,
+              out var buildWarning,
+              resolvedResponsibleId,
+              resolvedResponsibleType,
+              resolvedInventoryId
+            );
             if (attributes == null)
             {
               errorCount++;
@@ -874,7 +921,7 @@ internal class Program
         if (string.IsNullOrEmpty(response)) continue;
         var requestRoot = JsonConvert.DeserializeObject<Requests.Root>(response);
         var rDs = Requests.CreateRequestDataSet();
-        Requests.FillRequestDataSet(rDs, response);
+        Requests.FillRequestDataSet(rDs, response, samedisTenantId, config.Samedis.WebUri);
         Helper.ExportDataSetToCsv(rDs, Path.Combine(downloadRoot, "requests.csv"), "Requests");
 
         if (requestRoot?.Data == null || requestRoot.Data.Count == 0)

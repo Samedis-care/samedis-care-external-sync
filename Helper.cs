@@ -369,6 +369,100 @@ namespace SamedisExternalSync
       }
     }
 
+    // Resolves the "verantwortlich" (responsible) for a request by matching an email
+    // address against the incident supporters allowed for a given inventory.
+    //
+    // It calls GET <incidentSupporterResource> (e.g.
+    //   /api/v4/tenants/{tenant_id}/inventories/{inventory_id}/incident_supporter)
+    // and matches by email. A supporter may be an internal contact, a staff member,
+    // or an external contact (enterprise tenant); the returned Type carries that
+    // distinction so the caller can send responsible_id together with responsible_type.
+    //
+    // NOTE: the response field mapping below follows the JSON:API convention used
+    // across this project (data[].attributes). If the incident_supporter payload uses
+    // different attribute names, adjust the candidate keys here.
+    public static ResponsibleSupporter? ResolveResponsibleByEmail(
+      RequestData samedisClient,
+      string apiVersion,
+      string tenantId,
+      string inventoryId,
+      string email,
+      IDictionary<string, ResponsibleSupporter?> cache,
+      Helper? logger = null)
+    {
+      if (string.IsNullOrWhiteSpace(email))
+        return null;
+
+      if (string.IsNullOrWhiteSpace(inventoryId))
+      {
+        logger?.Message($"responsible_email '{email.Trim()}' cannot be resolved without an inventory (provide inventory_id or inventory_device_number).", 1, "WARN");
+        return null;
+      }
+
+      var normalizedEmail = email.Trim();
+      var cacheKey = inventoryId + "|" + normalizedEmail.ToLowerInvariant();
+      if (cache.TryGetValue(cacheKey, out var cached))
+        return cached;
+
+      var incidentSupporterResource = $"/api/{apiVersion}/tenants/{tenantId}/inventories/{inventoryId}/incident_supporter";
+      ResponsibleSupporter? result = null;
+      var response = samedisClient.Get(incidentSupporterResource);
+
+      if (samedisClient.StatusCode >= 200 && samedisClient.StatusCode < 300 && !string.IsNullOrWhiteSpace(response))
+      {
+        try
+        {
+          var root = JToken.Parse(response);
+          var data = root["data"];
+          if (data != null)
+          {
+            IEnumerable<JToken> entries = data.Type == JTokenType.Array ? data.Children() : new[] { data };
+            foreach (var entry in entries)
+            {
+              var attrs = entry["attributes"];
+              var entryEmail =
+                attrs?["email"]?.ToString() ??
+                attrs?["contact_email"]?.ToString() ??
+                attrs?["user_email"]?.ToString();
+
+              if (string.IsNullOrWhiteSpace(entryEmail))
+                continue;
+              if (!string.Equals(entryEmail.Trim(), normalizedEmail, StringComparison.OrdinalIgnoreCase))
+                continue;
+
+              result = new ResponsibleSupporter
+              {
+                Id = attrs?["responsible_id"]?.ToString() ?? entry["id"]?.ToString() ?? string.Empty,
+                Type = attrs?["responsible_type"]?.ToString() ?? attrs?["type"]?.ToString() ?? entry["type"]?.ToString() ?? string.Empty,
+                Email = entryEmail.Trim(),
+                Name = attrs?["responsible_name"]?.ToString() ?? attrs?["name"]?.ToString() ?? string.Empty
+              };
+              break;
+            }
+          }
+        }
+        catch
+        {
+          result = null;
+        }
+      }
+
+      if (result == null || string.IsNullOrWhiteSpace(result.Id))
+        logger?.Message($"responsible_email '{normalizedEmail}' did not match any incident supporter for inventory '{inventoryId}'.", 1, "WARN");
+
+      cache[cacheKey] = result;
+      return result;
+    }
+
+    // Resolved incident supporter used as the request's "verantwortlich" (responsible).
+    public class ResponsibleSupporter
+    {
+      public string Id { get; set; } = string.Empty;
+      public string Type { get; set; } = string.Empty;
+      public string Email { get; set; } = string.Empty;
+      public string Name { get; set; } = string.Empty;
+    }
+
     public static string GetRowValue(DataRow row, string columnName)
     {
       if (!row.Table.Columns.Contains(columnName))

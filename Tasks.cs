@@ -444,37 +444,6 @@ namespace SamedisExternalSync
       }
     }
 
-    public static string ResolveInventoryIdByDeviceNumber(
-      RequestData samedisClient,
-      string inventoryResource,
-      string inventoryDeviceNumber,
-      IDictionary<string, string> inventoryByDeviceNumber)
-    {
-      if (string.IsNullOrWhiteSpace(inventoryDeviceNumber))
-        return string.Empty;
-
-      var normalizedDeviceNumber = inventoryDeviceNumber.Trim();
-      if (inventoryByDeviceNumber.TryGetValue(normalizedDeviceNumber, out var cachedInventoryId))
-        return cachedInventoryId;
-
-      var filterBuilder = new FilterBuilder();
-      filterBuilder.Clear();
-      filterBuilder.Add("device_number", FilterBuilder.FilterType.Equals, FilterBuilder.Type.Text, normalizedDeviceNumber);
-
-      var requestResource = inventoryResource + $"?page[number]=1&page[limit]=1&quickfilter=&gridfilter={filterBuilder.Get()}";
-      var response = samedisClient.Get(requestResource);
-
-      if (samedisClient.StatusCode >= 200 && samedisClient.StatusCode < 300)
-      {
-        var resolvedInventoryId = Helper.ExtractDataId(response) ?? string.Empty;
-        inventoryByDeviceNumber[normalizedDeviceNumber] = resolvedInventoryId;
-        return resolvedInventoryId;
-      }
-
-      inventoryByDeviceNumber[normalizedDeviceNumber] = string.Empty;
-      return string.Empty;
-    }
-
     public static string ResolveIssueIdByIssueNumber(
       RequestData samedisClient,
       string issuesResource,
