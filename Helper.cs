@@ -222,6 +222,46 @@ namespace SamedisExternalSync
       return true;
     }
 
+    public static bool IsFileEffectivelyEmpty(string filePath)
+    {
+      // True if the file does not exist, is 0 bytes, contains only a BOM, or only whitespace.
+      // Used to avoid noisy ERROR/WARN log entries when the source system has not yet written data.
+      if (!File.Exists(filePath))
+        return true;
+
+      var info = new FileInfo(filePath);
+      if (info.Length == 0)
+        return true;
+
+      // Common case: UTF-8 BOM only (3 bytes: EF BB BF) -- many exporters create this for "no data".
+      if (info.Length <= 3)
+      {
+        try
+        {
+          var bytes = File.ReadAllBytes(filePath);
+          if (bytes.Length == 0) return true;
+          if (bytes.Length == 3 && bytes[0] == 0xEF && bytes[1] == 0xBB && bytes[2] == 0xBF) return true;
+        }
+        catch
+        {
+          return false;
+        }
+      }
+
+      // Larger but possibly whitespace-only: read text and trim.
+      try
+      {
+        var detectedEncoding = DetectCsvEncoding(filePath);
+        using var reader = new StreamReader(filePath, detectedEncoding, detectEncodingFromByteOrderMarks: true);
+        var content = reader.ReadToEnd();
+        return string.IsNullOrWhiteSpace(content);
+      }
+      catch
+      {
+        return false;
+      }
+    }
+
     public static DataTable ImportCsvToDataTable(string filePath, string tableName)
     {
       var detectedEncoding = DetectCsvEncoding(filePath);
@@ -329,6 +369,100 @@ namespace SamedisExternalSync
       }
     }
 
+    // Resolves the "verantwortlich" (responsible) for a request by matching an email
+    // address against the incident supporters allowed for a given inventory.
+    //
+    // It calls GET <incidentSupporterResource> (e.g.
+    //   /api/v4/tenants/{tenant_id}/inventories/{inventory_id}/incident_supporter)
+    // and matches by email. A supporter may be an internal contact, a staff member,
+    // or an external contact (enterprise tenant); the returned Type carries that
+    // distinction so the caller can send responsible_id together with responsible_type.
+    //
+    // NOTE: the response field mapping below follows the JSON:API convention used
+    // across this project (data[].attributes). If the incident_supporter payload uses
+    // different attribute names, adjust the candidate keys here.
+    public static ResponsibleSupporter? ResolveResponsibleByEmail(
+      RequestData samedisClient,
+      string apiVersion,
+      string tenantId,
+      string inventoryId,
+      string email,
+      IDictionary<string, ResponsibleSupporter?> cache,
+      Helper? logger = null)
+    {
+      if (string.IsNullOrWhiteSpace(email))
+        return null;
+
+      if (string.IsNullOrWhiteSpace(inventoryId))
+      {
+        logger?.Message($"responsible_email '{email.Trim()}' cannot be resolved without an inventory (provide inventory_id or inventory_device_number).", 1, "WARN");
+        return null;
+      }
+
+      var normalizedEmail = email.Trim();
+      var cacheKey = inventoryId + "|" + normalizedEmail.ToLowerInvariant();
+      if (cache.TryGetValue(cacheKey, out var cached))
+        return cached;
+
+      var incidentSupporterResource = $"/api/{apiVersion}/tenants/{tenantId}/inventories/{inventoryId}/incident_supporter";
+      ResponsibleSupporter? result = null;
+      var response = samedisClient.Get(incidentSupporterResource);
+
+      if (samedisClient.StatusCode >= 200 && samedisClient.StatusCode < 300 && !string.IsNullOrWhiteSpace(response))
+      {
+        try
+        {
+          var root = JToken.Parse(response);
+          var data = root["data"];
+          if (data != null)
+          {
+            IEnumerable<JToken> entries = data.Type == JTokenType.Array ? data.Children() : new[] { data };
+            foreach (var entry in entries)
+            {
+              var attrs = entry["attributes"];
+              var entryEmail =
+                attrs?["email"]?.ToString() ??
+                attrs?["contact_email"]?.ToString() ??
+                attrs?["user_email"]?.ToString();
+
+              if (string.IsNullOrWhiteSpace(entryEmail))
+                continue;
+              if (!string.Equals(entryEmail.Trim(), normalizedEmail, StringComparison.OrdinalIgnoreCase))
+                continue;
+
+              result = new ResponsibleSupporter
+              {
+                Id = attrs?["responsible_id"]?.ToString() ?? entry["id"]?.ToString() ?? string.Empty,
+                Type = attrs?["responsible_type"]?.ToString() ?? attrs?["type"]?.ToString() ?? entry["type"]?.ToString() ?? string.Empty,
+                Email = entryEmail.Trim(),
+                Name = attrs?["responsible_name"]?.ToString() ?? attrs?["name"]?.ToString() ?? string.Empty
+              };
+              break;
+            }
+          }
+        }
+        catch
+        {
+          result = null;
+        }
+      }
+
+      if (result == null || string.IsNullOrWhiteSpace(result.Id))
+        logger?.Message($"responsible_email '{normalizedEmail}' did not match any incident supporter for inventory '{inventoryId}'.", 1, "WARN");
+
+      cache[cacheKey] = result;
+      return result;
+    }
+
+    // Resolved incident supporter used as the request's "verantwortlich" (responsible).
+    public class ResponsibleSupporter
+    {
+      public string Id { get; set; } = string.Empty;
+      public string Type { get; set; } = string.Empty;
+      public string Email { get; set; } = string.Empty;
+      public string Name { get; set; } = string.Empty;
+    }
+
     public static string GetRowValue(DataRow row, string columnName)
     {
       if (!row.Table.Columns.Contains(columnName))
@@ -350,11 +484,43 @@ namespace SamedisExternalSync
       return int.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out result);
     }
 
+    private static string s_decimalSeparator = ",";
+    private static NumberFormatInfo s_numberFormat = BuildNumberFormat(",");
+
+    public static string DecimalSeparator
+    {
+      get => s_decimalSeparator;
+      set
+      {
+        var sep = string.IsNullOrEmpty(value) ? "," : value;
+        if (sep != "," && sep != ".")
+          throw new ArgumentException("DecimalSeparator must be either ',' or '.'.", nameof(value));
+        s_decimalSeparator = sep;
+        s_numberFormat = BuildNumberFormat(sep);
+      }
+    }
+
+    public static NumberFormatInfo NumberFormat => s_numberFormat;
+
+    private static NumberFormatInfo BuildNumberFormat(string decimalSeparator)
+    {
+      return new NumberFormatInfo
+      {
+        NumberDecimalSeparator = decimalSeparator,
+        NumberGroupSeparator = decimalSeparator == "," ? "." : ",",
+        CurrencyDecimalSeparator = decimalSeparator,
+        CurrencyGroupSeparator = decimalSeparator == "," ? "." : ",",
+      };
+    }
+
     public static bool TryParseDecimal(string value, out decimal result)
     {
-      if (decimal.TryParse(value, NumberStyles.Number, CultureInfo.InvariantCulture, out result))
-        return true;
-      return decimal.TryParse(value.Replace(',', '.'), NumberStyles.Number, CultureInfo.InvariantCulture, out result);
+      return decimal.TryParse(value, NumberStyles.Number, s_numberFormat, out result);
+    }
+
+    public static string FormatDecimal(decimal value, string format = "F2")
+    {
+      return value.ToString(format, s_numberFormat);
     }
 
     public static bool TryParseLong(string value, out long result)

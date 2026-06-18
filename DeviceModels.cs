@@ -604,11 +604,26 @@ namespace SamedisExternalSync
         }
         else
         {
-          helper.Message(
-            $"Failed to create local device model (title='{normalizedModelTitle}', manufacturer='{normalizedManufacturer}', device_type_title='{normalizedDeviceTypeTitle}', source_id='{contextId}', inventory_number='{inventoryNumber}', status={client.StatusCode} {client.Status}, response_status='{client.LastResponseStatus}', error='{client.LastError}'). Response: {createResponse}",
-            1,
-            "WARN"
-          );
+          // Samedis rejects the create when an identical (tenant or public) model already exists.
+          // In that case the API returns the existing model's id under meta.msg.error_details.duplicate_of
+          // or meta.msg.error_details.public_duplicate_of. We reuse it instead of failing with a WARN.
+          var duplicateId = TryExtractDuplicateModelId(createResponse, out var duplicateKind);
+          if (!string.IsNullOrWhiteSpace(duplicateId))
+          {
+            tenantCatalogId = duplicateId;
+            helper.Message(
+              $"Local device model already existed; reusing {duplicateKind} (title='{normalizedModelTitle}', manufacturer='{normalizedManufacturer}', device_type_title='{normalizedDeviceTypeTitle}', source_id='{contextId}', inventory_number='{inventoryNumber}') -> catalog_id '{tenantCatalogId}'.",
+              1
+            );
+          }
+          else
+          {
+            helper.Message(
+              $"Failed to create local device model (title='{normalizedModelTitle}', manufacturer='{normalizedManufacturer}', device_type_title='{normalizedDeviceTypeTitle}', source_id='{contextId}', inventory_number='{inventoryNumber}', status={client.StatusCode} {client.Status}, response_status='{client.LastResponseStatus}', error='{client.LastError}'). Response: {createResponse}",
+              1,
+              "WARN"
+            );
+          }
         }
       }
 
@@ -625,6 +640,42 @@ namespace SamedisExternalSync
         2
       );
       return tenantCatalogId;
+    }
+
+    private static string? TryExtractDuplicateModelId(string? response, out string duplicateKind)
+    {
+      duplicateKind = string.Empty;
+      if (string.IsNullOrWhiteSpace(response))
+        return null;
+
+      try
+      {
+        var root = JObject.Parse(response);
+        var errorDetails = root.SelectToken("meta.msg.error_details");
+        if (errorDetails == null || errorDetails.Type != JTokenType.Object)
+          return null;
+
+        // Tenant-level duplicate takes precedence over public, because a tenant copy is the closer match.
+        var tenantDuplicate = errorDetails["duplicate_of"]?.ToString();
+        if (!string.IsNullOrWhiteSpace(tenantDuplicate))
+        {
+          duplicateKind = "existing tenant device model (duplicate_of)";
+          return tenantDuplicate;
+        }
+
+        var publicDuplicate = errorDetails["public_duplicate_of"]?.ToString();
+        if (!string.IsNullOrWhiteSpace(publicDuplicate))
+        {
+          duplicateKind = "existing public/shared device model (public_duplicate_of)";
+          return publicDuplicate;
+        }
+      }
+      catch
+      {
+        // Malformed response -- fall through to the regular WARN path.
+      }
+
+      return null;
     }
 
   }
