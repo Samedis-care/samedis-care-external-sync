@@ -473,7 +473,7 @@ namespace SamedisExternalSync
         row["operation_status"] = attr.OperationStatus ?? "";
         row["last_maintenance"] = attr.LastMaintenance ?? "";
         row["next_maintenance"] = attr.NextMaintenance ?? "";
-        row["purchase_price"] = attr.PurchasePrice?.ToString("F2") ?? "";
+        row["purchase_price"] = attr.PurchasePrice.HasValue ? Helper.FormatDecimal(attr.PurchasePrice.Value) : "";
         row["currency_code"] = attr.CurrencyCode ?? "";
         row["depreciation_in_years"] = attr.DepreciationInYears?.ToString() ?? "";
         row["retirement_date"] = attr.RetirementDate ?? "";
@@ -499,17 +499,13 @@ namespace SamedisExternalSync
       string inventoryId,
       string inventoryExternalId,
       string inventoryNumber,
-      string inventoryModelTitle,
-      string inventoryManufacturer,
       bool fallbackByDeviceNumber,
       IDictionary<string, string> inventoryById,
       IDictionary<string, string> inventoryByExternalId,
       IDictionary<string, string> inventoryByDeviceNumber,
-      IDictionary<string, string> inventoryByModelAndManufacturer,
       ISet<string> checkedInventoryIds,
       ISet<string> checkedInventoryExternalIds,
-      ISet<string> checkedInventoryNumbers,
-      ISet<string> checkedInventoryModelAndManufacturer)
+      ISet<string> checkedInventoryNumbers)
     {
       string? candidateId = null;
       string? candidateDeviceNumber = null;
@@ -609,89 +605,67 @@ namespace SamedisExternalSync
         {
           checkedInventoryNumbers.Add(inventoryNumber);
 
-          var filterBuilder = new FilterBuilder();
-          filterBuilder.Clear();
-          filterBuilder.Add("device_number", FilterBuilder.FilterType.Equals, FilterBuilder.Type.Text, inventoryNumber);
-
-          var listResponse = client.Get(
-            resource +
-            $"?page[number]=1&page[limit]=1&variant=regular&gridfilter={filterBuilder.Get()}"
-          );
-          if (client.StatusCode == 200 && !string.IsNullOrWhiteSpace(listResponse))
+          var resolvedByDeviceNumberId = ResolveInventoryIdByDeviceNumber(client, resource, inventoryNumber, inventoryByDeviceNumber);
+          if (!string.IsNullOrWhiteSpace(resolvedByDeviceNumberId))
           {
-            var listRoot = JsonConvert.DeserializeObject<Root>(listResponse);
-            var resolvedByDeviceNumber = listRoot?.Data?.FirstOrDefault();
-            var resolvedByDeviceNumberId = resolvedByDeviceNumber?.Attributes?.Id ?? resolvedByDeviceNumber?.Id;
-            if (!string.IsNullOrWhiteSpace(resolvedByDeviceNumberId))
-            {
-              inventoryById[resolvedByDeviceNumberId] = resolvedByDeviceNumberId;
-              inventoryByDeviceNumber[inventoryNumber] = resolvedByDeviceNumberId;
-              return resolvedByDeviceNumberId;
-            }
+            inventoryById[resolvedByDeviceNumberId] = resolvedByDeviceNumberId;
+            return resolvedByDeviceNumberId;
           }
-
-          inventoryByDeviceNumber[inventoryNumber] = string.Empty;
         }
       }
-
-      if (!string.IsNullOrWhiteSpace(candidateId))
-        return candidateId;
-
-      if (string.IsNullOrWhiteSpace(inventoryModelTitle))
-        return candidateId;
-
-      var normalizedModelTitle = inventoryModelTitle.Trim();
-      var normalizedManufacturer = inventoryManufacturer?.Trim() ?? string.Empty;
-      var modelManufacturerKey = $"{normalizedModelTitle}|{normalizedManufacturer}";
-
-      if (inventoryByModelAndManufacturer.TryGetValue(modelManufacturerKey, out var cachedByModelManufacturer))
-        return string.IsNullOrWhiteSpace(cachedByModelManufacturer) ? candidateId : cachedByModelManufacturer;
-
-      if (checkedInventoryModelAndManufacturer.Contains(modelManufacturerKey))
-        return candidateId;
-
-      checkedInventoryModelAndManufacturer.Add(modelManufacturerKey);
-
-      string? ResolveByModelAndManufacturer(string? manufacturerField, string? manufacturerValue)
-      {
-        var filterBuilder = new FilterBuilder();
-        filterBuilder.Clear();
-        filterBuilder.Add("device_model_title", FilterBuilder.FilterType.Equals, FilterBuilder.Type.Text, normalizedModelTitle);
-        if (!string.IsNullOrWhiteSpace(manufacturerField) && !string.IsNullOrWhiteSpace(manufacturerValue))
-          filterBuilder.Add(manufacturerField, FilterBuilder.FilterType.Equals, FilterBuilder.Type.Text, manufacturerValue);
-
-        var listResponse = client.Get(
-          resource +
-          $"?page[number]=1&page[limit]=1&variant=regular&gridfilter={filterBuilder.Get()}"
-        );
-        if (client.StatusCode != 200 || string.IsNullOrWhiteSpace(listResponse))
-          return null;
-
-        var listRoot = JsonConvert.DeserializeObject<Root>(listResponse);
-        var found = listRoot?.Data?.FirstOrDefault();
-        var foundId = found?.Attributes?.Id ?? found?.Id;
-        return string.IsNullOrWhiteSpace(foundId) ? null : foundId;
-      }
-
-      string? resolvedByModelAndManufacturer = null;
-      if (!string.IsNullOrWhiteSpace(normalizedManufacturer))
-      {
-        resolvedByModelAndManufacturer = ResolveByModelAndManufacturer("device_model_manufacturer_according_to_type_plate", normalizedManufacturer);
-        resolvedByModelAndManufacturer ??= ResolveByModelAndManufacturer("device_model_current_responsible_manufacturer", normalizedManufacturer);
-      }
-      else
-      {
-        resolvedByModelAndManufacturer = ResolveByModelAndManufacturer(null, null);
-      }
-
-      inventoryByModelAndManufacturer[modelManufacturerKey] = resolvedByModelAndManufacturer ?? string.Empty;
-      if (!string.IsNullOrWhiteSpace(resolvedByModelAndManufacturer))
-      {
-        inventoryById[resolvedByModelAndManufacturer] = resolvedByModelAndManufacturer;
-        return resolvedByModelAndManufacturer;
-      }
-
       return candidateId;
+    }
+
+    // Canonical inventory lookup by device_number (a.k.a. inventory_number). Shared by the
+    // inventories import as well as the tasks and requests uploads so the lookup lives in one
+    // place. Caches both hits and misses (empty string) in inventoryByDeviceNumber.
+    public static string ResolveInventoryIdByDeviceNumber(
+      RequestData client,
+      string resource,
+      string deviceNumber,
+      IDictionary<string, string> inventoryByDeviceNumber)
+    {
+      if (string.IsNullOrWhiteSpace(deviceNumber))
+        return string.Empty;
+
+      var normalizedDeviceNumber = deviceNumber.Trim();
+      if (inventoryByDeviceNumber.TryGetValue(normalizedDeviceNumber, out var cachedInventoryId))
+        return cachedInventoryId;
+
+      var filterBuilder = new FilterBuilder();
+      filterBuilder.Clear();
+      filterBuilder.Add("device_number", FilterBuilder.FilterType.Equals, FilterBuilder.Type.Text, normalizedDeviceNumber);
+
+      var listResponse = client.Get(
+        resource +
+        $"?page[number]=1&page[limit]=1&variant=regular&gridfilter={filterBuilder.Get()}"
+      );
+
+      var resolvedInventoryId = string.Empty;
+      if (client.StatusCode >= 200 && client.StatusCode < 300 && !string.IsNullOrWhiteSpace(listResponse))
+      {
+        var listRoot = JsonConvert.DeserializeObject<Root>(listResponse);
+        var first = listRoot?.Data?.FirstOrDefault();
+        resolvedInventoryId = first?.Attributes?.Id ?? first?.Id ?? string.Empty;
+      }
+
+      inventoryByDeviceNumber[normalizedDeviceNumber] = resolvedInventoryId;
+      return resolvedInventoryId;
+    }
+
+    // Resolves an inventory id from a samedis inventory id when provided, otherwise falls back
+    // to a device_number lookup. Used by the requests upload.
+    public static string ResolveInventoryIdByIdOrDeviceNumber(
+      RequestData client,
+      string resource,
+      string inventoryId,
+      string deviceNumber,
+      IDictionary<string, string> inventoryByDeviceNumber)
+    {
+      if (!string.IsNullOrWhiteSpace(inventoryId))
+        return inventoryId.Trim();
+
+      return ResolveInventoryIdByDeviceNumber(client, resource, deviceNumber, inventoryByDeviceNumber);
     }
 
     public static Dictionary<string, object> BuildInventoryAttributes(
@@ -1052,6 +1026,206 @@ namespace SamedisExternalSync
         return string.Empty;
 
       return value.Trim().ToUpperInvariant();
+    }
+
+    /// <summary>
+    /// Returns true if a 4xx API response indicates the device is retired and
+    /// therefore the regular update endpoint refused the request.
+    /// The API returns HTTP 400 with meta.msg.message = "Device retired.".
+    /// </summary>
+    public static bool IsDeviceRetiredError(string? response)
+    {
+      if (string.IsNullOrWhiteSpace(response))
+        return false;
+
+      try
+      {
+        var root = JObject.Parse(response);
+        var message = root.SelectToken("meta.msg.message")?.ToString();
+        if (string.IsNullOrWhiteSpace(message))
+          return false;
+
+        // Tolerant comparison; samedis currently returns "Device retired."
+        return message.Trim().StartsWith("Device retired", StringComparison.OrdinalIgnoreCase);
+      }
+      catch
+      {
+        return false;
+      }
+    }
+
+    /// <summary>
+    /// Creates a completed "recommission_device" issue, which the samedis API
+    /// uses to flip a retired device back to active. After this call succeeds
+    /// the inventory update endpoint will accept normal PUT requests again.
+    /// Returns the raw response on success, null on failure.
+    /// </summary>
+    public static string? PostRecommissionIssue(
+      RequestData client,
+      string issuesResource,
+      string inventoryId,
+      string inventoryNumber,
+      string inventoryTitle,
+      Helper helper)
+    {
+      if (string.IsNullOrWhiteSpace(inventoryId))
+        return null;
+
+      var today = DateTime.UtcNow.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
+      var safeTitle = string.IsNullOrWhiteSpace(inventoryTitle) ? inventoryNumber : inventoryTitle;
+
+      // NOTE: inventory_operation_status is "cached from inventory" per the API
+      // doc and does NOT drive the status change -- the recommission_device issue
+      // type itself flips the device back to active, so we must not send it here.
+      var payload = JsonConvert.SerializeObject(new
+      {
+        data = new Dictionary<string, object?>
+        {
+          ["inventory_id"] = inventoryId,
+          ["issue_type"] = "recommission_device",
+          ["title"] = $"Auto-recommission via external sync ({safeTitle})",
+          ["status"] = "done",
+          ["date"] = today,
+          ["done_at"] = today
+        }
+      });
+
+      var response = client.Post(issuesResource, payload);
+      if (client.StatusCode >= 200 && client.StatusCode < 300)
+      {
+        helper.Message(
+          $"Recommission issue created for inventory (inventory_number='{inventoryNumber}', id='{inventoryId}').",
+          2
+        );
+        return response;
+      }
+
+      helper.Message(
+        $"Recommission issue creation failed (inventory_number='{inventoryNumber}', id='{inventoryId}', status={client.StatusCode}). Response: {response}",
+        1,
+        "WARN"
+      );
+      return null;
+    }
+
+    /// <summary>
+    /// Creates a completed "device_retired" issue, which is the canonical samedis
+    /// way to retire ("ausmustern") a device. Setting operation_status / retirement_date
+    /// directly on the inventory is not sufficient (retirement_date is read-only and a
+    /// status-only retirement is not reversible via recommission_device). Going through
+    /// the issue keeps the retirement reversible later.
+    /// Returns the raw response on success, null when no inventory id was provided.
+    /// The caller inspects <paramref name="client"/>.StatusCode for success/already-retired.
+    /// </summary>
+    public static string? PostDeviceRetiredIssue(
+      RequestData client,
+      string issuesResource,
+      string inventoryId,
+      string inventoryNumber,
+      string inventoryTitle,
+      string? retirementDate,
+      Helper helper,
+      bool deleteOpenTasks = true)
+    {
+      if (string.IsNullOrWhiteSpace(inventoryId))
+        return null;
+
+      var date = string.IsNullOrWhiteSpace(retirementDate)
+        ? DateTime.UtcNow.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture)
+        : retirementDate;
+      var safeTitle = string.IsNullOrWhiteSpace(inventoryTitle) ? inventoryNumber : inventoryTitle;
+
+      var payload = JsonConvert.SerializeObject(new
+      {
+        data = new Dictionary<string, object?>
+        {
+          ["inventory_id"] = inventoryId,
+          ["issue_type"] = "device_retired",
+          ["title"] = $"Auto-retire via external sync ({safeTitle})",
+          ["status"] = "done",
+          ["date"] = date,
+          ["done_at"] = date,
+          // Mirrors the backend's Inventory#auto_retire!: without this the backend
+          // rejects retirement ("inventory_cannot_be_retired") whenever the device
+          // still has open (not-done) issues. true deletes those open issues first.
+          // For the normalize-before-recommission case we pass false so we never
+          // destroy the open issues of a device we are about to reactivate.
+          ["delete_currently_open_tasks"] = deleteOpenTasks,
+          // Confirmation field for devices configured to contain patient data;
+          // harmless otherwise.
+          ["patient_data_securely_removed"] = true
+        }
+      });
+
+      var response = client.Post(issuesResource, payload);
+      if (client.StatusCode >= 200 && client.StatusCode < 300)
+      {
+        helper.Message(
+          $"Device_retired issue created for inventory (inventory_number='{inventoryNumber}', id='{inventoryId}').",
+          2
+        );
+      }
+
+      return response;
+    }
+
+    /// <summary>
+    /// Fetches the inventory and returns its current device_retired flag. Used to
+    /// avoid creating duplicate device_retired issues on every sync run for devices
+    /// that are already retired (the backend would otherwise happily create another
+    /// done device_retired issue without changing anything).
+    /// Returns false when the inventory cannot be fetched.
+    /// </summary>
+    public static bool IsInventoryDeviceRetired(
+      RequestData client,
+      string inventoryResource,
+      string inventoryId)
+    {
+      if (string.IsNullOrWhiteSpace(inventoryId))
+        return false;
+
+      var response = client.Get(inventoryResource + "/" + Uri.EscapeDataString(inventoryId));
+      if (client.StatusCode != 200 || string.IsNullOrWhiteSpace(response))
+        return false;
+
+      try
+      {
+        var root = JsonConvert.DeserializeObject<Root>(response);
+        return root?.Data?.FirstOrDefault()?.Attributes?.DeviceRetired ?? false;
+      }
+      catch
+      {
+        return false;
+      }
+    }
+
+    /// <summary>
+    /// Returns true if a 4xx API response indicates the device is already retired,
+    /// so a repeated device_retired issue is a no-op rather than an error.
+    /// </summary>
+    public static bool IsAlreadyRetiredError(string? response)
+    {
+      if (string.IsNullOrWhiteSpace(response))
+        return false;
+
+      try
+      {
+        var root = JObject.Parse(response);
+        var message = root.SelectToken("meta.msg.message")?.ToString();
+        if (string.IsNullOrWhiteSpace(message))
+          return false;
+
+        var trimmed = message.Trim();
+        // Tolerant: samedis may return "Device retired." or a message containing
+        // "already retired" when the device is already in the retired state.
+        return trimmed.StartsWith("Device retired", StringComparison.OrdinalIgnoreCase)
+          || trimmed.IndexOf("already retired", StringComparison.OrdinalIgnoreCase) >= 0
+          || trimmed.IndexOf("is retired", StringComparison.OrdinalIgnoreCase) >= 0;
+      }
+      catch
+      {
+        return false;
+      }
     }
 
   }
