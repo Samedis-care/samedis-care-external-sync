@@ -18,7 +18,7 @@ namespace SamedisExternalSync
         return string.Empty;
 
       var baseUrl = (string.IsNullOrWhiteSpace(webBaseUrl) ? DefaultWebBaseUrl : webBaseUrl).Trim().TrimEnd('/');
-      return $"{baseUrl}/{tenantId.Trim()}/incidents/{requestId.Trim()}";
+      return $"{baseUrl}/{tenantId.Trim()}/devices/requests/{requestId.Trim()}";
     }
 
     public static readonly string[] MessageUploadRequiredColumns = ["id", "incident_id", "incident_number", "content"];
