@@ -1226,6 +1226,7 @@ internal class Program
       var contactsResource = $"/api/{samedisApiVersion}/tenants/{samedisTenantId}/contacts";
       var issuesResource = $"/api/{samedisApiVersion}/tenants/{samedisTenantId}/issues";
       var createLocalDeviceModelsOnInventoryLookup = config.Sync.CreateLocalDeviceModelsOnInventoryLookup;
+      var resolveServicePartnerCompany = config.Sync.InventoriesUploadResolveServicePartnerCompany;
       var inventoryCsvPath = Path.Combine(uploadRoot, "inventories.csv");
       var departmentsCsvPath = Path.Combine(uploadRoot, "departments.csv");
 
@@ -2462,6 +2463,39 @@ internal class Program
             var attributes = Inventories.BuildInventoryAttributes(row, departmentId, locationId, catalogId, isCreateOperation);
             if (!isCreateOperation)
               attributes.Remove("comments_field");
+
+            if (resolveServicePartnerCompany)
+            {
+              var servicePartnerName = Helper.GetRowValue(row, "service_partner");
+              if (!string.IsNullOrWhiteSpace(servicePartnerName))
+              {
+                var servicePartnerCompanyId = Contacts.ResolveCompanyContactId(
+                  samedisClient,
+                  contactsResource,
+                  servicePartnerName,
+                  false,
+                  manufacturersByName,
+                  checkedManufacturers,
+                  helper,
+                  rowId,
+                  inventoryTitle
+                );
+
+                if (!string.IsNullOrWhiteSpace(servicePartnerCompanyId))
+                {
+                  var serviceCompanyIds = attributes.TryGetValue("service_company_ids", out var existingIds) && existingIds is List<string> ids
+                    ? ids
+                    : new List<string>();
+                  if (!serviceCompanyIds.Contains(servicePartnerCompanyId))
+                    serviceCompanyIds.Add(servicePartnerCompanyId);
+                  attributes["service_company_ids"] = serviceCompanyIds;
+                }
+                else
+                {
+                  helper.Message($"service_partner company '{servicePartnerName}' konnte nicht aufgelöst werden (id='{rowId}', inventory_number='{inventoryNumber}') – wird ohne Service-Company hochgeladen.", 2, "WARN");
+                }
+              }
+            }
 
             if (attributes.Count == 0)
             {

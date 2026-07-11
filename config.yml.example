@@ -28,6 +28,8 @@ sync:
   create_local_device_models_on_inventory_lookup: false
   inventories_upload_create_departments_on_the_fly: false
   inventories_upload_create_locations_on_the_fly: false
+  # if true: resolve service_partner name to a company contact id (scope public_and_tenant) and add it to service_company_ids
+  inventories_upload_resolve_service_partner_company: false
   tasks_download: false
   tasks_upload: false
   # if true: for failed maintenance tasks, send inventory_operation_status=limited_use in task payload
