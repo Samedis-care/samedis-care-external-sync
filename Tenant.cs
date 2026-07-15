@@ -124,12 +124,19 @@ namespace SamedisExternalSync
 
       if (client.StatusCode < 200 || client.StatusCode >= 300 || string.IsNullOrWhiteSpace(response))
       {
+        // GET /user/tenants/{id} is gated on the API user's facility-data access
+        // for the tenant; a 401/403 here usually means that permission is missing
+        // while all regular /tenants/{id}/... data calls still work.
         helper.Message(
-          $"Tenant settings request failed ({client.StatusCode}). Fallback to defaults: location_mode=standard, use_profit_centers=false.",
+          $"Tenant settings request failed ({client.StatusCode}) for GET {resource}."
+          + (client.StatusCode == 401 || client.StatusCode == 403
+              ? " The sync user likely lacks facility-data access on this tenant."
+              : string.Empty)
+          + " Trying get_current_user fallback.",
           1,
           "WARN"
         );
-        return new Settings { TenantId = tenantId };
+        return GetSettingsViaCurrentUser(client, apiVersion, tenantId, helper);
       }
 
       var root = JsonConvert.DeserializeObject<Root>(response);
@@ -137,11 +144,11 @@ namespace SamedisExternalSync
       if (attributes == null)
       {
         helper.Message(
-          "Tenant settings response had no attributes. Fallback to defaults: location_mode=standard, use_profit_centers=false.",
+          "Tenant settings response had no attributes. Trying get_current_user fallback.",
           1,
           "WARN"
         );
-        return new Settings { TenantId = tenantId };
+        return GetSettingsViaCurrentUser(client, apiVersion, tenantId, helper);
       }
 
       return new Settings
@@ -151,6 +158,61 @@ namespace SamedisExternalSync
         UseExtendedDeviceLocations = attributes.UseExtendedDeviceLocations,
         UseProfitCenters = attributes.UseProfitCenters,
       };
+    }
+
+    // Fallback: GET /api/{v}/get_current_user lists the user's tenants without
+    // requiring facility-data access. The tenant entries carry
+    // use_extended_device_locations but NOT use_profit_centers, so profit
+    // centers stay disabled on this path and that limitation is logged loudly.
+    private static Settings GetSettingsViaCurrentUser(RequestData client, string apiVersion, string tenantId, Helper helper)
+    {
+      var resource = $"/api/{apiVersion}/get_current_user";
+      var response = client.Get(resource);
+
+      if (client.StatusCode >= 200 && client.StatusCode < 300 && !string.IsNullOrWhiteSpace(response))
+      {
+        try
+        {
+          var tenants = JObject.Parse(response).SelectToken("data.current_user.tenants") as JArray;
+          var tenant = tenants?.FirstOrDefault(t => string.Equals(t["id"]?.ToString(), tenantId, StringComparison.OrdinalIgnoreCase));
+          if (tenant != null)
+          {
+            var useExtendedDeviceLocations = tenant["use_extended_device_locations"]?.Type == JTokenType.Boolean
+              && tenant.Value<bool>("use_extended_device_locations");
+            helper.Message(
+              $"Tenant settings resolved via get_current_user (location_mode={(useExtendedDeviceLocations ? "property" : "standard")}). "
+              + "This endpoint does not expose use_profit_centers -- profit centers are DISABLED for this run; "
+              + "grant the sync user facility-data access on the tenant if it uses profit centers.",
+              1,
+              "WARN"
+            );
+            return new Settings
+            {
+              TenantId = tenantId,
+              Name = tenant["full_name"]?.ToString() ?? tenant["name"]?.ToString() ?? string.Empty,
+              UseExtendedDeviceLocations = useExtendedDeviceLocations,
+            };
+          }
+
+          helper.Message(
+            $"get_current_user did not list tenant {tenantId} for the sync user.",
+            1,
+            "WARN"
+          );
+        }
+        catch (JsonException)
+        {
+          // fall through to the defaults warning below
+        }
+      }
+
+      helper.Message(
+        "Tenant settings unavailable. Fallback to defaults: location_mode=standard, use_profit_centers=false -- "
+        + "if the tenant uses profit centers or property locations, this run will sync them WRONGLY; fix the sync user's permissions first.",
+        1,
+        "WARN"
+      );
+      return new Settings { TenantId = tenantId };
     }
   }
 }

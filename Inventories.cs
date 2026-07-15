@@ -508,7 +508,6 @@ namespace SamedisExternalSync
       ISet<string> checkedInventoryNumbers)
     {
       string? candidateId = null;
-      string? candidateDeviceNumber = null;
       var normalizedExternalId = inventoryExternalId?.Trim() ?? string.Empty;
 
       if (!string.IsNullOrWhiteSpace(inventoryId))
@@ -533,10 +532,7 @@ namespace SamedisExternalSync
             var detailRoot = string.IsNullOrEmpty(detailResponse) ? null : JsonConvert.DeserializeObject<Inventories.Root>(detailResponse);
             var resolvedDeviceNumber = detailRoot?.Data?.FirstOrDefault()?.Attributes?.DeviceNumber;
             if (!string.IsNullOrWhiteSpace(resolvedDeviceNumber))
-            {
               inventoryByDeviceNumber[resolvedDeviceNumber] = resolvedId;
-              candidateDeviceNumber = resolvedDeviceNumber;
-            }
 
             candidateId = resolvedId;
           }
@@ -573,10 +569,7 @@ namespace SamedisExternalSync
               var detailRoot = string.IsNullOrEmpty(detailResponse) ? null : JsonConvert.DeserializeObject<Inventories.Root>(detailResponse);
               var resolvedDeviceNumber = detailRoot?.Data?.FirstOrDefault()?.Attributes?.DeviceNumber;
               if (!string.IsNullOrWhiteSpace(resolvedDeviceNumber))
-              {
                 inventoryByDeviceNumber[resolvedDeviceNumber] = resolvedByExternalId;
-                candidateDeviceNumber = resolvedDeviceNumber;
-              }
             }
           }
           else
@@ -589,12 +582,16 @@ namespace SamedisExternalSync
       if (!string.IsNullOrWhiteSpace(candidateId) && !string.IsNullOrWhiteSpace(normalizedExternalId))
         inventoryByExternalId[normalizedExternalId] = candidateId;
 
-      if (!string.IsNullOrWhiteSpace(candidateId) &&
-          !string.IsNullOrWhiteSpace(candidateDeviceNumber) &&
-          string.Equals(candidateDeviceNumber, inventoryNumber, StringComparison.OrdinalIgnoreCase))
-      {
+      // A samedis-id or external_id match is authoritative even when the row's
+      // inventory number differs: external_id is the stable cross-system anchor
+      // and the source may deliver a changed inventory number for the same
+      // device (the update reconciles the number). Falling through to the
+      // device-number lookup instead would pick a DIFFERENT record and the
+      // update would try to move the row's external_id onto it -- rejected as a
+      // duplicate-key error by the collation-insensitive unique index on
+      // (tenant_id, external_id).
+      if (!string.IsNullOrWhiteSpace(candidateId))
         return candidateId;
-      }
 
       if (fallbackByDeviceNumber && !string.IsNullOrWhiteSpace(inventoryNumber))
       {
