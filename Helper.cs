@@ -298,7 +298,10 @@ namespace SamedisExternalSync
         return "";
 
       var normalizedId = id.Trim();
-      var requestResource = resource + "/via/external_id/" + normalizedId;
+      // External ids come straight from the source CSV and may contain characters
+      // that break the URL path (spaces, '/', '#', '?') -- encode them so the
+      // lookup does not silently miss and cause a duplicate-key create later.
+      var requestResource = resource + "/via/external_id/" + Uri.EscapeDataString(normalizedId);
       var check = client.Get(requestResource);
       if (client.StatusCode == 200 && !string.IsNullOrWhiteSpace(check))
       {
