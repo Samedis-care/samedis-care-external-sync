@@ -2686,6 +2686,19 @@ internal class Program
                     recommissionedCount++;
                     recommissionRetrySucceeded = true;
                   }
+                  else
+                  {
+                    // Level 1 on purpose: without this line a failed retry is
+                    // indistinguishable in the default log from the recommission
+                    // path never having engaged (all other recommission messages
+                    // are level 2).
+                    helper.Message(
+                      $"Recommission issue was created but the update retry was still rejected (id='{recommissionInventoryId}', inventory_number='{inventoryNumber}', status={samedisClient.StatusCode}). "
+                      + "The device likely remains retired in samedis (recommission_device issue did not clear the retirement) -- needs backend investigation.",
+                      1,
+                      "WARN"
+                    );
+                  }
                 }
               }
 
