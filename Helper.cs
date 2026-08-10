@@ -577,9 +577,9 @@ namespace SamedisExternalSync
       return type.IsValueType ? Activator.CreateInstance(type) : null;
     }
 
-    internal string MessageAndExit(string errorMessage)
+    internal string MessageAndExit(string errorMessage, string logType = "ERROR")
     {
-      Message(errorMessage, 1);
+      Message(errorMessage, 1, logType);
       Environment.Exit(1);
       return null; // Unreachable Code, just for compiler
     }

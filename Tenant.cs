@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 
@@ -122,33 +123,39 @@ namespace SamedisExternalSync
       var resource = $"/api/{apiVersion}/user/tenants/{tenantId}";
       var response = client.Get(resource);
 
+      // This endpoint only requires authentication and membership in the tenant
+      // (`show` is a public cando), so a failure here is a configuration or
+      // connectivity problem -- never a missing permission the sync could work
+      // around. There is deliberately no fallback: guessing use_profit_centers
+      // or use_extended_device_locations sends every inventory down the wrong
+      // location/profit-center path and corrupts the tenant's data silently.
       if (client.StatusCode < 200 || client.StatusCode >= 300 || string.IsNullOrWhiteSpace(response))
       {
-        // GET /user/tenants/{id} is gated on the API user's facility-data access
-        // for the tenant; a 401/403 here usually means that permission is missing
-        // while all regular /tenants/{id}/... data calls still work.
-        helper.Message(
-          $"Tenant settings request failed ({client.StatusCode}) for GET {resource}."
-          + (client.StatusCode == 401 || client.StatusCode == 403
-              ? " The sync user likely lacks facility-data access on this tenant."
-              : string.Empty)
-          + " Trying get_current_user fallback.",
-          1,
-          "WARN"
+        var reason = client.StatusCode switch
+        {
+          401 => " The sync user is not authenticated -- the API rejected the bearer token."
+                 + " Re-authenticate and check authentication.client_id and authentication.client_secret in config.yml.",
+          403 => " The sync user is authenticated but is not a member of this tenant."
+                 + " Check samedis.tenant_id in config.yml and the user's tenant assignment.",
+          _ => string.Empty
+        };
+        helper.MessageAndExit(
+          $"Sync stopped. Tenant settings request failed ({client.StatusCode}) for GET {resource}.{reason}"
+          + ApiErrorSuffix(response)
         );
-        return GetSettingsViaCurrentUser(client, apiVersion, tenantId, helper);
+        throw new UnreachableException();
       }
 
       var root = JsonConvert.DeserializeObject<Root>(response);
       var attributes = root?.Data?.Attributes;
       if (attributes == null)
       {
-        helper.Message(
-          "Tenant settings response had no attributes. Trying get_current_user fallback.",
-          1,
-          "WARN"
+        helper.MessageAndExit(
+          $"Sync stopped. Tenant settings response from GET {resource} could not be parsed (no attributes)."
+          + " Tenant settings must not be guessed -- fix the API response before syncing."
+          + ApiErrorSuffix(response)
         );
-        return GetSettingsViaCurrentUser(client, apiVersion, tenantId, helper);
+        throw new UnreachableException();
       }
 
       return new Settings
@@ -160,59 +167,22 @@ namespace SamedisExternalSync
       };
     }
 
-    // Fallback: GET /api/{v}/get_current_user lists the user's tenants without
-    // requiring facility-data access. The tenant entries carry
-    // use_extended_device_locations but NOT use_profit_centers, so profit
-    // centers stay disabled on this path and that limitation is logged loudly.
-    private static Settings GetSettingsViaCurrentUser(RequestData client, string apiVersion, string tenantId, Helper helper)
+    // The API reports the actual cause in meta.msg.message; append it when the
+    // body is parseable so the operator does not have to reproduce the request.
+    private static string ApiErrorSuffix(string? response)
     {
-      var resource = $"/api/{apiVersion}/get_current_user";
-      var response = client.Get(resource);
+      if (string.IsNullOrWhiteSpace(response))
+        return string.Empty;
 
-      if (client.StatusCode >= 200 && client.StatusCode < 300 && !string.IsNullOrWhiteSpace(response))
+      try
       {
-        try
-        {
-          var tenants = JObject.Parse(response).SelectToken("data.current_user.tenants") as JArray;
-          var tenant = tenants?.FirstOrDefault(t => string.Equals(t["id"]?.ToString(), tenantId, StringComparison.OrdinalIgnoreCase));
-          if (tenant != null)
-          {
-            var useExtendedDeviceLocations = tenant["use_extended_device_locations"]?.Type == JTokenType.Boolean
-              && tenant.Value<bool>("use_extended_device_locations");
-            helper.Message(
-              $"Tenant settings resolved via get_current_user (location_mode={(useExtendedDeviceLocations ? "property" : "standard")}). "
-              + "This endpoint does not expose use_profit_centers -- profit centers are DISABLED for this run; "
-              + "grant the sync user facility-data access on the tenant if it uses profit centers.",
-              1,
-              "WARN"
-            );
-            return new Settings
-            {
-              TenantId = tenantId,
-              Name = tenant["full_name"]?.ToString() ?? tenant["name"]?.ToString() ?? string.Empty,
-              UseExtendedDeviceLocations = useExtendedDeviceLocations,
-            };
-          }
-
-          helper.Message(
-            $"get_current_user did not list tenant {tenantId} for the sync user.",
-            1,
-            "WARN"
-          );
-        }
-        catch (JsonException)
-        {
-          // fall through to the defaults warning below
-        }
+        var message = JsonConvert.DeserializeObject<JsonGeneric.Root>(response)?.Meta?.Msg?.Message;
+        return string.IsNullOrWhiteSpace(message) ? string.Empty : $" API message: {message}";
       }
-
-      helper.Message(
-        "Tenant settings unavailable. Fallback to defaults: location_mode=standard, use_profit_centers=false -- "
-        + "if the tenant uses profit centers or property locations, this run will sync them WRONGLY; fix the sync user's permissions first.",
-        1,
-        "WARN"
-      );
-      return new Settings { TenantId = tenantId };
+      catch (JsonException)
+      {
+        return string.Empty;
+      }
     }
   }
 }
