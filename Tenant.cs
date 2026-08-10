@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 
@@ -122,26 +123,39 @@ namespace SamedisExternalSync
       var resource = $"/api/{apiVersion}/user/tenants/{tenantId}";
       var response = client.Get(resource);
 
+      // This endpoint only requires authentication and membership in the tenant
+      // (`show` is a public cando), so a failure here is a configuration or
+      // connectivity problem -- never a missing permission the sync could work
+      // around. There is deliberately no fallback: guessing use_profit_centers
+      // or use_extended_device_locations sends every inventory down the wrong
+      // location/profit-center path and corrupts the tenant's data silently.
       if (client.StatusCode < 200 || client.StatusCode >= 300 || string.IsNullOrWhiteSpace(response))
       {
-        helper.Message(
-          $"Tenant settings request failed ({client.StatusCode}). Fallback to defaults: location_mode=standard, use_profit_centers=false.",
-          1,
-          "WARN"
+        var reason = client.StatusCode switch
+        {
+          401 => " The sync user is not authenticated -- the API rejected the bearer token."
+                 + " Re-authenticate and check authentication.client_id and authentication.client_secret in config.yml.",
+          403 => " The sync user is authenticated but is not a member of this tenant."
+                 + " Check samedis.tenant_id in config.yml and the user's tenant assignment.",
+          _ => string.Empty
+        };
+        helper.MessageAndExit(
+          $"Sync stopped. Tenant settings request failed ({client.StatusCode}) for GET {resource}.{reason}"
+          + ApiErrorSuffix(response)
         );
-        return new Settings { TenantId = tenantId };
+        throw new UnreachableException();
       }
 
       var root = JsonConvert.DeserializeObject<Root>(response);
       var attributes = root?.Data?.Attributes;
       if (attributes == null)
       {
-        helper.Message(
-          "Tenant settings response had no attributes. Fallback to defaults: location_mode=standard, use_profit_centers=false.",
-          1,
-          "WARN"
+        helper.MessageAndExit(
+          $"Sync stopped. Tenant settings response from GET {resource} could not be parsed (no attributes)."
+          + " Tenant settings must not be guessed -- fix the API response before syncing."
+          + ApiErrorSuffix(response)
         );
-        return new Settings { TenantId = tenantId };
+        throw new UnreachableException();
       }
 
       return new Settings
@@ -151,6 +165,24 @@ namespace SamedisExternalSync
         UseExtendedDeviceLocations = attributes.UseExtendedDeviceLocations,
         UseProfitCenters = attributes.UseProfitCenters,
       };
+    }
+
+    // The API reports the actual cause in meta.msg.message; append it when the
+    // body is parseable so the operator does not have to reproduce the request.
+    private static string ApiErrorSuffix(string? response)
+    {
+      if (string.IsNullOrWhiteSpace(response))
+        return string.Empty;
+
+      try
+      {
+        var message = JsonConvert.DeserializeObject<JsonGeneric.Root>(response)?.Meta?.Msg?.Message;
+        return string.IsNullOrWhiteSpace(message) ? string.Empty : $" API message: {message}";
+      }
+      catch (JsonException)
+      {
+        return string.Empty;
+      }
     }
   }
 }
