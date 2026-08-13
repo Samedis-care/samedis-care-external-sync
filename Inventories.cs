@@ -708,7 +708,15 @@ namespace SamedisExternalSync
       Helper.AddStringAttribute(attributes, "service_partner", Helper.GetRowValue(row, "service_partner"));
       Helper.AddStringAttribute(attributes, "comments_field", Helper.GetRowValue(row, "comments_field"));
       Helper.AddStringAttribute(attributes, "operation_status", NormalizeOperationStatus(Helper.GetRowValue(row, "operation_status")));
-      Helper.AddStringAttribute(attributes, "retirement_date", Helper.NormalizeDate(Helper.GetRowValue(row, "retirement_date")));
+      // retirement_date is deliberately NOT part of the payload. The backend derives the
+      // retirement flag from it on every save (Inventory#update_reference_columns:
+      // `self.device_retired = retirement_date.present?`, followed by
+      // set_operation_status_on_retire forcing operation_status='retired'). Sending the
+      // CSV value therefore RE-RETIRES the device on every successful update -- including
+      // the retry right after a recommission -- which is what produced the endless
+      // active <-> retired oscillation on the UKT tenant. Retirement is expressed
+      // exclusively through device_retired / recommission_device issues; the CSV value is
+      // only used as the issue date (see PostDeviceRetiredIssue callers).
       Helper.AddStringAttribute(attributes, "status", NormalizeStatus(Helper.GetRowValue(row, "status")));
       Helper.AddStringAttribute(attributes, "ownership", NormalizeOwnership(Helper.GetRowValue(row, "ownership")));
       Helper.AddStringAttribute(attributes, "currency_code", NormalizeCurrency(Helper.GetRowValue(row, "currency_code")));
@@ -1107,10 +1115,12 @@ namespace SamedisExternalSync
 
     /// <summary>
     /// Creates a completed "device_retired" issue, which is the canonical samedis
-    /// way to retire ("ausmustern") a device. Setting operation_status / retirement_date
-    /// directly on the inventory is not sufficient (retirement_date is read-only and a
-    /// status-only retirement is not reversible via recommission_device). Going through
-    /// the issue keeps the retirement reversible later.
+    /// way to retire ("ausmustern") a device. Writing retirement_date on the inventory
+    /// would also retire it (the backend derives device_retired from that field), but it
+    /// leaves operation_status inconsistent for the recommission path and is not
+    /// reversible -- so retirement must always go through this issue.
+    /// Second use: normalizing a device whose device_retired=true does not match its
+    /// operation_status, so that a following recommission_device issue takes effect.
     /// Returns the raw response on success, null when no inventory id was provided.
     /// The caller inspects <paramref name="client"/>.StatusCode for success/already-retired.
     /// </summary>
@@ -1189,6 +1199,51 @@ namespace SamedisExternalSync
       {
         var root = JsonConvert.DeserializeObject<Root>(response);
         return root?.Data?.FirstOrDefault()?.Attributes?.DeviceRetired ?? false;
+      }
+      catch
+      {
+        return false;
+      }
+    }
+
+    /// <summary>
+    /// Fetches the inventory and reports the two fields that drive retirement:
+    /// device_retired (the flag the update endpoint validates against) and
+    /// operation_status. Both are needed because a recommission_device issue only
+    /// has an effect when operation_status is 'retired' -- see
+    /// Issue#update_operation_status! in the backend, which bails out unless the
+    /// issue's cached inventory_operation_status actually changes. A device with
+    /// device_retired=true but operation_status='active'/'decommissioned' therefore
+    /// swallows the recommission silently (issue created with 2xx, device stays
+    /// retired) and must be normalized via a device_retired issue first.
+    /// Returns false when the inventory cannot be fetched.
+    /// </summary>
+    public static bool TryGetRetirementState(
+      RequestData client,
+      string inventoryResource,
+      string inventoryId,
+      out bool deviceRetired,
+      out string operationStatus)
+    {
+      deviceRetired = false;
+      operationStatus = string.Empty;
+
+      if (string.IsNullOrWhiteSpace(inventoryId))
+        return false;
+
+      var response = client.Get(inventoryResource + "/" + Uri.EscapeDataString(inventoryId));
+      if (client.StatusCode != 200 || string.IsNullOrWhiteSpace(response))
+        return false;
+
+      try
+      {
+        var attributes = JsonConvert.DeserializeObject<Root>(response)?.Data?.FirstOrDefault()?.Attributes;
+        if (attributes == null)
+          return false;
+
+        deviceRetired = attributes.DeviceRetired;
+        operationStatus = attributes.OperationStatus ?? string.Empty;
+        return true;
       }
       catch
       {

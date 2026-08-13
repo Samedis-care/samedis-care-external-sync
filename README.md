@@ -310,11 +310,18 @@ Inventory identity resolution (decides update vs. create):
 
 Retired devices (`operation_status` resolved to `retired`, e.g. `Ausgemustert`):
 - Already retired in samedis: skipped (nothing to do).
-- Exists and active in samedis: retired via a `device_retired` issue (the canonical, reversible mechanism; `operation_status`/`retirement_date` are never written directly, and `retirement_date` is read-only on the inventory API anyway). Uses `delete_currently_open_tasks=true` like the backend's own auto-retire.
+- Exists and active in samedis: retired via a `device_retired` issue (the canonical, reversible mechanism). Uses `delete_currently_open_tasks=true` like the backend's own auto-retire.
 - Not in samedis: created ACTIVE first (a device cannot be created directly in retired state), then retired via a `device_retired` issue using the CSV `retirement_date`.
 
+`retirement_date` is **never** part of an inventory create/update payload:
+- It is *not* read-only on the inventory API. The backend re-derives the retirement flag from it on every save (`Inventory#update_reference_columns`: `self.device_retired = retirement_date.present?`, then `set_operation_status_on_retire` forces `operation_status='retired'`).
+- Sending the CSV value therefore silently re-retires the device on every successful update — including the retry directly after a recommission, which produced an endless active ↔ retired oscillation (and matching changelog spam) on the UKT tenant.
+- The CSV value is only used as the date of the `device_retired` issue.
+
 Recommission (re-activation):
-- If a CSV row is active but the matched device is retired in samedis, the importer creates a `recommission_device` issue and retries the update, so the device is re-activated before the update is applied.
+- If a CSV row is not retired but the matched device is retired in samedis, the importer creates a `recommission_device` issue and retries the update, so the device is re-activated before the update is applied.
+- Before doing so it reads `device_retired` and `operation_status`. A `recommission_device` issue only takes effect when `operation_status` is `retired` (the backend write is guarded by `inventory_operation_status_changed?`); on a device with `device_retired=true` and a different `operation_status` the recommission is a silent no-op with HTTP 2xx. Such a device is normalized with a `device_retired` issue first (`delete_currently_open_tasks=false`), then recommissioned. See [samedis-care-issues#2380](https://github.com/Samedis-care/samedis-care-issues/issues/2380).
+- A create rejected with `Device retired.` is logged as a WARN pointing at the identity mapping: the backend matched an existing retired device that `id`/`external_id`/`device_number` did not resolve.
 
 Create defaults:
 - For create operations, `do_maintenance` defaults to `true` when CSV value is empty.
