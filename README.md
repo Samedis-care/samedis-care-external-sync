@@ -62,7 +62,7 @@ dotnet publish -c Release -r win-x64 --self-contained true /p:PublishSingleFile=
 - `<paths.to_samedis>` is created if missing and kept (not cleaned).
 - If `sync.archive_to_samedis_csv_files` is `true` (default), CSV files in `<paths.to_samedis>` are moved after run to `<parent>/archive/<folder>` with timestamp suffix (`<name>_yyyyMMdd_HHmmss.csv`).
 - Tenant settings are loaded via `/api/{version}/user/tenants/{tenant_id}`.
-- If tenant settings cannot be loaded, fallback is `standard` location mode.
+- If tenant settings cannot be loaded (request failure or unparseable response), the sync stops with an error message. There is deliberately no fallback location mode: guessing `use_extended_device_locations` / `use_profit_centers` would send every inventory down the wrong location/profit-center path.
 
 ## config.yml Reference
 
