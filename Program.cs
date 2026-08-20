@@ -2523,11 +2523,9 @@ internal class Program
             // A retired device cannot be created directly in retired state (backend
             // rejects it). Create it ACTIVE; it is retired afterwards via a
             // device_retired issue in the create-success handler below.
+            // (retirement_date is never part of the payload -- see BuildInventoryAttributes.)
             if (operation == "create" && isRetiredRow)
-            {
               attributes["operation_status"] = "active";
-              attributes.Remove("retirement_date");
-            }
 
             var requestPayload = JsonConvert.SerializeObject(new
             {
@@ -2594,11 +2592,33 @@ internal class Program
             else
             {
               // Special handling: device is retired in samedis but the source CSV
-              // delivers it as active (no retirement_date / operation_status active).
-              // The samedis API rejects the update with HTTP 400 "Device retired."
-              // In that case we create a closed "recommission_device" issue to flip
-              // the device back to active, then retry the update once.
+              // delivers it as no longer retired. The samedis API rejects the update
+              // with HTTP 400 "Device retired." (Inventory#check_retired, which looks at
+              // the persisted device_retired flag only). In that case we create a closed
+              // "recommission_device" issue to flip the device back to active, then retry
+              // the update once.
               var recommissionRetrySucceeded = false;
+              // Status/body of the request that ultimately failed. Set explicitly whenever
+              // a later diagnostic request (state re-read) would otherwise overwrite the
+              // client's StatusCode before it is logged.
+              var failedStatus = samedisClient.StatusCode;
+              var failedResponse = response;
+
+              // A create cannot be recommissioned: we have no id the row maps to, yet the
+              // backend matched an existing retired record. Make that visible instead of
+              // logging it as a generic failure -- it means the identity mapping
+              // (id -> external_id -> device_number) missed a device that does exist.
+              if (isCreateOperation
+                  && failedStatus == 400
+                  && Inventories.IsDeviceRetiredError(failedResponse))
+              {
+                helper.Message(
+                  $"Create was rejected with \"Device retired.\" -- an existing retired device was not resolvable by id/external_id/device_number "
+                  + $"(external_id='{inventoryExternalId}', inventory_number='{inventoryNumber}', title='{inventoryTitle}'). Check the identity mapping; no recommission attempted.",
+                  1,
+                  "WARN"
+                );
+              }
 
               if (!isCreateOperation
                   && !isRetiredRow
@@ -2629,21 +2649,56 @@ internal class Program
                 if (string.IsNullOrWhiteSpace(recommissionInventoryId))
                   recommissionInventoryId = targetInventoryId;
 
-                // recommission_device only reverses a retirement when the persisted
-                // device_retired flag is true (see Issue#propagate_recommission_device).
-                // If the device is in an inconsistent state -- retirement_date set (so the
-                // update PUT is blocked with "Device retired.") but device_retired=false --
-                // the recommission would be a silent no-op. In that case we first create a
-                // device_retired issue to normalize the state (device_retired=true), WITHOUT
-                // deleting the device's open tasks, so the recommission below can actually
-                // clear the retirement (device_retired=false, retirement_date=nil).
-                if (!Inventories.IsInventoryDeviceRetired(samedisClient, inventoryResource, recommissionInventoryId))
+                // A recommission_device issue only takes effect when the device's
+                // operation_status is 'retired'. Issue#propagate_recommission_device just
+                // assigns inventory_operation_status='active', and the write in
+                // Issue#update_operation_status! starts with
+                // `return unless inventory_operation_status_changed?`. So on a device with
+                // device_retired=true but operation_status='active'/'decommissioned' the
+                // recommission is a SILENT no-op: the issue is created with 2xx, the device
+                // stays retired, the retry below fails again, and the next run adds another
+                // useless issue. That inconsistent state is the one behind
+                // samedis-care-issues#2380.
+                //
+                // Normalize it first with a device_retired issue (WITHOUT deleting the
+                // device's open tasks -- we are about to reactivate it): that sets
+                // device_retired=true AND operation_status='retired', which makes the
+                // recommission below a real state change.
+                var retirementStateKnown = Inventories.TryGetRetirementState(
+                  samedisClient,
+                  inventoryResource,
+                  recommissionInventoryId,
+                  out var persistedDeviceRetired,
+                  out var persistedOperationStatus
+                );
+
+                var skipRecommission = false;
+
+                if (retirementStateKnown && !persistedDeviceRetired)
+                {
+                  // "Device retired." is raised by Inventory#check_retired, which only ever
+                  // looks at device_retired -- so this combination should be impossible.
+                  // Don't post a recommission issue: the backend would reject it with
+                  // "The inventory is not retired and therefore cannot be recommissioned."
+                  skipRecommission = true;
+                  helper.Message(
+                    $"Update was rejected with \"Device retired.\" although the device reports device_retired=false "
+                    + $"(operation_status='{persistedOperationStatus}', id='{recommissionInventoryId}', inventory_number='{inventoryNumber}'). "
+                    + "Skipping recommission -- needs backend investigation.",
+                    1,
+                    "WARN"
+                  );
+                }
+                else if (retirementStateKnown
+                         && !Inventories.IsRetiredOperationStatus(persistedOperationStatus))
                 {
                   helper.Message(
-                    $"Inconsistent retirement state (device_retired=false but update blocked). Creating a device_retired issue to normalize before recommission (id='{recommissionInventoryId}', inventory_number='{inventoryNumber}').",
-                    2
+                    $"Inconsistent retirement state (device_retired=true but operation_status='{persistedOperationStatus}'): a recommission alone would be a silent no-op. "
+                    + $"Creating a device_retired issue to normalize first (id='{recommissionInventoryId}', inventory_number='{inventoryNumber}').",
+                    1,
+                    "WARN"
                   );
-                  Inventories.PostDeviceRetiredIssue(
+                  var normalizeResponse = Inventories.PostDeviceRetiredIssue(
                     samedisClient,
                     issuesResource,
                     recommissionInventoryId,
@@ -2653,6 +2708,15 @@ internal class Program
                     helper,
                     deleteOpenTasks: false
                   );
+                  if (samedisClient.StatusCode < 200 || samedisClient.StatusCode >= 300)
+                  {
+                    helper.Message(
+                      $"Normalizing device_retired issue was rejected (id='{recommissionInventoryId}', inventory_number='{inventoryNumber}', status={samedisClient.StatusCode}). "
+                      + $"The recommission below will most likely stay without effect. Response: {normalizeResponse}",
+                      1,
+                      "WARN"
+                    );
+                  }
                 }
 
                 // Stay silent at log level 1 when the recommission+retry succeeds --
@@ -2660,18 +2724,20 @@ internal class Program
                 // HandleInventorySuccess (which logs at level 2). Only escalate to
                 // WARN/ERROR if the recommission or the retry itself fails.
                 helper.Message(
-                  $"Inventory is retired in samedis but CSV row is active (id='{recommissionInventoryId}', external_id='{inventoryExternalId}', inventory_number='{inventoryNumber}'). Attempting recommission and update retry.",
+                  $"Inventory is retired in samedis but CSV row is not (id='{recommissionInventoryId}', external_id='{inventoryExternalId}', inventory_number='{inventoryNumber}'). Attempting recommission and update retry.",
                   2
                 );
 
-                var recommissionResponse = Inventories.PostRecommissionIssue(
-                  samedisClient,
-                  issuesResource,
-                  recommissionInventoryId,
-                  inventoryNumber,
-                  inventoryTitle,
-                  helper
-                );
+                var recommissionResponse = skipRecommission
+                  ? null
+                  : Inventories.PostRecommissionIssue(
+                    samedisClient,
+                    issuesResource,
+                    recommissionInventoryId,
+                    inventoryNumber,
+                    inventoryTitle,
+                    helper
+                  );
 
                 if (recommissionResponse != null)
                 {
@@ -2692,9 +2758,29 @@ internal class Program
                     // indistinguishable in the default log from the recommission
                     // path never having engaged (all other recommission messages
                     // are level 2).
+                    // Keep the retry's outcome: the state re-read below issues another
+                    // request and would otherwise overwrite StatusCode for this message
+                    // and for the ERROR line at the end of this block.
+                    failedStatus = samedisClient.StatusCode;
+                    failedResponse = response;
+
+                    // Re-read the state so the log carries the evidence instead of a guess:
+                    // device_retired=true here means the recommission_device issue was
+                    // created (2xx) without clearing the retirement.
+                    var stateAfterKnown = Inventories.TryGetRetirementState(
+                      samedisClient,
+                      inventoryResource,
+                      recommissionInventoryId,
+                      out var deviceRetiredAfter,
+                      out var operationStatusAfter
+                    );
+                    var stateAfter = stateAfterKnown
+                      ? $"device_retired={deviceRetiredAfter.ToString().ToLowerInvariant()}, operation_status='{operationStatusAfter}'"
+                      : "state could not be re-read";
+
                     helper.Message(
-                      $"Recommission issue was created but the update retry was still rejected (id='{recommissionInventoryId}', inventory_number='{inventoryNumber}', status={samedisClient.StatusCode}). "
-                      + "The device likely remains retired in samedis (recommission_device issue did not clear the retirement) -- needs backend investigation.",
+                      $"Recommission issue was created but the update retry was still rejected (id='{recommissionInventoryId}', inventory_number='{inventoryNumber}', status={failedStatus}, {stateAfter}). "
+                      + "The recommission_device issue did not clear the retirement -- needs backend investigation (samedis-care-issues#2380).",
                       1,
                       "WARN"
                     );
@@ -2707,7 +2793,7 @@ internal class Program
                 errorCount++;
                 var failedInventoryId = string.IsNullOrWhiteSpace(targetInventoryId) ? rowId : targetInventoryId;
                 helper.Message(
-                  $"Failed to {operation} inventory (id='{failedInventoryId}', title='{inventoryTitle}', inventory_number='{inventoryNumber}', status={samedisClient.StatusCode}). Response: {response}",
+                  $"Failed to {operation} inventory (id='{failedInventoryId}', title='{inventoryTitle}', inventory_number='{inventoryNumber}', status={failedStatus}). Response: {failedResponse}",
                   1,
                   "ERROR"
                 );
