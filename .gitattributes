@@ -1,0 +1,8 @@
+# Die Fixture-CSVs bilden den Export des Quellsystems nach, und dazu gehoert
+# dessen Zeilenende. Wuerde Git sie auf LF normalisieren, pruefte ein frischer
+# Klon eine Datei, wie sie beim Kunden nie ankommt -- CRLF und BOM sind Teil
+# des Testfalls, nicht Zufall der Ablage. Siehe tests/fixtures/make_fixtures.py.
+tests/fixtures/**/*.csv -text
+
+# Die Nachweis-PDFs sind binaer.
+tests/fixtures/**/*.pdf binary
