@@ -113,7 +113,7 @@ namespace SamedisExternalSync
     public class Root
     {
       [JsonProperty("data")]
-      [JsonConverter(typeof(Helper.SingleOrArrayConverter<Data>))]
+      [JsonConverter(typeof(JsonApi.SingleOrArrayConverter<Data>))]
       public List<Data>? Data { get; set; }
 
       [JsonProperty("meta")]
@@ -182,9 +182,20 @@ namespace SamedisExternalSync
         table.Rows.Add(row);
       }
     }
-
+    /// <summary>
+    /// Resolves the department a row belongs to: samedis id, then cost centre number, then
+    /// title. Creates it when asked to.
+    /// </summary>
+    /// <param name="lookup">
+    /// Bound to the departments collection. It remembers hits and misses, which is what the
+    /// three dictionaries and the "already checked" set this replaces did by hand.
+    /// </param>
+    /// <param name="syncedProfitCenters">
+    /// Which department/profit-centre pairs were already written this run. Not a lookup
+    /// cache: it records the outcome of a write so the same PUT is not repeated.
+    /// </param>
     public static string? ResolveDepartmentId(
-      RequestData client,
+      IApiClient client,
       string resource,
       string departmentId,
       string departmentCostCenterNumber,
@@ -193,310 +204,111 @@ namespace SamedisExternalSync
       bool createOnTheFly,
       string inventoryId,
       string inventoryTitle,
-      IDictionary<string, string> departmentsById,
-      IDictionary<string, string> departmentsByCostCenter,
-      IDictionary<string, string> departmentsByTitle,
-      IDictionary<string, string> checkedDepartments,
-      Helper helper,
+      ResourceLookup lookup,
+      IDictionary<string, string> syncedProfitCenters,
+      ISyncLog log,
       string profitCenterTitle = "")
     {
-      departmentId = departmentId ?? string.Empty;
-      departmentCostCenterNumber = departmentCostCenterNumber ?? string.Empty;
-      departmentTitle = departmentTitle ?? string.Empty;
-      departmentNotes = departmentNotes ?? string.Empty;
-      profitCenterTitle = profitCenterTitle ?? string.Empty;
+      departmentId = departmentId?.Trim() ?? string.Empty;
+      departmentCostCenterNumber = departmentCostCenterNumber?.Trim() ?? string.Empty;
+      departmentTitle = departmentTitle?.Trim() ?? string.Empty;
+      departmentNotes = departmentNotes?.Trim() ?? string.Empty;
+      var targetProfitCenter = profitCenterTitle?.Trim() ?? string.Empty;
 
-      void EnsureProfitCenterAssignment(string resolvedDepartmentId, string? currentProfitCenterTitle = null)
+      var existing = lookup.First(
+        () => lookup.ById(departmentId),
+        () => lookup.ByField("cost_center_number", departmentCostCenterNumber),
+        () => lookup.ByField("title", departmentTitle));
+
+      if (!string.IsNullOrWhiteSpace(existing))
       {
-        if (string.IsNullOrWhiteSpace(resolvedDepartmentId))
-          return;
-
-        var targetProfitCenterTitle = profitCenterTitle.Trim();
-        if (string.IsNullOrWhiteSpace(targetProfitCenterTitle))
-          return;
-
-        var currentProfitCenter = currentProfitCenterTitle?.Trim() ?? string.Empty;
-        if (string.Equals(currentProfitCenter, targetProfitCenterTitle, StringComparison.OrdinalIgnoreCase))
-          return;
-
-        var syncKey = "profit_center_sync:" + resolvedDepartmentId + ":" + targetProfitCenterTitle;
-        if (checkedDepartments.ContainsKey(syncKey))
-          return;
-
-        var payload = JsonConvert.SerializeObject(new
-        {
-          data = new Dictionary<string, object?>
-          {
-            ["profit_center_title"] = targetProfitCenterTitle
-          }
-        });
-
-        var updateResponse = client.Put(resource, resolvedDepartmentId, payload);
-        if (client.StatusCode >= 200 && client.StatusCode < 300)
-        {
-          checkedDepartments[syncKey] = resolvedDepartmentId;
-          helper.Message(
-            $"Department profit center updated (department_id='{resolvedDepartmentId}', profit_center_title='{targetProfitCenterTitle}').",
-            2
-          );
-        }
-        else
-        {
-          checkedDepartments[syncKey] = string.Empty;
-          helper.Message(
-            $"Failed to set department profit center (department_id='{resolvedDepartmentId}', profit_center_title='{targetProfitCenterTitle}', status={client.StatusCode} {client.Status}, response_status='{client.LastResponseStatus}', error='{client.LastError}'). Response: {updateResponse}",
-            1,
-            "WARN"
-          );
-        }
-      }
-
-      if (!string.IsNullOrWhiteSpace(departmentId) && departmentsById.TryGetValue(departmentId, out var existingId) && !string.IsNullOrWhiteSpace(existingId))
-      {
-        EnsureProfitCenterAssignment(existingId);
-        return existingId;
-      }
-
-      if (!string.IsNullOrWhiteSpace(departmentCostCenterNumber) &&
-          departmentsByCostCenter.TryGetValue(departmentCostCenterNumber, out existingId) &&
-          !string.IsNullOrWhiteSpace(existingId))
-      {
-        EnsureProfitCenterAssignment(existingId);
-        return existingId;
-      }
-
-      if (!string.IsNullOrWhiteSpace(departmentTitle) &&
-          departmentsByTitle.TryGetValue(departmentTitle, out existingId) &&
-          !string.IsNullOrWhiteSpace(existingId))
-      {
-        EnsureProfitCenterAssignment(existingId);
-        return existingId;
-      }
-
-      if (!string.IsNullOrWhiteSpace(departmentId))
-      {
-        var checkedByIdKey = "id:" + departmentId;
-        if (checkedDepartments.TryGetValue(checkedByIdKey, out var checkedById))
-        {
-          if (!string.IsNullOrWhiteSpace(checkedById))
-          {
-            EnsureProfitCenterAssignment(checkedById);
-            return checkedById;
-          }
-        }
-        else
-        {
-          var detailResponse = client.Get(resource + "/" + Uri.EscapeDataString(departmentId));
-          if (client.StatusCode == 200)
-          {
-            var resolvedId = Helper.ExtractDataId(detailResponse) ?? departmentId;
-            departmentsById[departmentId] = resolvedId;
-            departmentsById[resolvedId] = resolvedId;
-
-            var detailRoot = string.IsNullOrEmpty(detailResponse) ? null : JsonConvert.DeserializeObject<Departments.Root>(detailResponse);
-            var resolvedAttributes = detailRoot?.Data?.FirstOrDefault()?.Attributes;
-            var resolvedTitle = resolvedAttributes?.Title;
-            var resolvedCostCenterNumber = resolvedAttributes?.CostCenterNumber;
-            if (!string.IsNullOrWhiteSpace(resolvedTitle))
-              departmentsByTitle[resolvedTitle] = resolvedId;
-            if (!string.IsNullOrWhiteSpace(resolvedCostCenterNumber))
-              departmentsByCostCenter[resolvedCostCenterNumber] = resolvedId;
-
-            checkedDepartments[checkedByIdKey] = resolvedId;
-            EnsureProfitCenterAssignment(resolvedId, resolvedAttributes?.ProfitCenterTitle);
-            return resolvedId;
-          }
-
-          if (client.StatusCode == 404)
-          {
-            checkedDepartments[checkedByIdKey] = string.Empty;
-            departmentsById[departmentId] = string.Empty;
-          }
-          else
-          {
-            helper.Message(
-              $"Department id lookup request failed for '{departmentId}' (status={client.StatusCode} {client.Status}, response_status='{client.LastResponseStatus}', error='{client.LastError}').",
-              2,
-              "WARN"
-            );
-          }
-        }
-      }
-
-      if (!string.IsNullOrWhiteSpace(departmentCostCenterNumber))
-      {
-        var checkedByCostCenterKey = "cost_center:" + departmentCostCenterNumber;
-        if (checkedDepartments.TryGetValue(checkedByCostCenterKey, out var checkedByCostCenter))
-        {
-          if (!string.IsNullOrWhiteSpace(checkedByCostCenter))
-          {
-            EnsureProfitCenterAssignment(checkedByCostCenter);
-            return checkedByCostCenter;
-          }
-        }
-        else
-        {
-          var filterBuilder = new FilterBuilder();
-          filterBuilder.Clear();
-          filterBuilder.Add("cost_center_number", FilterBuilder.FilterType.Equals, FilterBuilder.Type.Text, departmentCostCenterNumber);
-
-          var requestResource = resource + $"?page[number]=1&page[limit]=1&gridfilter={filterBuilder.Get()}";
-          helper.Message($"Department cost_center lookup request: {requestResource}", 2, "DEBUG");
-          var listResponse = client.Get(requestResource);
-          helper.Message(
-            $"Department cost_center lookup response: status={client.StatusCode} {client.Status}, response_status='{client.LastResponseStatus}', error='{client.LastError}', content_length={(listResponse ?? string.Empty).Length}",
-            2,
-            "DEBUG"
-          );
-          if (client.StatusCode == 200 && !string.IsNullOrWhiteSpace(listResponse))
-          {
-            var listRoot = JsonConvert.DeserializeObject<Departments.Root>(listResponse);
-            var foundDepartment = listRoot?.Data?.FirstOrDefault();
-            var resolvedId = foundDepartment?.Attributes?.Id ?? foundDepartment?.Id;
-            var resolvedTitle = foundDepartment?.Attributes?.Title;
-            if (!string.IsNullOrWhiteSpace(resolvedId))
-            {
-              departmentsById[resolvedId] = resolvedId;
-              departmentsByCostCenter[departmentCostCenterNumber] = resolvedId;
-              if (!string.IsNullOrWhiteSpace(resolvedTitle))
-                departmentsByTitle[resolvedTitle] = resolvedId;
-              checkedDepartments[checkedByCostCenterKey] = resolvedId;
-              EnsureProfitCenterAssignment(resolvedId, foundDepartment?.Attributes?.ProfitCenterTitle);
-              return resolvedId;
-            }
-
-            checkedDepartments[checkedByCostCenterKey] = string.Empty;
-            departmentsByCostCenter[departmentCostCenterNumber] = string.Empty;
-          }
-          else if (client.StatusCode != 200)
-          {
-            helper.Message(
-              $"Department cost_center lookup request failed for '{departmentCostCenterNumber}' (status={client.StatusCode} {client.Status}, response_status='{client.LastResponseStatus}', error='{client.LastError}').",
-              2,
-              "WARN"
-            );
-          }
-        }
-      }
-
-      if (!string.IsNullOrWhiteSpace(departmentTitle))
-      {
-        var checkedByTitleKey = "title:" + departmentTitle;
-        if (checkedDepartments.TryGetValue(checkedByTitleKey, out var checkedByTitle))
-        {
-          if (!string.IsNullOrWhiteSpace(checkedByTitle))
-          {
-            EnsureProfitCenterAssignment(checkedByTitle);
-            return checkedByTitle;
-          }
-        }
-        else
-        {
-          var filterBuilder = new FilterBuilder();
-          filterBuilder.Clear();
-          filterBuilder.Add("title", FilterBuilder.FilterType.Equals, FilterBuilder.Type.Text, departmentTitle);
-          var gridFilter = filterBuilder.Get();
-          var requestResource = resource + $"?page[number]=1&page[limit]=1&gridfilter={gridFilter}";
-          helper.Message($"Department title lookup request: {requestResource}", 2, "DEBUG");
-          var listResponse = client.Get(requestResource);
-          helper.Message(
-            $"Department title lookup response: status={client.StatusCode} {client.Status}, response_status='{client.LastResponseStatus}', error='{client.LastError}', content_length={(listResponse ?? string.Empty).Length}",
-            2,
-            "DEBUG"
-          );
-          if (client.StatusCode == 200 && !string.IsNullOrWhiteSpace(listResponse))
-          {
-            var listRoot = JsonConvert.DeserializeObject<Departments.Root>(listResponse);
-            var foundDepartment = listRoot?.Data?.FirstOrDefault();
-            var resolvedId = foundDepartment?.Attributes?.Id ?? foundDepartment?.Id;
-            var resolvedCostCenterNumber = foundDepartment?.Attributes?.CostCenterNumber;
-            if (!string.IsNullOrWhiteSpace(resolvedId))
-            {
-              departmentsById[resolvedId] = resolvedId;
-              departmentsByTitle[departmentTitle] = resolvedId;
-              if (!string.IsNullOrWhiteSpace(departmentCostCenterNumber))
-                departmentsByCostCenter[departmentCostCenterNumber] = resolvedId;
-              if (!string.IsNullOrWhiteSpace(resolvedCostCenterNumber))
-                departmentsByCostCenter[resolvedCostCenterNumber] = resolvedId;
-              checkedDepartments[checkedByTitleKey] = resolvedId;
-              EnsureProfitCenterAssignment(resolvedId, foundDepartment?.Attributes?.ProfitCenterTitle);
-              return resolvedId;
-            }
-
-            checkedDepartments[checkedByTitleKey] = string.Empty;
-            departmentsByTitle[departmentTitle] = string.Empty;
-          }
-          else if (client.StatusCode != 200)
-          {
-            helper.Message(
-              $"Department title lookup request failed for '{departmentTitle}' (status={client.StatusCode} {client.Status}, response_status='{client.LastResponseStatus}', error='{client.LastError}').",
-              2,
-              "WARN"
-            );
-          }
-        }
+        EnsureProfitCenter(client, resource, existing, targetProfitCenter, syncedProfitCenters, log);
+        return existing;
       }
 
       if (!createOnTheFly)
         return null;
 
-      var effectiveDepartmentTitle = departmentTitle;
-      if (string.IsNullOrWhiteSpace(effectiveDepartmentTitle) && !string.IsNullOrWhiteSpace(departmentCostCenterNumber))
-        effectiveDepartmentTitle = "KST " + departmentCostCenterNumber;
+      // A row may carry only a cost centre. Naming the department after it is better than
+      // skipping the row, and keeps the two identifiable together.
+      var effectiveTitle = string.IsNullOrWhiteSpace(departmentTitle) && departmentCostCenterNumber.Length > 0
+        ? "KST " + departmentCostCenterNumber
+        : departmentTitle;
 
-      if (string.IsNullOrWhiteSpace(effectiveDepartmentTitle))
+      if (string.IsNullOrWhiteSpace(effectiveTitle))
         return null;
 
-      var payloadData = new Dictionary<string, object?>
+      var attributes = new Dictionary<string, object?> { ["title"] = effectiveTitle };
+      JsonApi.AddStringAttribute(attributes!, "cost_center_number", departmentCostCenterNumber);
+      JsonApi.AddStringAttribute(attributes!, "notes", departmentNotes);
+      JsonApi.AddStringAttribute(attributes!, "profit_center_title", targetProfitCenter);
+
+      return Records.Create(
+        client, resource, attributes, log,
+        $"department '{effectiveTitle}' (inventory_id='{inventoryId}', inventory_title='{inventoryTitle}')")
+        is { } created && !string.IsNullOrWhiteSpace(created)
+          ? Remember(lookup, created, departmentCostCenterNumber, effectiveTitle)
+          : null;
+    }
+
+    private static string Remember(ResourceLookup lookup, string id, string costCenter, string title)
+    {
+      lookup.RememberId(id);
+      lookup.RememberField("cost_center_number", costCenter, id);
+      lookup.RememberField("title", title, id);
+      return id;
+    }
+
+    /// <summary>
+    /// Puts the department under the configured profit centre, unless it is already there.
+    /// </summary>
+    /// <remarks>
+    /// The current value is read back before writing. The version this replaces got it for
+    /// free from the record it had just deserialized during the lookup; going through the
+    /// lookup returns only an id, and writing blindly would mean one PUT per department on
+    /// every run. One GET instead of one PUT is the cheaper and safer trade.
+    /// </remarks>
+    private static void EnsureProfitCenter(IApiClient client, string resource, string departmentId,
+                                           string profitCenterTitle,
+                                           IDictionary<string, string> synced, ISyncLog log)
+    {
+      if (string.IsNullOrWhiteSpace(profitCenterTitle) || string.IsNullOrWhiteSpace(departmentId))
+        return;
+
+      var syncKey = departmentId + ":" + profitCenterTitle;
+      if (synced.ContainsKey(syncKey))
+        return;
+
+      var detail = client.Get(resource + "/" + Uri.EscapeDataString(departmentId));
+      if (JsonApi.IsSuccess(client.StatusCode))
       {
-        ["title"] = effectiveDepartmentTitle
-      };
-      if (!string.IsNullOrWhiteSpace(departmentCostCenterNumber))
-        payloadData["cost_center_number"] = departmentCostCenterNumber;
-      if (!string.IsNullOrWhiteSpace(departmentNotes))
-        payloadData["notes"] = departmentNotes;
-      if (!string.IsNullOrWhiteSpace(profitCenterTitle))
-        payloadData["profit_center_title"] = profitCenterTitle;
+        var current = JsonApi.FirstData(detail)?["attributes"]?["profit_center_title"]?.ToString();
+        if (string.Equals(current?.Trim() ?? string.Empty, profitCenterTitle,
+                          StringComparison.OrdinalIgnoreCase))
+        {
+          synced[syncKey] = departmentId;
+          return;
+        }
+      }
 
       var payload = JsonConvert.SerializeObject(new
       {
-        data = payloadData
+        data = new Dictionary<string, object?> { ["profit_center_title"] = profitCenterTitle }
       });
+      var response = client.Put(resource, departmentId, payload);
 
-      var response = client.Post(resource, payload);
-      if (client.StatusCode < 200 || client.StatusCode >= 300)
+      if (JsonApi.IsSuccess(client.StatusCode))
       {
-        helper.Message(
-          $"Failed to create department (id='{departmentId}', title='{effectiveDepartmentTitle}', cost_center_number='{departmentCostCenterNumber}', inventory_id='{inventoryId}', inventory_title='{inventoryTitle}', status={client.StatusCode} {client.Status}, response_status='{client.LastResponseStatus}', error='{client.LastError}'). Response: {response}",
-          1,
-          "ERROR"
-        );
-        return null;
+        synced[syncKey] = departmentId;
+        log.Debug($"Department profit center updated (department_id='{departmentId}', profit_center_title='{profitCenterTitle}').");
       }
-
-      var newDepartmentId = Helper.ExtractDataId(response);
-      if (string.IsNullOrWhiteSpace(newDepartmentId))
+      else
       {
-        helper.Message(
-          $"Failed to create department (id='{departmentId}', title='{effectiveDepartmentTitle}', cost_center_number='{departmentCostCenterNumber}', inventory_id='{inventoryId}', inventory_title='{inventoryTitle}'): API returned no department id.",
-          1,
-          "ERROR"
-        );
-        return null;
+        synced[syncKey] = string.Empty;
+        log.Warn($"Failed to set department profit center (department_id='{departmentId}', profit_center_title='{profitCenterTitle}', status={client.StatusCode}). Response: {response}");
       }
-
-      departmentsById[newDepartmentId] = newDepartmentId;
-      departmentsByTitle[effectiveDepartmentTitle] = newDepartmentId;
-      checkedDepartments["title:" + effectiveDepartmentTitle] = newDepartmentId;
-      if (!string.IsNullOrWhiteSpace(departmentCostCenterNumber))
-      {
-        departmentsByCostCenter[departmentCostCenterNumber] = newDepartmentId;
-        checkedDepartments["cost_center:" + departmentCostCenterNumber] = newDepartmentId;
-      }
-      if (!string.IsNullOrWhiteSpace(departmentId))
-        checkedDepartments["id:" + departmentId] = newDepartmentId;
-      helper.Message($"Department created on the fly: '{effectiveDepartmentTitle}' -> {newDepartmentId}", 2);
-      return newDepartmentId;
     }
+
+
   }
 }

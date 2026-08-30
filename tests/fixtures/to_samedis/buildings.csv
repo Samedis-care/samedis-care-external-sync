@@ -1,0 +1,4 @@
+﻿id;parent_id;number;description;location_type;plis_code;street;postal_code;city;changed at;created_at
+30000137;;2001;Haus Ahorn;Gebäude;;Ahornweg 3;12345;Musterstadt;04.03.2026 00:00:00;12.01.2019 00:00:00
+30003014;;2002;Haus Birke;Gebäude;;Birkenallee 17;12345;Musterstadt;04.03.2026 00:00:00;12.01.2019 00:00:00
+30005891;;2003;Haus Ceder;Gebäude;;Cederstrasse 8;12347;Nachbarort;04.03.2026 00:00:00;12.01.2019 00:00:00

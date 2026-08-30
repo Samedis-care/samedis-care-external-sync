@@ -1,0 +1,21 @@
+issue_number;inventory_device_number;issue_type;title;date;status;done_at;responsible_name;maintenance_passed;test_comment;filename
+1;320000;Wartung / Prüfung;Regelwartung;01.01.2026;Abgeschlossen;01.01.2025;Pruefdienst Nord GmbH;False;Maengel festgestellt, Nachpruefung vereinbart (1);protokoll_001.pdf
+2;320006;Wartung / Prüfung;Sicherheitstechnische Kontrolle;02.02.2026;Abgeschlossen;02.02.2025;Technikpartner Sued AG;True;;protokoll_002.pdf
+3;320012;Wartung / Prüfung;Messtechnische Kontrolle;03.03.2026;Abgeschlossen;03.03.2025;Hauswerkstatt;True;;protokoll_003.pdf
+4;320021;Wartung / Prüfung;Wiederholungspruefung;04.04.2026;Abgeschlossen;04.04.2025;Pruefdienst Nord GmbH;True;;protokoll_004.pdf
+5;320027;Wartung / Prüfung;Herstellerwartung;05.05.2026;Abgeschlossen;05.05.2025;Technikpartner Sued AG;True;;protokoll_005.pdf
+6;320033;Wartung / Prüfung;Regelwartung;06.06.2026;Abgeschlossen;06.06.2025;Hauswerkstatt;False;Maengel festgestellt, Nachpruefung vereinbart (6);protokoll_006.pdf
+7;320042;Wartung / Prüfung;Sicherheitstechnische Kontrolle;07.07.2026;Abgeschlossen;07.07.2025;Pruefdienst Nord GmbH;True;;protokoll_007.pdf
+8;320048;Wartung / Prüfung;Messtechnische Kontrolle;08.08.2026;Abgeschlossen;08.08.2025;Technikpartner Sued AG;True;;protokoll_008.pdf
+9;320054;Wartung / Prüfung;Wiederholungspruefung;09.09.2026;Abgeschlossen;09.09.2025;Hauswerkstatt;True;;protokoll_009.pdf
+10;320063;Wartung / Prüfung;Herstellerwartung;10.10.2026;Abgeschlossen;10.10.2025;Pruefdienst Nord GmbH;True;;protokoll_010.pdf
+11;320069;Wartung / Prüfung;Regelwartung;11.11.2026;Abgeschlossen;11.11.2025;Technikpartner Sued AG;False;Maengel festgestellt, Nachpruefung vereinbart (11);protokoll_011.pdf
+12;320075;Wartung / Prüfung;Sicherheitstechnische Kontrolle;12.12.2026;Abgeschlossen;12.12.2025;Hauswerkstatt;True;;protokoll_012.pdf
+13;320084;Wartung / Prüfung;Messtechnische Kontrolle;13.01.2026;Abgeschlossen;13.01.2025;Pruefdienst Nord GmbH;True;;protokoll_013.pdf
+14;320090;Wartung / Prüfung;Wiederholungspruefung;14.02.2026;Abgeschlossen;14.02.2025;Technikpartner Sued AG;True;;protokoll_014.pdf
+15;320096;Wartung / Prüfung;Herstellerwartung;15.03.2026;Abgeschlossen;15.03.2025;Hauswerkstatt;True;;protokoll_015.pdf
+16;320105;Wartung / Prüfung;Regelwartung;16.04.2026;Abgeschlossen;16.04.2025;Pruefdienst Nord GmbH;False;Maengel festgestellt, Nachpruefung vereinbart (16);protokoll_016.pdf
+17;320111;Wartung / Prüfung;Sicherheitstechnische Kontrolle;17.05.2026;Abgeschlossen;17.05.2025;Technikpartner Sued AG;True;;protokoll_017.pdf
+18;320117;Wartung / Prüfung;Messtechnische Kontrolle;18.06.2026;Abgeschlossen;18.06.2025;Hauswerkstatt;True;;protokoll_018.pdf
+19;320126;Wartung / Prüfung;Wiederholungspruefung;19.07.2026;Abgeschlossen;19.07.2025;Pruefdienst Nord GmbH;True;;protokoll_019.pdf
+20;320132;Wartung / Prüfung;Herstellerwartung;20.08.2026;Abgeschlossen;20.08.2025;Technikpartner Sued AG;True;;protokoll_020.pdf

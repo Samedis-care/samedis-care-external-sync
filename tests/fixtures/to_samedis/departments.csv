@@ -1,0 +1,9 @@
+﻿id;department_id;cost_center_number;department;cost_center_description;abteilung;notes;profit_center;wirtschaftende_einheit
+D4000;;41100;Innere Medizin;;;Station 1 bis 3;Zentrum Konservativ;
+D4001;;41110;;Kardiologie;;;Zentrum Konservativ;
+D4002;;41200;;;Chirurgie;OP-Bereich West;;Zentrum Operativ
+D4003;;41210;Unfallchirurgie;;;;Zentrum Operativ;
+D4004;;41300;Radiologie;;;MRT und CT;Zentrum Diagnostik;
+D4005;;41310;;Nuklearmedizin;;;Zentrum Diagnostik;
+D4006;;41400;;;Anaesthesie;inkl. Aufwachraum;;Zentrum Querschnitt
+D4007;;41500;Zentrallabor;;;;Zentrum Querschnitt;
