@@ -34,135 +34,36 @@ namespace SamedisExternalSync
     public class Root
     {
       [JsonProperty("data")]
-      [JsonConverter(typeof(Helper.SingleOrArrayConverter<Data>))]
+      [JsonConverter(typeof(JsonApi.SingleOrArrayConverter<Data>))]
       public List<Data>? Data { get; set; }
     }
-
-    public static string? ResolveProfitCenterId(
-      RequestData client,
-      string resource,
-      string profitCenterTitle,
-      bool createOnTheFly,
-      string contextId,
-      string contextTitle,
-      IDictionary<string, string> profitCentersByTitle,
-      IDictionary<string, string> checkedProfitCenters,
-      Helper helper)
-    {
-      if (string.IsNullOrWhiteSpace(profitCenterTitle))
-        return null;
-
-      var normalizedTitle = profitCenterTitle.Trim();
-      var checkedKey = "title:" + normalizedTitle;
-
-      if (profitCentersByTitle.TryGetValue(normalizedTitle, out var cachedProfitCenterId))
-      {
-        if (!string.IsNullOrWhiteSpace(cachedProfitCenterId))
-          return cachedProfitCenterId;
-
-        return null;
-      }
-
-      if (checkedProfitCenters.TryGetValue(checkedKey, out var checkedByTitle))
-      {
-        if (!string.IsNullOrWhiteSpace(checkedByTitle))
-          return checkedByTitle;
-
-        return null;
-      }
-
-      var filterBuilder = new FilterBuilder();
-      filterBuilder.Clear();
-      filterBuilder.Add("title", FilterBuilder.FilterType.Equals, FilterBuilder.Type.Text, normalizedTitle);
-
-      var listResponse = client.Get(resource + $"?page[number]=1&page[limit]=1&gridfilter={filterBuilder.Get()}");
-      if (client.StatusCode == 200 && !string.IsNullOrWhiteSpace(listResponse))
-      {
-        var listRoot = JsonConvert.DeserializeObject<ProfitCenters.Root>(listResponse);
-        var foundProfitCenter = listRoot?.Data?.FirstOrDefault();
-        var resolvedId = foundProfitCenter?.Attributes?.Id ?? foundProfitCenter?.Id;
-        if (!string.IsNullOrWhiteSpace(resolvedId))
-        {
-          profitCentersByTitle[normalizedTitle] = resolvedId;
-          checkedProfitCenters[checkedKey] = resolvedId;
-          return resolvedId;
-        }
-      }
-      else if (client.StatusCode != 200)
-      {
-        helper.Message(
-          $"Profit center lookup request failed for '{normalizedTitle}' (status={client.StatusCode} {client.Status}, response_status='{client.LastResponseStatus}', error='{client.LastError}', context_id='{contextId}', context_title='{contextTitle}').",
-          2,
-          "WARN"
-        );
-      }
-
-      checkedProfitCenters[checkedKey] = string.Empty;
-      profitCentersByTitle[normalizedTitle] = string.Empty;
-
-      if (!createOnTheFly)
-        return null;
-
-      var payload = JsonConvert.SerializeObject(new
-      {
-        data = new Dictionary<string, object?>
-        {
-          ["title"] = normalizedTitle
-        }
-      });
-
-      var response = client.Post(resource, payload);
-      if (client.StatusCode < 200 || client.StatusCode >= 300)
-      {
-        helper.Message(
-          $"Failed to create profit center (title='{normalizedTitle}', context_id='{contextId}', context_title='{contextTitle}', status={client.StatusCode} {client.Status}, response_status='{client.LastResponseStatus}', error='{client.LastError}'). Response: {response}",
-          1,
-          "WARN"
-        );
-        return null;
-      }
-
-      var newProfitCenterId = Helper.ExtractDataId(response);
-      if (string.IsNullOrWhiteSpace(newProfitCenterId))
-      {
-        helper.Message(
-          $"Failed to create profit center (title='{normalizedTitle}', context_id='{contextId}', context_title='{contextTitle}'): API returned no profit center id.",
-          1,
-          "WARN"
-        );
-        return null;
-      }
-
-      profitCentersByTitle[normalizedTitle] = newProfitCenterId;
-      checkedProfitCenters[checkedKey] = newProfitCenterId;
-      helper.Message($"Profit center created on the fly: '{normalizedTitle}' -> {newProfitCenterId}", 2);
-      return newProfitCenterId;
-    }
-
+    /// <summary>
+    /// Links a department to a profit centre, once per pair and per run.
+    /// </summary>
+    /// <param name="linkedDepartments">
+    /// Which pairs were already handled this run. Not an API lookup cache: it records the
+    /// outcome of a write, keyed by the pair, so the same link is not attempted twice.
+    /// </param>
     public static bool EnsureDepartmentAssigned(
       RequestData client,
       string resource,
       string profitCenterId,
       string departmentId,
-      IDictionary<string, string> checkedProfitCenters,
-      Helper helper)
+      IDictionary<string, string> linkedDepartments,
+      ISyncLog log)
     {
       if (string.IsNullOrWhiteSpace(profitCenterId) || string.IsNullOrWhiteSpace(departmentId))
         return false;
 
       var linkKey = "link:" + profitCenterId + ":" + departmentId;
-      if (checkedProfitCenters.TryGetValue(linkKey, out var checkedValue))
+      if (linkedDepartments.TryGetValue(linkKey, out var checkedValue))
         return !string.IsNullOrWhiteSpace(checkedValue);
 
       var detailResponse = client.Get(resource + "/" + Uri.EscapeDataString(profitCenterId));
       if (client.StatusCode < 200 || client.StatusCode >= 300 || string.IsNullOrWhiteSpace(detailResponse))
       {
-        checkedProfitCenters[linkKey] = string.Empty;
-        helper.Message(
-          $"Profit center link check failed (profit_center_id='{profitCenterId}', department_id='{departmentId}', status={client.StatusCode} {client.Status}, response_status='{client.LastResponseStatus}', error='{client.LastError}').",
-          1,
-          "WARN"
-        );
+        linkedDepartments[linkKey] = string.Empty;
+        log.Warn($"Profit center link check failed (profit_center_id='{profitCenterId}', department_id='{departmentId}', status={client.StatusCode} {client.Status}, response_status='{client.LastResponseStatus}', error='{client.LastError}').");
         return false;
       }
 
@@ -173,7 +74,7 @@ namespace SamedisExternalSync
 
       if (currentDepartmentIds.Any(id => string.Equals(id, departmentId, StringComparison.OrdinalIgnoreCase)))
       {
-        checkedProfitCenters[linkKey] = departmentId;
+        linkedDepartments[linkKey] = departmentId;
         return true;
       }
 
@@ -193,21 +94,42 @@ namespace SamedisExternalSync
       var updateResponse = client.Put(resource, profitCenterId, updatePayload);
       if (client.StatusCode >= 200 && client.StatusCode < 300)
       {
-        checkedProfitCenters[linkKey] = departmentId;
-        helper.Message(
-          $"Profit center linked to department (profit_center_id='{profitCenterId}', department_id='{departmentId}').",
-          2
-        );
+        linkedDepartments[linkKey] = departmentId;
+        log.Debug($"Profit center linked to department (profit_center_id='{profitCenterId}', department_id='{departmentId}').");
         return true;
       }
 
-      checkedProfitCenters[linkKey] = string.Empty;
-      helper.Message(
-        $"Failed to link profit center to department (profit_center_id='{profitCenterId}', department_id='{departmentId}', status={client.StatusCode} {client.Status}, response_status='{client.LastResponseStatus}', error='{client.LastError}'). Response: {updateResponse}",
-        1,
-        "WARN"
-      );
+      linkedDepartments[linkKey] = string.Empty;
+      log.Warn($"Failed to link profit center to department (profit_center_id='{profitCenterId}', department_id='{departmentId}', status={client.StatusCode} {client.Status}, response_status='{client.LastResponseStatus}', error='{client.LastError}'). Response: {updateResponse}");
       return false;
     }
+    /// <summary>
+    /// Resolves a profit centre by title, creating it when asked to.
+    /// </summary>
+    public static string? ResolveProfitCenterId(
+      IApiClient client,
+      string resource,
+      string profitCenterTitle,
+      bool createOnTheFly,
+      string contextId,
+      string contextTitle,
+      ResourceLookup lookup,
+      ISyncLog log)
+    {
+      if (string.IsNullOrWhiteSpace(profitCenterTitle))
+        return null;
+
+      var normalizedTitle = profitCenterTitle.Trim();
+
+      return Records.FindOrCreate(
+        client, resource,
+        find: () => lookup.ByField("title", normalizedTitle),
+        attributes: new Dictionary<string, object?> { ["title"] = normalizedTitle },
+        log, $"profit center '{normalizedTitle}' (context_id='{contextId}', context_title='{contextTitle}')",
+        create: createOnTheFly,
+        remember: id => lookup.RememberField("title", normalizedTitle, id));
+    }
+
+
   }
 }

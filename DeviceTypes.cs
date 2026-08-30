@@ -160,44 +160,31 @@ namespace SamedisExternalSync
     public class Root
     {
       [JsonProperty("data")]
-      [JsonConverter(typeof(Helper.SingleOrArrayConverter<Data>))]
+      [JsonConverter(typeof(JsonApi.SingleOrArrayConverter<Data>))]
       public List<Data>? Data { get; set; }
 
       [JsonProperty("meta")]
       public Meta? Meta { get; set; }
     }
+    private const string PublicAndTenant = "filter[scope]=public_and_tenant";
+    private const string TenantOnly = "filter[scope]=tenant";
 
-    public class ErrorResponse
-    {
-      [JsonProperty("meta")]
-      public Meta? Meta { get; set; }
-    }
-
-    public static string GetErrorMessage(string jsonResponse)
-    {
-      try
-      {
-        var errorResponse = JsonConvert.DeserializeObject<ErrorResponse>(jsonResponse);
-        if (errorResponse?.Meta?.Msg != null && !errorResponse.Meta.Msg.Success)
-        {
-          return $"Error response: {errorResponse.Meta.Msg.Message}";
-        }
-      }
-      catch (Exception ex)
-      {
-        return $"Failed to parse error message: {ex.Message}";
-      }
-      return "No error message found.";
-    }
-
+    /// <summary>
+    /// Resolves a device type by title, creating it under the facility's own root when asked
+    /// to.
+    /// </summary>
+    /// <remarks>
+    /// The lookup searches the public catalog and the facility's own types; a create can only
+    /// go under the facility's root node, which the server maintains and which is found as the
+    /// tenant-scoped type without a parent.
+    /// </remarks>
     public static string? ResolveDeviceTypeId(
-      RequestData client,
+      IApiClient client,
       string resource,
       string deviceTypeTitle,
       bool createOnTheFly,
-      IDictionary<string, string> deviceTypesByTitle,
-      IDictionary<string, string> checkedDeviceTypes,
-      Helper helper,
+      ResourceLookup lookup,
+      ISyncLog log,
       string tenantId = "",
       string contextId = "",
       string contextTitle = "")
@@ -206,192 +193,76 @@ namespace SamedisExternalSync
         return null;
 
       var normalizedTitle = deviceTypeTitle.Trim();
-      var checkedByTitleKey = "title:" + normalizedTitle;
+      var where = $"(context_id='{contextId}', context_title='{contextTitle}')";
 
-      if (deviceTypesByTitle.TryGetValue(normalizedTitle, out var cachedDeviceTypeId))
-      {
-        if (!string.IsNullOrWhiteSpace(cachedDeviceTypeId))
-          return cachedDeviceTypeId;
-
-        return null;
-      }
-
-      if (checkedDeviceTypes.TryGetValue(checkedByTitleKey, out var checkedByTitle))
-      {
-        if (!string.IsNullOrWhiteSpace(checkedByTitle))
-          return checkedByTitle;
-
-        return null;
-      }
-
-      var filterBuilder = new FilterBuilder();
-      filterBuilder.Clear();
-      filterBuilder.Add("title", FilterBuilder.FilterType.Equals, FilterBuilder.Type.Text, normalizedTitle);
-
-      var listResponse = client.Get(
-        resource +
-        $"?page[number]=1&page[limit]=1&filter[scope]=public_and_tenant&quickfilter=&gridfilter={filterBuilder.Get()}"
-      );
-
-      if (client.StatusCode == 200 && !string.IsNullOrWhiteSpace(listResponse))
-      {
-        var listRoot = JsonConvert.DeserializeObject<Root>(listResponse);
-        var foundDeviceType = listRoot?.Data?.FirstOrDefault();
-        var resolvedId = foundDeviceType?.Attributes?.Id ?? foundDeviceType?.Id;
-        if (!string.IsNullOrWhiteSpace(resolvedId))
-        {
-          deviceTypesByTitle[normalizedTitle] = resolvedId;
-          checkedDeviceTypes[checkedByTitleKey] = resolvedId;
-          return resolvedId;
-        }
-      }
-      else if (client.StatusCode != 200)
-      {
-        helper.Message(
-          $"Device type lookup request failed for '{normalizedTitle}' (status={client.StatusCode} {client.Status}, response_status='{client.LastResponseStatus}', error='{client.LastError}', context_id='{contextId}', context_title='{contextTitle}').",
-          2,
-          "WARN"
-        );
-      }
-
-      checkedDeviceTypes[checkedByTitleKey] = string.Empty;
-      deviceTypesByTitle[normalizedTitle] = string.Empty;
+      var existing = lookup.ByField("title", normalizedTitle,
+                                    FilterBuilder.FilterType.Equals, PublicAndTenant);
+      if (!string.IsNullOrWhiteSpace(existing))
+        return existing;
 
       if (!createOnTheFly)
         return null;
 
-      string? ResolveTenantRootDeviceTypeId()
-      {
-        const string rootCacheKey = "tenant_root_device_type";
-        if (checkedDeviceTypes.TryGetValue(rootCacheKey, out var cachedRootId))
-          return string.IsNullOrWhiteSpace(cachedRootId) ? null : cachedRootId;
+      // The parent is a hint, not a requirement. The create endpoint calls
+      // Tenant#ensure_type_catalog_tenant_node itself and anchors the new type under the
+      // facility's root node, creating that node when it is missing; a parent_id it cannot
+      // resolve is rescued onto the same node. So a root that does not answer here is worth
+      // noting and nothing more.
+      //
+      // It used to abort instead, and that turned a situation the server heals by itself
+      // into a total import failure: no device types, therefore no device models, therefore
+      // every inventory skipped, and with them every task and every training -- all reported
+      // as "Skipped" with "Errors: 0", because from each row's point of view the data was
+      // simply unresolvable.
+      var attributes = new Dictionary<string, object?> { ["title"] = normalizedTitle };
 
-        var rootFilterBuilder = new FilterBuilder();
-        rootFilterBuilder.Clear();
-        if (!string.IsNullOrWhiteSpace(tenantId))
-          rootFilterBuilder.Add("tenant_id", FilterBuilder.FilterType.Equals, FilterBuilder.Type.ObjectId, tenantId);
-        rootFilterBuilder.Add("parent_id", FilterBuilder.FilterType.Empty, FilterBuilder.Type.ObjectId);
+      var rootId = ResolveTenantRootDeviceTypeId(lookup, tenantId);
+      if (string.IsNullOrWhiteSpace(rootId))
+        log.Debug($"Root device type of the facility did not resolve; letting the server anchor '{normalizedTitle}' {where}.");
+      else
+        attributes["parent_id"] = rootId;
 
-        var rootResponse = client.Get(
-          resource +
-          $"?page[number]=1&page[limit]=1&filter[scope]=tenant&quickfilter=&gridfilter={rootFilterBuilder.Get()}"
-        );
-        if (client.StatusCode == 200 && !string.IsNullOrWhiteSpace(rootResponse))
-        {
-          var rootList = JsonConvert.DeserializeObject<Root>(rootResponse);
-          var root = rootList?.Data?.FirstOrDefault();
-          var rootId = root?.Attributes?.Id ?? root?.Id;
-          if (!string.IsNullOrWhiteSpace(rootId))
-          {
-            checkedDeviceTypes[rootCacheKey] = rootId;
-            return rootId;
-          }
-        }
+      var created = Records.Create(client, resource, attributes,
+                                   log, $"device type '{normalizedTitle}' {where}");
 
-        checkedDeviceTypes[rootCacheKey] = string.Empty;
-        return null;
-      }
+      // The server can accept the create and answer without an id. The record exists at that
+      // point, so it is looked up in the facility's own scope rather than reported as lost.
+      created ??= lookup.ByFields(TenantConditions(normalizedTitle, tenantId),
+                                  FilterBuilder.FilterType.Equals, TenantOnly);
 
-      var tenantRootDeviceTypeId = ResolveTenantRootDeviceTypeId();
-      if (string.IsNullOrWhiteSpace(tenantRootDeviceTypeId))
-      {
-        helper.Message(
-          $"Failed to create device type '{normalizedTitle}' because tenant root device type could not be resolved (context_id='{contextId}', context_title='{contextTitle}').",
-          1,
-          "WARN"
-        );
-        return null;
-      }
+      if (!string.IsNullOrWhiteSpace(created))
+        lookup.RememberField("title", normalizedTitle, created,
+                             FilterBuilder.FilterType.Equals, PublicAndTenant);
 
-      string? ResolveTenantByTitle()
-      {
-        var tenantFilterBuilder = new FilterBuilder();
-        tenantFilterBuilder.Clear();
-        tenantFilterBuilder.Add("title", FilterBuilder.FilterType.Equals, FilterBuilder.Type.Text, normalizedTitle);
-        if (!string.IsNullOrWhiteSpace(tenantId))
-          tenantFilterBuilder.Add("tenant_id", FilterBuilder.FilterType.Equals, FilterBuilder.Type.ObjectId, tenantId);
-
-        var tenantListResponse = client.Get(
-          resource +
-          $"?page[number]=1&page[limit]=1&filter[scope]=tenant&quickfilter=&gridfilter={tenantFilterBuilder.Get()}"
-        );
-        if (client.StatusCode != 200 || string.IsNullOrWhiteSpace(tenantListResponse))
-          return null;
-
-        var tenantListRoot = JsonConvert.DeserializeObject<Root>(tenantListResponse);
-        var tenantMatch = tenantListRoot?.Data?.FirstOrDefault();
-        var tenantMatchId = tenantMatch?.Attributes?.Id ?? tenantMatch?.Id;
-        return string.IsNullOrWhiteSpace(tenantMatchId) ? null : tenantMatchId;
-      }
-
-      var createPayloads = new[]
-      {
-        JsonConvert.SerializeObject(new
-        {
-          data = new Dictionary<string, object?>
-          {
-            ["title"] = normalizedTitle,
-            ["parent_id"] = tenantRootDeviceTypeId
-          }
-        }),
-        JsonConvert.SerializeObject(new
-        {
-          data = new Dictionary<string, object?>
-          {
-            ["attributes"] = new Dictionary<string, object?>
-            {
-              ["title"] = normalizedTitle,
-              ["parent_id"] = tenantRootDeviceTypeId
-            }
-          }
-        }),
-        JsonConvert.SerializeObject(new
-        {
-          data = new Dictionary<string, object?>
-          {
-            ["title"] = normalizedTitle,
-            ["title_labels"] = new Dictionary<string, string>
-            {
-              ["de"] = normalizedTitle
-            },
-            ["parent_id"] = tenantRootDeviceTypeId
-          }
-        })
-      };
-
-      string? createResponse = null;
-      string? newDeviceTypeId = null;
-
-      foreach (var createPayload in createPayloads)
-      {
-        createResponse = client.Post(resource, createPayload);
-        if (client.StatusCode < 200 || client.StatusCode >= 300)
-          continue;
-
-        newDeviceTypeId = Helper.ExtractDataId(createResponse);
-        if (!string.IsNullOrWhiteSpace(newDeviceTypeId))
-          break;
-
-        newDeviceTypeId = ResolveTenantByTitle();
-        if (!string.IsNullOrWhiteSpace(newDeviceTypeId))
-          break;
-      }
-
-      if (string.IsNullOrWhiteSpace(newDeviceTypeId))
-      {
-        helper.Message(
-          $"Failed to create device type (title='{normalizedTitle}', context_id='{contextId}', context_title='{contextTitle}', status={client.StatusCode} {client.Status}, response_status='{client.LastResponseStatus}', error='{client.LastError}'). Response: {createResponse}",
-          1,
-          "WARN"
-        );
-        return null;
-      }
-
-      deviceTypesByTitle[normalizedTitle] = newDeviceTypeId;
-      checkedDeviceTypes[checkedByTitleKey] = newDeviceTypeId;
-      helper.Message($"Device type created on the fly: '{normalizedTitle}' -> {newDeviceTypeId}", 2);
-      return newDeviceTypeId;
+      return created;
     }
+
+    /// <summary>
+    /// The facility's own root device type: the tenant-scoped entry with no parent. Everything
+    /// this sync creates hangs below it.
+    /// </summary>
+    private static string? ResolveTenantRootDeviceTypeId(ResourceLookup lookup, string tenantId)
+    {
+      // A mixed set: the tenant is compared by value, the parent is asserted to be absent.
+      var conditions = string.IsNullOrWhiteSpace(tenantId)
+        ? new[] { Condition.Empty("parent_id", FilterBuilder.Type.ObjectId) }
+        : new[]
+          {
+            Condition.Id("tenant_id", tenantId),
+            Condition.Empty("parent_id", FilterBuilder.Type.ObjectId),
+          };
+
+      return lookup.ByConditions(conditions, TenantOnly);
+    }
+
+    /// <summary>
+    /// Declared once so the lookup and the cache seeding cannot drift apart.
+    /// </summary>
+    private static (string Field, string? Value)[] TenantConditions(string title, string tenantId)
+      => string.IsNullOrWhiteSpace(tenantId)
+        ? new (string, string?)[] { ("title", title) }
+        : new (string, string?)[] { ("title", title), ("tenant_id", tenantId) };
+
 
   }
 }

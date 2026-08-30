@@ -7,6 +7,116 @@ namespace SamedisExternalSync
 {
   public class DeviceModels
   {
+    /// <summary>
+    /// Resolves the facility's own device model for an inventory row, creating it -- together
+    /// with its device type and manufacturer -- when it does not exist yet.
+    /// </summary>
+    /// <param name="resolvedBySourceKey">
+    /// What each source combination of title, manufacturer and device type resolved to this
+    /// run, including the ones that resolved to nothing. Not an API lookup cache: it is keyed
+    /// by the source's values before any of them have been turned into ids, and it exists so a
+    /// row that cannot be resolved does not repeat the device-type and manufacturer round
+    /// trips -- and the warning -- for every further row like it.
+    /// </param>
+    /// <remarks>
+    /// A create rejected because the model already exists is not treated as a failure: the
+    /// server names the colliding record in <c>meta.msg.error_details</c> and
+    /// <see cref="Records.Create"/> reuses it. That replaces this file's own
+    /// TryExtractDuplicateModelId.
+    /// </remarks>
+    public static string? ResolveOrCreateTenantCatalogIdForInventory(
+      IApiClient client,
+      string tenantId,
+      string modelTitle,
+      string manufacturer,
+      string deviceTypeTitle,
+      ResourceLookup deviceModelLookup,
+      ResourceLookup deviceTypeLookup,
+      ResourceLookup manufacturerLookup,
+      IDictionary<string, string> resolvedBySourceKey,
+      ISyncLog log,
+      string contextId = "",
+      string inventoryNumber = "")
+    {
+      var title = modelTitle?.Trim() ?? string.Empty;
+      if (string.IsNullOrWhiteSpace(title))
+        return null;
+
+      var maker = manufacturer?.Trim() ?? string.Empty;
+      var typeTitle = deviceTypeTitle?.Trim() ?? string.Empty;
+      var sourceKey = title + "|" + maker + "|" + typeTitle;
+      var where = $"(model_title='{title}', manufacturer='{maker}', device_type_title='{typeTitle}', source_id='{contextId}', inventory_number='{inventoryNumber}')";
+
+      if (resolvedBySourceKey.TryGetValue(sourceKey, out var known))
+        return string.IsNullOrWhiteSpace(known) ? null : known;
+
+      string? Give(string? id)
+      {
+        resolvedBySourceKey[sourceKey] = id ?? string.Empty;
+        if (!string.IsNullOrWhiteSpace(id))
+        {
+          // Seed the plain title/manufacturer lookup as well, so a later row carrying only
+          // those two is answered from memory.
+          Cascades.RememberDeviceModel(deviceModelLookup, title, maker, id,
+                                       caseInsensitiveTitleMatch: false);
+          log.Debug($"Local tenant device model resolved/created {where} -> catalog_id '{id}'.");
+        }
+        return id;
+      }
+
+      // Both are required to create a model, and neither can be invented.
+      if (string.IsNullOrWhiteSpace(typeTitle))
+      {
+        log.Warn($"Local device model creation skipped: device_type_title missing {where}.");
+        return Give(null);
+      }
+
+      if (string.IsNullOrWhiteSpace(maker))
+      {
+        log.Warn($"Local device model creation skipped: manufacturer missing {where}.");
+        return Give(null);
+      }
+
+      var deviceTypeId = DeviceTypes.ResolveDeviceTypeId(
+        client, deviceTypeLookup.Resource, typeTitle, createOnTheFly: true,
+        deviceTypeLookup, log, tenantId, contextId, title);
+      if (string.IsNullOrWhiteSpace(deviceTypeId))
+        return Give(null);
+
+      var manufacturerId = Contacts.ResolveCompanyContactId(
+        client, manufacturerLookup.Resource, maker, createOnTheFly: true,
+        manufacturerLookup, log, contextId, title);
+      if (string.IsNullOrWhiteSpace(manufacturerId))
+        return Give(null);
+
+      // The facility's own model is identified by title, device type and manufacturer
+      // together. The server checks a duplicate against title, manufacturer and version.
+      var conditions = new (string, string?)[]
+      {
+        ("title", title),
+        ("device_type_id", deviceTypeId),
+        ("manufacturer_according_to_type_plate", maker),
+      };
+      const string bothScopes = "filter[scope]=public_and_tenant";
+
+      return Give(Records.FindOrCreate(
+        client, deviceModelLookup.Resource,
+        find: () => deviceModelLookup.ByFields(conditions, FilterBuilder.FilterType.Equals, bothScopes),
+        attributes: new Dictionary<string, object?>
+        {
+          ["title"] = title,
+          ["device_type_id"] = deviceTypeId,
+          ["manufacturer_according_to_type_plate"] = maker,
+          ["current_responsible_manufacturer"] = maker,
+          ["manufacturer_company_contact_id"] = manufacturerId,
+          ["responsible_company_contact_id"] = manufacturerId,
+          ["is_public"] = false
+        },
+        log, $"local device model {where}",
+        remember: id => deviceModelLookup.RememberFields(conditions, id,
+                                                         FilterBuilder.FilterType.Equals, bothScopes)));
+    }
+
     [AttributeUsage(AttributeTargets.Property, AllowMultiple = false)]
     public class LocalizableContentAttribute : Attribute
     {
@@ -313,36 +423,12 @@ namespace SamedisExternalSync
     public class Root
     {
       [JsonProperty("data")]
-      [JsonConverter(typeof(Helper.SingleOrArrayConverter<Data>))]
+      [JsonConverter(typeof(JsonApi.SingleOrArrayConverter<Data>))]
       public List<Data>? Data { get; set; }
 
       [JsonProperty("meta")]
       public Meta? Meta { get; set; }
     }
-
-    public class ErrorResponse
-    {
-      [JsonProperty("meta")]
-      public Meta? Meta { get; set; }
-    }
-
-    public static string GetErrorMessage(string jsonResponse)
-    {
-      try
-      {
-        var errorResponse = JsonConvert.DeserializeObject<ErrorResponse>(jsonResponse);
-        if (errorResponse?.Meta?.Msg != null && !errorResponse.Meta.Msg.Success)
-        {
-          return $"Error response: {errorResponse.Meta.Msg.Message}";
-        }
-      }
-      catch (Exception ex)
-      {
-        return $"Failed to parse error message: {ex.Message}";
-      }
-      return "No error message found.";
-    }
-
     public static DataSet CreateDeviceDataSet()
     {
       var ds = new DataSet("Devices");
@@ -412,272 +498,24 @@ namespace SamedisExternalSync
         table.Rows.Add(row);
       }
     }
-
-    public static string? ResolveCatalogId(
-      RequestData client,
-      string resource,
-      string title,
-      string manufacturer,
-      IDictionary<string, string> catalogLookupCache)
-    {
-      var normalizedTitle = title?.Trim() ?? string.Empty;
-      if (string.IsNullOrWhiteSpace(normalizedTitle))
-        return null;
-
-      var normalizedManufacturer = manufacturer?.Trim() ?? string.Empty;
-      var cacheKey = $"{normalizedTitle}|{normalizedManufacturer}";
-
-      if (catalogLookupCache.TryGetValue(cacheKey, out var cachedCatalogId))
-        return string.IsNullOrWhiteSpace(cachedCatalogId) ? null : cachedCatalogId;
-
-      string? TryFindWithFilter(string? manufacturerField, string? manufacturerValue)
-      {
-        var filterBuilder = new FilterBuilder();
-        filterBuilder.Clear();
-        filterBuilder.Add("title", FilterBuilder.FilterType.Equals, FilterBuilder.Type.Text, normalizedTitle);
-
-        if (!string.IsNullOrWhiteSpace(manufacturerField) && !string.IsNullOrWhiteSpace(manufacturerValue))
-        {
-          filterBuilder.Add(manufacturerField, FilterBuilder.FilterType.Equals, FilterBuilder.Type.Text, manufacturerValue);
-        }
-
-        var listResponse = client.Get(
-          resource +
-          $"?page[number]=1&page[limit]=1&filter[scope]=public_and_tenant&quickfilter=&gridfilter={filterBuilder.Get()}"
-        );
-
-        if (client.StatusCode != 200 || string.IsNullOrWhiteSpace(listResponse))
-          return null;
-
-        var listRoot = JsonConvert.DeserializeObject<DeviceModels.Root>(listResponse);
-        var first = listRoot?.Data?.FirstOrDefault();
-        var foundId = first?.Attributes?.Id ?? first?.Id;
-        return string.IsNullOrWhiteSpace(foundId) ? null : foundId;
-      }
-
-      string? resolvedCatalogId = null;
-      if (!string.IsNullOrWhiteSpace(normalizedManufacturer))
-      {
-        resolvedCatalogId = TryFindWithFilter("manufacturer_according_to_type_plate", normalizedManufacturer);
-        resolvedCatalogId ??= TryFindWithFilter("current_responsible_manufacturer", normalizedManufacturer);
-      }
-      else
-      {
-        resolvedCatalogId = TryFindWithFilter(null, null);
-      }
-
-      catalogLookupCache[cacheKey] = resolvedCatalogId ?? string.Empty;
-      return resolvedCatalogId;
-    }
-
-    public static string? ResolveOrCreateTenantCatalogIdForInventory(
-      RequestData client,
-      string deviceModelsResource,
-      string deviceTypesResource,
-      string contactsResource,
-      string tenantId,
-      string modelTitle,
-      string manufacturer,
-      string deviceTypeTitle,
-      IDictionary<string, string> deviceTypesByTitle,
-      IDictionary<string, string> checkedDeviceTypes,
-      IDictionary<string, string> manufacturersByName,
-      IDictionary<string, string> checkedManufacturers,
-      IDictionary<string, string> tenantModelLookupCache,
-      IDictionary<string, string> catalogLookupCache,
-      Helper helper,
-      string contextId = "",
-      string inventoryNumber = "")
-    {
-      var normalizedModelTitle = modelTitle?.Trim() ?? string.Empty;
-      if (string.IsNullOrWhiteSpace(normalizedModelTitle))
-        return null;
-
-      var normalizedManufacturer = manufacturer?.Trim() ?? string.Empty;
-      var normalizedDeviceTypeTitle = deviceTypeTitle?.Trim() ?? string.Empty;
-      var tenantModelKey = $"{normalizedModelTitle}|{normalizedManufacturer}|{normalizedDeviceTypeTitle}";
-
-      if (tenantModelLookupCache.TryGetValue(tenantModelKey, out var cachedTenantModelId))
-        return string.IsNullOrWhiteSpace(cachedTenantModelId) ? null : cachedTenantModelId;
-
-      if (string.IsNullOrWhiteSpace(normalizedDeviceTypeTitle))
-      {
-        helper.Message(
-          $"Local device model creation skipped: device_type_title missing (model_title='{normalizedModelTitle}', manufacturer='{normalizedManufacturer}', source_id='{contextId}', inventory_number='{inventoryNumber}').",
-          1,
-          "WARN"
-        );
-        tenantModelLookupCache[tenantModelKey] = string.Empty;
-        return null;
-      }
-
-      if (string.IsNullOrWhiteSpace(normalizedManufacturer))
-      {
-        helper.Message(
-          $"Local device model creation skipped: manufacturer missing (model_title='{normalizedModelTitle}', device_type_title='{normalizedDeviceTypeTitle}', source_id='{contextId}', inventory_number='{inventoryNumber}').",
-          1,
-          "WARN"
-        );
-        tenantModelLookupCache[tenantModelKey] = string.Empty;
-        return null;
-      }
-
-      var resolvedDeviceTypeId = DeviceTypes.ResolveDeviceTypeId(
-        client,
-        deviceTypesResource,
-        normalizedDeviceTypeTitle,
-        createOnTheFly: true,
-        deviceTypesByTitle,
-        checkedDeviceTypes,
-        helper,
-        tenantId,
-        contextId,
-        normalizedModelTitle
-      );
-      if (string.IsNullOrWhiteSpace(resolvedDeviceTypeId))
-      {
-        tenantModelLookupCache[tenantModelKey] = string.Empty;
-        return null;
-      }
-
-      var resolvedManufacturerId = Contacts.ResolveCompanyContactId(
-        client,
-        contactsResource,
-        normalizedManufacturer,
-        createOnTheFly: true,
-        manufacturersByName,
-        checkedManufacturers,
-        helper,
-        contextId,
-        normalizedModelTitle
-      );
-      if (string.IsNullOrWhiteSpace(resolvedManufacturerId))
-      {
-        tenantModelLookupCache[tenantModelKey] = string.Empty;
-        return null;
-      }
-
-      string? ResolveTenantModel()
-      {
-        var filterBuilder = new FilterBuilder();
-        filterBuilder.Clear();
-        filterBuilder.Add("title", FilterBuilder.FilterType.Equals, FilterBuilder.Type.Text, normalizedModelTitle);
-        filterBuilder.Add("device_type_id", FilterBuilder.FilterType.Equals, FilterBuilder.Type.ObjectId, resolvedDeviceTypeId);
-        filterBuilder.Add("manufacturer_according_to_type_plate", FilterBuilder.FilterType.Equals, FilterBuilder.Type.Text, normalizedManufacturer);
-
-        var listResponse = client.Get(
-          deviceModelsResource +
-          $"?page[number]=1&page[limit]=1&filter[scope]=public_and_tenant&quickfilter=&gridfilter={filterBuilder.Get()}"
-        );
-        if (client.StatusCode != 200 || string.IsNullOrWhiteSpace(listResponse))
-          return null;
-
-        var listRoot = JsonConvert.DeserializeObject<Root>(listResponse);
-        var found = listRoot?.Data?.FirstOrDefault();
-        var foundId = found?.Attributes?.Id ?? found?.Id;
-        return string.IsNullOrWhiteSpace(foundId) ? null : foundId;
-      }
-
-      var tenantCatalogId = ResolveTenantModel();
-      if (string.IsNullOrWhiteSpace(tenantCatalogId))
-      {
-        var payload = JsonConvert.SerializeObject(new
-        {
-          data = new Dictionary<string, object?>
-          {
-            ["title"] = normalizedModelTitle,
-            ["device_type_id"] = resolvedDeviceTypeId,
-            ["manufacturer_according_to_type_plate"] = normalizedManufacturer,
-            ["current_responsible_manufacturer"] = normalizedManufacturer,
-            ["manufacturer_company_contact_id"] = resolvedManufacturerId,
-            ["responsible_company_contact_id"] = resolvedManufacturerId,
-            ["is_public"] = false
-          }
-        });
-
-        var createResponse = client.Post(deviceModelsResource, payload);
-        if (client.StatusCode >= 200 && client.StatusCode < 300)
-        {
-          tenantCatalogId = Helper.ExtractDataId(createResponse);
-          if (string.IsNullOrWhiteSpace(tenantCatalogId))
-            tenantCatalogId = ResolveTenantModel();
-        }
-        else
-        {
-          // Samedis rejects the create when an identical (tenant or public) model already exists.
-          // In that case the API returns the existing model's id under meta.msg.error_details.duplicate_of
-          // or meta.msg.error_details.public_duplicate_of. We reuse it instead of failing with a WARN.
-          var duplicateId = TryExtractDuplicateModelId(createResponse, out var duplicateKind);
-          if (!string.IsNullOrWhiteSpace(duplicateId))
-          {
-            tenantCatalogId = duplicateId;
-            helper.Message(
-              $"Local device model already existed; reusing {duplicateKind} (title='{normalizedModelTitle}', manufacturer='{normalizedManufacturer}', device_type_title='{normalizedDeviceTypeTitle}', source_id='{contextId}', inventory_number='{inventoryNumber}') -> catalog_id '{tenantCatalogId}'.",
-              1
-            );
-          }
-          else
-          {
-            helper.Message(
-              $"Failed to create local device model (title='{normalizedModelTitle}', manufacturer='{normalizedManufacturer}', device_type_title='{normalizedDeviceTypeTitle}', source_id='{contextId}', inventory_number='{inventoryNumber}', status={client.StatusCode} {client.Status}, response_status='{client.LastResponseStatus}', error='{client.LastError}'). Response: {createResponse}",
-              1,
-              "WARN"
-            );
-          }
-        }
-      }
-
-      if (string.IsNullOrWhiteSpace(tenantCatalogId))
-      {
-        tenantModelLookupCache[tenantModelKey] = string.Empty;
-        return null;
-      }
-
-      tenantModelLookupCache[tenantModelKey] = tenantCatalogId;
-      catalogLookupCache[$"{normalizedModelTitle}|{normalizedManufacturer}"] = tenantCatalogId;
-      helper.Message(
-        $"Local tenant device model resolved/created: title='{normalizedModelTitle}', manufacturer='{normalizedManufacturer}', device_type_title='{normalizedDeviceTypeTitle}' -> catalog_id '{tenantCatalogId}'.",
-        2
-      );
-      return tenantCatalogId;
-    }
-
-    private static string? TryExtractDuplicateModelId(string? response, out string duplicateKind)
-    {
-      duplicateKind = string.Empty;
-      if (string.IsNullOrWhiteSpace(response))
-        return null;
-
-      try
-      {
-        var root = JObject.Parse(response);
-        var errorDetails = root.SelectToken("meta.msg.error_details");
-        if (errorDetails == null || errorDetails.Type != JTokenType.Object)
-          return null;
-
-        // Tenant-level duplicate takes precedence over public, because a tenant copy is the closer match.
-        var tenantDuplicate = errorDetails["duplicate_of"]?.ToString();
-        if (!string.IsNullOrWhiteSpace(tenantDuplicate))
-        {
-          duplicateKind = "existing tenant device model (duplicate_of)";
-          return tenantDuplicate;
-        }
-
-        var publicDuplicate = errorDetails["public_duplicate_of"]?.ToString();
-        if (!string.IsNullOrWhiteSpace(publicDuplicate))
-        {
-          duplicateKind = "existing public/shared device model (public_duplicate_of)";
-          return publicDuplicate;
-        }
-      }
-      catch
-      {
-        // Malformed response -- fall through to the regular WARN path.
-      }
-
-      return null;
-    }
-
+    /// <summary>
+    /// Resolves a device model by title and manufacturer.
+    /// </summary>
+    /// <remarks>
+    /// The manufacturer is tried against two fields because source systems use them
+    /// interchangeably: the type-plate manufacturer first, then the currently responsible
+    /// one. Both steps search the tenant's own models and the public catalog.
+    /// <para>
+    /// The title is compared case-sensitively, which is what this did before the migration.
+    /// Source data and catalog entries routinely differ only in casing ("seca 954" against
+    /// "Seca 954"), and those are missed today; passing
+    /// <c>caseInsensitiveTitleMatch: true</c> would catch them. Left as it was because it
+    /// changes which record a row resolves to, which is a decision about the data, not the
+    /// code.
+    /// </para>
+    /// </remarks>
+    public static string? ResolveCatalogId(ResourceLookup lookup, string title, string manufacturer)
+      => Cascades.DeviceModel(lookup, null, title, manufacturer, caseInsensitiveTitleMatch: false);
   }
 
   public class WithServiceInterval
@@ -699,6 +537,8 @@ namespace SamedisExternalSync
 
     [JsonProperty("language")]
     public string? Language { get; set; }
+
+
   }
 
 }

@@ -125,7 +125,7 @@ namespace SamedisExternalSync
       public class Root
       {
         [JsonProperty("data")]
-        [JsonConverter(typeof(Helper.SingleOrArrayConverter<Data>))]
+        [JsonConverter(typeof(JsonApi.SingleOrArrayConverter<Data>))]
         public List<Data>? Data { get; set; }
 
         [JsonProperty("meta")]
@@ -322,7 +322,7 @@ namespace SamedisExternalSync
     public class Root
     {
       [JsonProperty("data")]
-      [JsonConverter(typeof(Helper.SingleOrArrayConverter<Data>))]
+      [JsonConverter(typeof(JsonApi.SingleOrArrayConverter<Data>))]
       public List<Data>? Data { get; set; }
 
       [JsonProperty("meta")]
@@ -443,41 +443,6 @@ namespace SamedisExternalSync
         table.Rows.Add(row);
       }
     }
-
-    public static string ResolveIssueIdByIssueNumber(
-      RequestData samedisClient,
-      string issuesResource,
-      string issueNumber,
-      IDictionary<string, string> issueByIssueNumber)
-    {
-      if (string.IsNullOrWhiteSpace(issueNumber))
-        return string.Empty;
-
-      var normalizedIssueNumber = issueNumber.Trim();
-      if (issueByIssueNumber.TryGetValue(normalizedIssueNumber, out var cachedIssueId))
-        return cachedIssueId;
-
-      var filterBuilder = new FilterBuilder();
-      filterBuilder.Clear();
-      if (Helper.TryParseInt(normalizedIssueNumber, out var issueNumberAsInt))
-        filterBuilder.Add("issue_number", FilterBuilder.FilterType.Equals, FilterBuilder.Type.Number, issueNumberAsInt);
-      else
-        filterBuilder.Add("issue_number", FilterBuilder.FilterType.Equals, FilterBuilder.Type.Text, normalizedIssueNumber);
-
-      var requestResource = issuesResource + $"?page[number]=1&page[limit]=1&quickfilter=&gridfilter={filterBuilder.Get()}";
-      var response = samedisClient.Get(requestResource);
-
-      if (samedisClient.StatusCode >= 200 && samedisClient.StatusCode < 300)
-      {
-        var resolvedIssueId = Helper.ExtractDataId(response) ?? string.Empty;
-        issueByIssueNumber[normalizedIssueNumber] = resolvedIssueId;
-        return resolvedIssueId;
-      }
-
-      issueByIssueNumber[normalizedIssueNumber] = string.Empty;
-      return string.Empty;
-    }
-
     public static Dictionary<string, object>? BuildTaskAttributes(
       DataRow row,
       string inventoryId,
@@ -507,7 +472,7 @@ namespace SamedisExternalSync
         return null;
       }
 
-      var issueTypeRaw = Helper.GetRowValue(row, "issue_type");
+      var issueTypeRaw = Rows.Value(row, "issue_type");
       var issueType = string.Empty;
       if (ContainsMaintenanceKeywords(issueTypeRaw))
       {
@@ -519,7 +484,7 @@ namespace SamedisExternalSync
         return null;
       }
 
-      var statusRaw = Helper.GetRowValue(row, "status");
+      var statusRaw = Rows.Value(row, "status");
       if (!TryNormalizeStatus(statusRaw, out var status))
       {
         errorMessage = $"Unsupported status '{statusRaw}'. Allowed: _new, pending, in_progress, done.";
@@ -529,37 +494,37 @@ namespace SamedisExternalSync
       attributes["inventory_id"] = inventoryId;
       attributes["issue_type"] = issueType;
       attributes["status"] = status;
-      Helper.AddStringAttribute(attributes, "external_id", Helper.GetRowValue(row, "issue_number"));
-      var maintenanceType = Helper.GetRowValue(row, "maintenance_type");
+      JsonApi.AddStringAttribute(attributes, "external_id", Rows.Value(row, "issue_number"));
+      var maintenanceType = Rows.Value(row, "maintenance_type");
       if (string.IsNullOrWhiteSpace(maintenanceType))
         maintenanceType = issueType;
       if (string.IsNullOrWhiteSpace(maintenanceType))
         maintenanceType = "maintenance";
       attributes["maintenance_type"] = maintenanceType;
-      Helper.AddStringAttribute(attributes, "maintenance_performer", Helper.GetRowValue(row, "responsible_name"));
-      var servicesRaw = Helper.GetRowValue(row, "services");
+      JsonApi.AddStringAttribute(attributes, "maintenance_performer", Rows.Value(row, "responsible_name"));
+      var servicesRaw = Rows.Value(row, "services");
       if (string.IsNullOrWhiteSpace(servicesRaw))
         servicesRaw = string.IsNullOrWhiteSpace(issueTypeRaw) ? issueType : issueTypeRaw;
       attributes["services"] = ParseServicesArray(servicesRaw);
 
-      Helper.AddStringAttribute(attributes, "title", Helper.GetRowValue(row, "title"));
-      var normalizedDoneAt = NormalizeTaskDate(Helper.GetRowValue(row, "done_at"));
+      JsonApi.AddStringAttribute(attributes, "title", Rows.Value(row, "title"));
+      var normalizedDoneAt = NormalizeTaskDate(Rows.Value(row, "done_at"));
       if (string.IsNullOrWhiteSpace(normalizedDoneAt))
       {
         errorMessage = "done_at is required to set due_on and done_at.";
         return null;
       }
-      Helper.AddStringAttribute(attributes, "date", normalizedDoneAt);
-      Helper.AddStringAttribute(attributes, "done_at", normalizedDoneAt);
-      Helper.AddStringAttribute(attributes, "responsible_name", Helper.GetRowValue(row, "responsible_name"));
-      Helper.AddStringAttribute(attributes, "test_comment", Helper.GetRowValue(row, "test_comment"));
-      var inventoryOperationStatus = NormalizeSimpleToken(Helper.GetRowValue(row, "inventory_operation_status"));
+      JsonApi.AddStringAttribute(attributes, "date", normalizedDoneAt);
+      JsonApi.AddStringAttribute(attributes, "done_at", normalizedDoneAt);
+      JsonApi.AddStringAttribute(attributes, "responsible_name", Rows.Value(row, "responsible_name"));
+      JsonApi.AddStringAttribute(attributes, "test_comment", Rows.Value(row, "test_comment"));
+      var inventoryOperationStatus = NormalizeSimpleToken(Rows.Value(row, "inventory_operation_status"));
       if (!string.IsNullOrWhiteSpace(inventoryOperationStatus))
         attributes["inventory_operation_status"] = inventoryOperationStatus;
 
-      var testResultRaw = Helper.GetRowValue(row, "test_result");
-      var maintenancePassedRaw = Helper.GetRowValue(row, "maintenance_passed");
-      var hasMaintenancePassed = Helper.TryParseBool(maintenancePassedRaw, out var maintenancePassedValue);
+      var testResultRaw = Rows.Value(row, "test_result");
+      var maintenancePassedRaw = Rows.Value(row, "maintenance_passed");
+      var hasMaintenancePassed = Strings.TryParseBool(maintenancePassedRaw, out var maintenancePassedValue);
 
       if (!string.IsNullOrWhiteSpace(maintenancePassedRaw) && !hasMaintenancePassed)
       {
@@ -919,5 +884,59 @@ namespace SamedisExternalSync
 
       return sb.ToString().Trim('_');
     }
+    /// <summary>
+    /// Resolves an issue by its number.
+    /// </summary>
+    /// <remarks>
+    /// The number is filtered as a number when it parses as one and as text otherwise: the
+    /// server rejects a text filter on a numeric field and vice versa, and source exports are
+    /// not consistent about which they write.
+    /// </remarks>
+    public static string ResolveIssueIdByIssueNumber(
+      ResourceLookup lookup,
+      string issueNumber)
+    {
+      if (string.IsNullOrWhiteSpace(issueNumber))
+        return string.Empty;
+
+      var normalized = issueNumber.Trim();
+      var condition = Strings.TryParseInt(normalized, out var asNumber)
+        ? new Condition("issue_number", FilterBuilder.FilterType.Equals, FilterBuilder.Type.Number, asNumber)
+        : new Condition("issue_number", FilterBuilder.FilterType.Equals, FilterBuilder.Type.Text, normalized);
+
+      return lookup.ByConditions(new[] { condition }) ?? string.Empty;
+    }
+
+
+    /// <summary>
+    /// Whether a file of this name is already attached to the task.
+    /// </summary>
+    /// <remarks>
+    /// The upload endpoint appends rather than replaces, so without this check a repeated run
+    /// -- which is exactly what one does after fixing a problem -- leaves the task carrying
+    /// the same protocol several times over.
+    /// <para>
+    /// A failure to read the existing uploads answers false: attaching a duplicate is a
+    /// smaller problem than silently not attaching the protocol at all.
+    /// </para>
+    /// </remarks>
+    public static bool IsDocumentAlreadyAttached(IApiClient client, string tasksResource,
+                                                 string taskId, string fileName, ISyncLog log)
+    {
+      if (string.IsNullOrWhiteSpace(taskId) || string.IsNullOrWhiteSpace(fileName))
+        return false;
+
+      var response = client.Get($"{tasksResource}/{taskId}/uploads?page[number]=1&page[limit]=100");
+      if (!JsonApi.IsSuccess(client.StatusCode))
+      {
+        log.Debug($"Could not read the existing uploads of task '{taskId}' (status={client.StatusCode}); uploading anyway.");
+        return false;
+      }
+
+      // AttributeSet compares case-insensitively, which is what a file name needs.
+      return JsonApi.AttributeSet(response, "name").Contains(fileName);
+    }
+
+
   }
 }

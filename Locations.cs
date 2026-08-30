@@ -134,14 +134,14 @@ namespace SamedisExternalSync
     public class Root
     {
       [JsonProperty("data")]
-      [JsonConverter(typeof(Helper.SingleOrArrayConverter<Data>))]
+      [JsonConverter(typeof(JsonApi.SingleOrArrayConverter<Data>))]
       public List<Data>? Data { get; set; }
 
       [JsonProperty("meta")]
       public Meta? Meta { get; set; }
     }
 
-    public static Dictionary<string, SourceRoom> LoadSourceRooms(string csvPath, Helper helper)
+    public static Dictionary<string, SourceRoom> LoadSourceRooms(string csvPath, ISyncLog log)
     {
       var result = new Dictionary<string, SourceRoom>(StringComparer.OrdinalIgnoreCase);
       if (string.IsNullOrWhiteSpace(csvPath) || !File.Exists(csvPath))
@@ -150,39 +150,39 @@ namespace SamedisExternalSync
       DataTable sourceTable;
       try
       {
-        sourceTable = Helper.ImportCsvToDataTable(csvPath, "SourceRooms");
+        sourceTable = Csv.Read(csvPath, tableName: "SourceRooms", trimFields: true);
       }
       catch (Exception ex)
       {
-        helper.Message($"Failed to read source rooms CSV '{csvPath}': {ex.Message}", 1, "WARN");
+        log.Warn($"Failed to read source rooms CSV '{csvPath}': {ex.Message}");
         return result;
       }
       var hasPlisCodeColumn = sourceTable.Columns.Contains("plis_code");
 
       foreach (DataRow row in sourceTable.Rows)
       {
-        var sourceId = Helper.GetRowValue(row, "lid");
+        var sourceId = Rows.Value(row, "lid");
         if (string.IsNullOrWhiteSpace(sourceId))
-          sourceId = Helper.GetRowValue(row, "id");
+          sourceId = Rows.Value(row, "id");
 
         if (string.IsNullOrWhiteSpace(sourceId))
           continue;
 
-        var title = Helper.GetRowValue(row, "Bezeichnung");
+        var title = Rows.Value(row, "Bezeichnung");
         if (string.IsNullOrWhiteSpace(title))
-          title = Helper.GetRowValue(row, "description");
+          title = Rows.Value(row, "description");
         if (string.IsNullOrWhiteSpace(title))
-          title = Helper.GetRowValue(row, "descriptions");
+          title = Rows.Value(row, "descriptions");
         if (string.IsNullOrWhiteSpace(title))
-          title = Helper.GetRowValue(row, "title");
-        var number = Helper.GetRowValue(row, "Number");
+          title = Rows.Value(row, "title");
+        var number = Rows.Value(row, "Number");
         if (string.IsNullOrWhiteSpace(number))
-          number = Helper.GetRowValue(row, "number");
+          number = Rows.Value(row, "number");
         if (!string.IsNullOrWhiteSpace(title) && !string.IsNullOrWhiteSpace(number))
           title = $"{title} ({number})";
-        var sourceFloorId = Helper.GetRowValue(row, "parent_id");
+        var sourceFloorId = Rows.Value(row, "parent_id");
         if (string.IsNullOrWhiteSpace(sourceFloorId))
-          sourceFloorId = Helper.GetRowValue(row, "Übergeordnet");
+          sourceFloorId = Rows.Value(row, "Übergeordnet");
 
         result[sourceId] = new SourceRoom
         {
@@ -190,11 +190,11 @@ namespace SamedisExternalSync
           SourceFloorId = sourceFloorId,
           Number = number,
           Title = title,
-          PlisCode = hasPlisCodeColumn ? Helper.GetRowValue(row, "plis_code") : string.Empty
+          PlisCode = hasPlisCodeColumn ? Rows.Value(row, "plis_code") : string.Empty
         };
       }
 
-      helper.Message($"Loaded source room map entries: {result.Count}", 2);
+      log.Debug($"Loaded source room map entries: {result.Count}");
       return result;
     }
 
@@ -267,6 +267,24 @@ namespace SamedisExternalSync
       }
     }
 
+    /// <summary>
+    /// A location is identified by its title, narrowed by whichever of property, building and
+    /// floor the row carries. Blank ones are dropped here rather than at the call sites, so
+    /// the lookup and the cache seeding always see the same set of conditions -- seeding a
+    /// different set is a cache entry that never gets hit.
+    /// </summary>
+    private static (string Field, string? Value)[] TitleConditions(
+      string title, string? propertyId, string? buildingId, string? floorId)
+      => new (string Field, string? Value)[]
+         {
+           ("title", title),
+           ("property_id", propertyId),
+           ("building_id", buildingId),
+           ("floor_id", floorId),
+         }
+         .Where(c => !string.IsNullOrWhiteSpace(c.Value))
+         .ToArray();
+
     public static string? ResolveLocationId(
       RequestData client,
       string resource,
@@ -275,10 +293,8 @@ namespace SamedisExternalSync
       bool createOnTheFly,
       string inventoryId,
       string inventoryTitle,
-      IDictionary<string, string> locationsById,
-      IDictionary<string, string> locationsByTitle,
-      IDictionary<string, string> checkedLocations,
-      Helper helper,
+      ResourceLookup lookup,
+      ISyncLog log,
       string? propertyId = null,
       string? buildingId = null,
       string? floorId = null,
@@ -286,9 +302,6 @@ namespace SamedisExternalSync
       string externalId = "",
       bool updateOnExisting = false)
     {
-      if (!string.IsNullOrWhiteSpace(locationId) && locationsById.TryGetValue(locationId, out var existingId) && !string.IsNullOrWhiteSpace(existingId))
-        return existingId;
-
       var normalizedLocationTitle = locationTitle?.Trim() ?? string.Empty;
       var normalizedExternalId = externalId?.Trim() ?? string.Empty;
       var normalizedLocationNotes = locationNotes?.Trim() ?? string.Empty;
@@ -330,147 +343,45 @@ namespace SamedisExternalSync
         var updateResponse = client.Put(resource, resolvedId, updatePayload);
         if (client.StatusCode >= 200 && client.StatusCode < 300)
         {
-          helper.Message(
-            $"Location synced via PUT (match_by='{matchedBy}', id='{resolvedId}', title='{normalizedLocationTitle}', external_id='{normalizedExternalId}').",
-            2
-          );
+          log.Debug($"Location synced via PUT (match_by='{matchedBy}', id='{resolvedId}', title='{normalizedLocationTitle}', external_id='{normalizedExternalId}').");
         }
         else
         {
-          helper.Message(
-            $"Failed to sync location via PUT (match_by='{matchedBy}', id='{resolvedId}', title='{normalizedLocationTitle}', property_id='{propertyId}', building_id='{buildingId}', floor_id='{floorId}', external_id='{normalizedExternalId}', status={client.StatusCode} {client.Status}, response_status='{client.LastResponseStatus}', error='{client.LastError}'). Response: {updateResponse}",
-            1,
-            "WARN"
-          );
+          log.Warn($"Failed to sync location via PUT (match_by='{matchedBy}', id='{resolvedId}', title='{normalizedLocationTitle}', property_id='{propertyId}', building_id='{buildingId}', floor_id='{floorId}', external_id='{normalizedExternalId}', status={client.StatusCode} {client.Status}, response_status='{client.LastResponseStatus}', error='{client.LastError}'). Response: {updateResponse}");
         }
       }
 
+      // external_id is the stable cross-system anchor, so it is tried first. The lookup
+      // remembers hits and misses, which is what the checkedLocations bookkeeping did here.
+      var resolvedByExternalId = lookup.ByUniqueField("external_id", normalizedExternalId);
+      if (!string.IsNullOrWhiteSpace(resolvedByExternalId))
+      {
+        lookup.RememberFields(TitleConditions(normalizedLocationTitle, propertyId, buildingId, floorId),
+                              resolvedByExternalId);
+        SyncExistingLocation(resolvedByExternalId, "external_id");
+        return resolvedByExternalId;
+      }
+
+      // Debug, not a warning: on a first import nothing carries this external_id yet, so a
+      // miss is the normal case and the row goes on to be matched by title or created. It
+      // was promoted to a warning together with the lookup *failures*, which is a different
+      // thing -- those say the question could not be answered, this one answers it.
       if (!string.IsNullOrWhiteSpace(normalizedExternalId))
+        log.Debug($"Location not found by external_id, continuing with title (external_id='{normalizedExternalId}', property_id='{propertyId}', building_id='{buildingId}', floor_id='{floorId}').");
+
+      var resolvedById = lookup.ById(locationId);
+      if (!string.IsNullOrWhiteSpace(resolvedById))
       {
-        var checkedByExternalKey = "external_id:" + externalLookupKey;
-        if (checkedLocations.TryGetValue(checkedByExternalKey, out var checkedByExternal))
-        {
-          if (!string.IsNullOrWhiteSpace(checkedByExternal))
-          {
-            SyncExistingLocation(checkedByExternal, "external_id_cache");
-            return checkedByExternal;
-          }
-        }
-        else
-        {
-          var resolvedExternalId = Helper.ExternalIdExists(client, resource, normalizedExternalId);
-          if (!string.IsNullOrWhiteSpace(resolvedExternalId))
-          {
-            locationsById[resolvedExternalId] = resolvedExternalId;
-            checkedLocations[checkedByExternalKey] = resolvedExternalId;
-            if (!string.IsNullOrWhiteSpace(normalizedLocationTitle))
-            {
-              locationsByTitle[titleLookupKey] = resolvedExternalId;
-              checkedLocations["title:" + titleLookupKey] = resolvedExternalId;
-            }
-            SyncExistingLocation(resolvedExternalId, "external_id");
-            return resolvedExternalId;
-          }
-
-          helper.Message(
-            $"Location lookup by external_id returned no match (external_id='{normalizedExternalId}', property_id='{propertyId}', building_id='{buildingId}', floor_id='{floorId}', status={client.StatusCode} {client.Status}).",
-            2,
-            "WARN"
-          );
-
-          checkedLocations[checkedByExternalKey] = string.Empty;
-        }
+        SyncExistingLocation(resolvedById, "id");
+        return resolvedById;
       }
 
-      if (!string.IsNullOrWhiteSpace(normalizedLocationTitle) && locationsByTitle.TryGetValue(titleLookupKey, out existingId) && !string.IsNullOrWhiteSpace(existingId))
+      var resolvedByTitle = lookup.ByFields(
+        TitleConditions(normalizedLocationTitle, propertyId, buildingId, floorId));
+      if (!string.IsNullOrWhiteSpace(resolvedByTitle))
       {
-        SyncExistingLocation(existingId, "title_cache");
-        return existingId;
-      }
-
-      if (!string.IsNullOrWhiteSpace(locationId))
-      {
-        var checkedByIdKey = "id:" + locationId;
-        if (checkedLocations.TryGetValue(checkedByIdKey, out var checkedById))
-        {
-          if (!string.IsNullOrWhiteSpace(checkedById))
-          {
-            SyncExistingLocation(checkedById, "id_cache");
-            return checkedById;
-          }
-        }
-        else
-        {
-          var detailResponse = client.Get(resource + "/" + Uri.EscapeDataString(locationId));
-          if (client.StatusCode == 200)
-          {
-            var resolvedId = Helper.ExtractDataId(detailResponse) ?? locationId;
-            locationsById[locationId] = resolvedId;
-            locationsById[resolvedId] = resolvedId;
-
-            var detailRoot = string.IsNullOrEmpty(detailResponse) ? null : JsonConvert.DeserializeObject<Locations.Root>(detailResponse);
-            var resolvedAttributes = detailRoot?.Data?.FirstOrDefault()?.Attributes;
-            var resolvedTitle = resolvedAttributes?.Title;
-            if (!string.IsNullOrWhiteSpace(resolvedTitle))
-            {
-              var resolvedTitleKey = hasHierarchyScope
-                ? $"{resolvedAttributes?.PropertyId ?? propertyId ?? string.Empty}|{resolvedAttributes?.BuildingId ?? buildingId ?? string.Empty}|{resolvedAttributes?.FloorId ?? floorId ?? string.Empty}|{resolvedTitle}"
-                : resolvedTitle;
-              locationsByTitle[resolvedTitleKey] = resolvedId;
-            }
-
-            checkedLocations[checkedByIdKey] = resolvedId;
-            SyncExistingLocation(resolvedId, "id");
-            return resolvedId;
-          }
-
-          checkedLocations[checkedByIdKey] = string.Empty;
-          locationsById[locationId] = string.Empty;
-        }
-      }
-
-      if (!string.IsNullOrWhiteSpace(normalizedLocationTitle))
-      {
-        var checkedByTitleKey = "title:" + titleLookupKey;
-        if (checkedLocations.TryGetValue(checkedByTitleKey, out var checkedByTitle))
-        {
-          if (!string.IsNullOrWhiteSpace(checkedByTitle))
-            return checkedByTitle;
-        }
-        else
-        {
-          var filterBuilder = new FilterBuilder();
-          filterBuilder.Clear();
-          filterBuilder.Add("title", FilterBuilder.FilterType.Equals, FilterBuilder.Type.Text, normalizedLocationTitle);
-          if (!string.IsNullOrWhiteSpace(propertyId))
-            filterBuilder.Add("property_id", FilterBuilder.FilterType.Equals, FilterBuilder.Type.ObjectId, propertyId);
-          if (!string.IsNullOrWhiteSpace(buildingId))
-            filterBuilder.Add("building_id", FilterBuilder.FilterType.Equals, FilterBuilder.Type.ObjectId, buildingId);
-          if (!string.IsNullOrWhiteSpace(floorId))
-            filterBuilder.Add("floor_id", FilterBuilder.FilterType.Equals, FilterBuilder.Type.ObjectId, floorId);
-
-          var listResponse = client.Get(
-            resource +
-            $"?page[number]=1&page[limit]=1&gridfilter={filterBuilder.Get()}"
-          );
-          if (client.StatusCode == 200 && !string.IsNullOrWhiteSpace(listResponse))
-          {
-            var listRoot = JsonConvert.DeserializeObject<Locations.Root>(listResponse);
-            var foundLocation = listRoot?.Data?.FirstOrDefault();
-            var resolvedId = foundLocation?.Attributes?.Id ?? foundLocation?.Id;
-            if (!string.IsNullOrWhiteSpace(resolvedId))
-            {
-              locationsById[resolvedId] = resolvedId;
-              locationsByTitle[titleLookupKey] = resolvedId;
-              checkedLocations[checkedByTitleKey] = resolvedId;
-              SyncExistingLocation(resolvedId, "title");
-              return resolvedId;
-            }
-          }
-
-          checkedLocations[checkedByTitleKey] = string.Empty;
-          locationsByTitle[titleLookupKey] = string.Empty;
-        }
+        SyncExistingLocation(resolvedByTitle, "title");
+        return resolvedByTitle;
       }
 
       if (!createOnTheFly)
@@ -487,31 +398,24 @@ namespace SamedisExternalSync
       var response = client.Post(resource, payload);
       if (client.StatusCode < 200 || client.StatusCode >= 300)
       {
-        helper.Message(
-          $"Failed to create location (id='{locationId}', title='{normalizedLocationTitle}', property_id='{propertyId}', building_id='{buildingId}', floor_id='{floorId}', inventory_id='{inventoryId}', inventory_title='{inventoryTitle}', status={client.StatusCode}). Response: {response}",
-          1,
-          "ERROR"
-        );
+        log.Error($"Failed to create location (id='{locationId}', title='{normalizedLocationTitle}', property_id='{propertyId}', building_id='{buildingId}', floor_id='{floorId}', inventory_id='{inventoryId}', inventory_title='{inventoryTitle}', status={client.StatusCode}). Response: {response}");
         return null;
       }
 
-      var newLocationId = Helper.ExtractDataId(response);
+      var newLocationId = JsonApi.ExtractDataId(response);
       if (string.IsNullOrWhiteSpace(newLocationId))
       {
-        helper.Message(
-          $"Failed to create location (id='{locationId}', title='{normalizedLocationTitle}', property_id='{propertyId}', building_id='{buildingId}', floor_id='{floorId}', inventory_id='{inventoryId}', inventory_title='{inventoryTitle}'): API returned no location id.",
-          1,
-          "ERROR"
-        );
+        log.Error($"Failed to create location (id='{locationId}', title='{normalizedLocationTitle}', property_id='{propertyId}', building_id='{buildingId}', floor_id='{floorId}', inventory_id='{inventoryId}', inventory_title='{inventoryTitle}'): API returned no location id.");
         return null;
       }
 
-      locationsById[newLocationId] = newLocationId;
-      locationsByTitle[titleLookupKey] = newLocationId;
-      checkedLocations["title:" + titleLookupKey] = newLocationId;
-      if (!string.IsNullOrWhiteSpace(locationId))
-        checkedLocations["id:" + locationId] = newLocationId;
-      helper.Message($"Location created on the fly: '{normalizedLocationTitle}' -> {newLocationId}", 2);
+      // Seed every key this row was identified by, so a later row naming the same location
+      // is answered from memory instead of asking for what this run just wrote.
+      lookup.RememberId(newLocationId);
+      lookup.RememberId(locationId, newLocationId);
+      lookup.RememberFields(TitleConditions(normalizedLocationTitle, propertyId, buildingId, floorId), newLocationId);
+      lookup.RememberUniqueField("external_id", normalizedExternalId, newLocationId);
+      log.Debug($"Location created on the fly: '{normalizedLocationTitle}' -> {newLocationId}");
       return newLocationId;
     }
   }
