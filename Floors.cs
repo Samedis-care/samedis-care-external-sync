@@ -111,14 +111,10 @@ namespace SamedisExternalSync
     }
 
     /// <summary>
-    /// A floor is identified by its title within a building, so both conditions travel
-    /// together. Declared once so the lookup and the cache seeding cannot drift apart.
+    /// Resolves the floor the source names, creating it below the building when asked to.
     /// </summary>
-    private static (string Field, string? Value)[] TitleConditions(string title, string buildingId)
-      => new (string, string?)[] { ("title", title), ("building_id", buildingId) };
-
     public static string? ResolveFloorId(
-      RequestData client,
+      IApiClient client,
       string resource,
       string buildingId,
       string floorTitle,
@@ -130,95 +126,28 @@ namespace SamedisExternalSync
       string externalId = "",
       bool updateOnExisting = false)
     {
-      var normalizedTitle = floorTitle.Trim();
-      var normalizedExternalId = externalId?.Trim() ?? string.Empty;
-      var key = buildingId + "|" + normalizedTitle;
-      var checkedKey = "title:" + key;
-      var useScopedExternalLookup = !updateOnExisting;
-      var externalScopeKey = useScopedExternalLookup
-        ? (string.IsNullOrWhiteSpace(buildingId) ? string.Empty : buildingId + "|") + normalizedExternalId
-        : normalizedExternalId;
-      var checkedExternalKey = "external_id:" + externalScopeKey;
+      var title = floorTitle?.Trim() ?? string.Empty;
+      var external = externalId?.Trim() ?? string.Empty;
 
-      Dictionary<string, object?> BuildPayload()
+      Dictionary<string, object?> Attributes(bool clearing)
       {
         var payload = new Dictionary<string, object?>
         {
-          ["title"] = normalizedTitle,
-          ["building_id"] = buildingId
+          ["title"] = title,
+          ["building_id"] = buildingId,
         };
-
-        if (!string.IsNullOrWhiteSpace(normalizedExternalId))
-          payload["external_id"] = normalizedExternalId;
-
+        if (!string.IsNullOrWhiteSpace(external)) payload["external_id"] = external;
         return payload;
       }
 
-      void SyncExistingFloor(string resolvedId, string matchedBy)
-      {
-        if (!updateOnExisting || string.IsNullOrWhiteSpace(resolvedId))
-          return;
-
-        var updatePayload = JsonConvert.SerializeObject(new
+      return Hierarchy.Resolve(client, resource,
+        new Hierarchy.Node("Floor", title, external,
+                           new (string, string?)[] { ("building_id", buildingId) },
+                           Attributes)
         {
-          data = BuildPayload()
-        });
-        var updateResponse = client.Put(resource, resolvedId, updatePayload);
-        if (client.StatusCode >= 200 && client.StatusCode < 300)
-        {
-          log.Debug($"Floor synced via PUT (match_by='{matchedBy}', id='{resolvedId}', title='{normalizedTitle}', external_id='{normalizedExternalId}').");
-        }
-        else
-        {
-          log.Warn($"Failed to sync floor via PUT (match_by='{matchedBy}', id='{resolvedId}', title='{normalizedTitle}', building_id='{buildingId}', external_id='{normalizedExternalId}', status={client.StatusCode} {client.Status}, response_status='{client.LastResponseStatus}', error='{client.LastError}'). Response: {updateResponse}");
-        }
-      }
-
-      // external_id is the stable cross-system anchor, so it is tried first. The lookup
-      // remembers hits and misses, which is what the checkedFloors bookkeeping did here.
-      var resolvedByExternalId = lookup.ByUniqueField("external_id", normalizedExternalId);
-      if (!string.IsNullOrWhiteSpace(resolvedByExternalId))
-      {
-        lookup.RememberFields(TitleConditions(normalizedTitle, buildingId), resolvedByExternalId);
-        SyncExistingFloor(resolvedByExternalId, "external_id");
-        return resolvedByExternalId;
-      }
-
-      if (string.IsNullOrWhiteSpace(buildingId) || string.IsNullOrWhiteSpace(normalizedTitle))
-        return null;
-
-      var resolvedByTitle = lookup.ByFields(TitleConditions(normalizedTitle, buildingId));
-      if (!string.IsNullOrWhiteSpace(resolvedByTitle))
-      {
-        SyncExistingFloor(resolvedByTitle, "title");
-        return resolvedByTitle;
-      }
-
-      if (!createOnTheFly)
-        return null;
-
-      var payload = JsonConvert.SerializeObject(new
-      {
-        data = BuildPayload()
-      });
-
-      var response = client.Post(resource, payload);
-      if (client.StatusCode < 200 || client.StatusCode >= 300)
-      {
-        log.Error($"Failed to create floor (title='{normalizedTitle}', building_id='{buildingId}', inventory_id='{inventoryId}', inventory_title='{inventoryTitle}', status={client.StatusCode}). Response: {response}");
-        return null;
-      }
-
-      var newFloorId = JsonApi.ExtractDataId(response);
-      if (string.IsNullOrWhiteSpace(newFloorId))
-      {
-        log.Error($"Failed to create floor (title='{normalizedTitle}', building_id='{buildingId}', inventory_id='{inventoryId}', inventory_title='{inventoryTitle}'): API returned no floor id.");
-        return null;
-      }
-      lookup.RememberFields(TitleConditions(normalizedTitle, buildingId), newFloorId);
-      lookup.RememberUniqueField("external_id", normalizedExternalId, newFloorId);
-      log.Debug($"Floor created on the fly: '{normalizedTitle}' (building_id='{buildingId}') -> {newFloorId}");
-      return newFloorId;
+          Context = $"inventory_id='{inventoryId}', inventory_title='{inventoryTitle}'",
+        },
+        lookup, log, createOnTheFly, updateOnExisting);
     }
   }
 }

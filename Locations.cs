@@ -268,25 +268,21 @@ namespace SamedisExternalSync
     }
 
     /// <summary>
-    /// A location is identified by its title, narrowed by whichever of property, building and
-    /// floor the row carries. Blank ones are dropped here rather than at the call sites, so
-    /// the lookup and the cache seeding always see the same set of conditions -- seeding a
-    /// different set is a cache entry that never gets hit.
+    /// Resolves the room the source names, creating it below whichever part of the hierarchy
+    /// the row carries.
     /// </summary>
-    private static (string Field, string? Value)[] TitleConditions(
-      string title, string? propertyId, string? buildingId, string? floorId)
-      => new (string Field, string? Value)[]
-         {
-           ("title", title),
-           ("property_id", propertyId),
-           ("building_id", buildingId),
-           ("floor_id", floorId),
-         }
-         .Where(c => !string.IsNullOrWhiteSpace(c.Value))
-         .ToArray();
-
+    /// <remarks>
+    /// Unlike a building or a floor, a room may sit directly under a property, so the parent
+    /// is optional here. It also carries an id of its own -- the inventory row names its room
+    /// by id where the source knows one -- which is why this is the one node with an id step
+    /// in its cascade.
+    /// <para>
+    /// The notes field is sent on an update even when empty, so a note removed upstream is
+    /// cleared rather than left standing.
+    /// </para>
+    /// </remarks>
     public static string? ResolveLocationId(
-      RequestData client,
+      IApiClient client,
       string resource,
       string locationId,
       string locationTitle,
@@ -302,121 +298,36 @@ namespace SamedisExternalSync
       string externalId = "",
       bool updateOnExisting = false)
     {
-      var normalizedLocationTitle = locationTitle?.Trim() ?? string.Empty;
-      var normalizedExternalId = externalId?.Trim() ?? string.Empty;
-      var normalizedLocationNotes = locationNotes?.Trim() ?? string.Empty;
-      var hasHierarchyScope = !string.IsNullOrWhiteSpace(propertyId) || !string.IsNullOrWhiteSpace(buildingId) || !string.IsNullOrWhiteSpace(floorId);
-      var scopeKey = hasHierarchyScope ? $"{propertyId ?? string.Empty}|{buildingId ?? string.Empty}|{floorId ?? string.Empty}" : string.Empty;
-      var titleLookupKey = hasHierarchyScope ? $"{scopeKey}|{normalizedLocationTitle}" : normalizedLocationTitle;
-      var useScopedExternalLookup = hasHierarchyScope && !updateOnExisting;
-      var externalLookupKey = useScopedExternalLookup ? $"{scopeKey}|{normalizedExternalId}" : normalizedExternalId;
+      var title = locationTitle?.Trim() ?? string.Empty;
+      var external = externalId?.Trim() ?? string.Empty;
+      var notes = locationNotes?.Trim() ?? string.Empty;
 
-      Dictionary<string, object?> BuildPayload(bool includeEmptyNotes)
+      Dictionary<string, object?> Attributes(bool clearing)
       {
-        var payload = new Dictionary<string, object?>
-        {
-          ["title"] = normalizedLocationTitle
-        };
-        if (!string.IsNullOrWhiteSpace(normalizedExternalId))
-          payload["external_id"] = normalizedExternalId;
-        if (!string.IsNullOrWhiteSpace(propertyId))
-          payload["property_id"] = propertyId;
-        if (!string.IsNullOrWhiteSpace(buildingId))
-          payload["building_id"] = buildingId;
-        if (!string.IsNullOrWhiteSpace(floorId))
-          payload["floor_id"] = floorId;
-        if (includeEmptyNotes || !string.IsNullOrWhiteSpace(normalizedLocationNotes))
-          payload["notes"] = normalizedLocationNotes;
-
+        var payload = new Dictionary<string, object?> { ["title"] = title };
+        if (!string.IsNullOrWhiteSpace(external)) payload["external_id"] = external;
+        if (!string.IsNullOrWhiteSpace(propertyId)) payload["property_id"] = propertyId;
+        if (!string.IsNullOrWhiteSpace(buildingId)) payload["building_id"] = buildingId;
+        if (!string.IsNullOrWhiteSpace(floorId)) payload["floor_id"] = floorId;
+        if (clearing || !string.IsNullOrWhiteSpace(notes)) payload["notes"] = notes;
         return payload;
       }
 
-      void SyncExistingLocation(string resolvedId, string matchedBy)
-      {
-        if (!updateOnExisting || string.IsNullOrWhiteSpace(resolvedId) || string.IsNullOrWhiteSpace(normalizedLocationTitle))
-          return;
-
-        var updatePayload = JsonConvert.SerializeObject(new
+      return Hierarchy.Resolve(client, resource,
+        new Hierarchy.Node("Location", title, external,
+                           new (string, string?)[]
+                           {
+                             ("property_id", propertyId),
+                             ("building_id", buildingId),
+                             ("floor_id", floorId),
+                           },
+                           Attributes)
         {
-          data = BuildPayload(includeEmptyNotes: true)
-        });
-        var updateResponse = client.Put(resource, resolvedId, updatePayload);
-        if (client.StatusCode >= 200 && client.StatusCode < 300)
-        {
-          log.Debug($"Location synced via PUT (match_by='{matchedBy}', id='{resolvedId}', title='{normalizedLocationTitle}', external_id='{normalizedExternalId}').");
-        }
-        else
-        {
-          log.Warn($"Failed to sync location via PUT (match_by='{matchedBy}', id='{resolvedId}', title='{normalizedLocationTitle}', property_id='{propertyId}', building_id='{buildingId}', floor_id='{floorId}', external_id='{normalizedExternalId}', status={client.StatusCode} {client.Status}, response_status='{client.LastResponseStatus}', error='{client.LastError}'). Response: {updateResponse}");
-        }
-      }
-
-      // external_id is the stable cross-system anchor, so it is tried first. The lookup
-      // remembers hits and misses, which is what the checkedLocations bookkeeping did here.
-      var resolvedByExternalId = lookup.ByUniqueField("external_id", normalizedExternalId);
-      if (!string.IsNullOrWhiteSpace(resolvedByExternalId))
-      {
-        lookup.RememberFields(TitleConditions(normalizedLocationTitle, propertyId, buildingId, floorId),
-                              resolvedByExternalId);
-        SyncExistingLocation(resolvedByExternalId, "external_id");
-        return resolvedByExternalId;
-      }
-
-      // Debug, not a warning: on a first import nothing carries this external_id yet, so a
-      // miss is the normal case and the row goes on to be matched by title or created. It
-      // was promoted to a warning together with the lookup *failures*, which is a different
-      // thing -- those say the question could not be answered, this one answers it.
-      if (!string.IsNullOrWhiteSpace(normalizedExternalId))
-        log.Debug($"Location not found by external_id, continuing with title (external_id='{normalizedExternalId}', property_id='{propertyId}', building_id='{buildingId}', floor_id='{floorId}').");
-
-      var resolvedById = lookup.ById(locationId);
-      if (!string.IsNullOrWhiteSpace(resolvedById))
-      {
-        SyncExistingLocation(resolvedById, "id");
-        return resolvedById;
-      }
-
-      var resolvedByTitle = lookup.ByFields(
-        TitleConditions(normalizedLocationTitle, propertyId, buildingId, floorId));
-      if (!string.IsNullOrWhiteSpace(resolvedByTitle))
-      {
-        SyncExistingLocation(resolvedByTitle, "title");
-        return resolvedByTitle;
-      }
-
-      if (!createOnTheFly)
-        return null;
-
-      if (string.IsNullOrWhiteSpace(normalizedLocationTitle))
-        return null;
-
-      var payload = JsonConvert.SerializeObject(new
-      {
-        data = BuildPayload(includeEmptyNotes: false)
-      });
-
-      var response = client.Post(resource, payload);
-      if (client.StatusCode < 200 || client.StatusCode >= 300)
-      {
-        log.Error($"Failed to create location (id='{locationId}', title='{normalizedLocationTitle}', property_id='{propertyId}', building_id='{buildingId}', floor_id='{floorId}', inventory_id='{inventoryId}', inventory_title='{inventoryTitle}', status={client.StatusCode}). Response: {response}");
-        return null;
-      }
-
-      var newLocationId = JsonApi.ExtractDataId(response);
-      if (string.IsNullOrWhiteSpace(newLocationId))
-      {
-        log.Error($"Failed to create location (id='{locationId}', title='{normalizedLocationTitle}', property_id='{propertyId}', building_id='{buildingId}', floor_id='{floorId}', inventory_id='{inventoryId}', inventory_title='{inventoryTitle}'): API returned no location id.");
-        return null;
-      }
-
-      // Seed every key this row was identified by, so a later row naming the same location
-      // is answered from memory instead of asking for what this run just wrote.
-      lookup.RememberId(newLocationId);
-      lookup.RememberId(locationId, newLocationId);
-      lookup.RememberFields(TitleConditions(normalizedLocationTitle, propertyId, buildingId, floorId), newLocationId);
-      lookup.RememberUniqueField("external_id", normalizedExternalId, newLocationId);
-      log.Debug($"Location created on the fly: '{normalizedLocationTitle}' -> {newLocationId}");
-      return newLocationId;
+          Id = locationId,
+          RequiresScope = false,
+          Context = $"inventory_id='{inventoryId}', inventory_title='{inventoryTitle}'",
+        },
+        lookup, log, createOnTheFly, updateOnExisting);
     }
   }
 }
