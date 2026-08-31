@@ -440,7 +440,13 @@ namespace SamedisExternalSync
       dt.Columns.Add("device_type_id", typeof(string));       // Art Id
       dt.Columns.Add("device_type_title", typeof(string));    // Art Bezeichnung (DE)
       dt.Columns.Add("emtec_code", typeof(string));           // Regulatory Emtec TypCode, wenn vorhanden
-      dt.Columns.Add("training_mandatory", typeof(string));   // Anwendungsrisiko
+      // Zwei verschiedene Dinge, die hier lange eines waren:
+      //   application_risk    Catalog#risk_level -- das Anwendungsrisiko, unknown/0/1/2
+      //   training_mandatory  daraus abgeleitet: braucht das Geraet eine Einweisung?
+      // Die MDR-Risikoklasse steht weiter unten in risk_class und kommt aus
+      // regulatory.eu_mdr, nicht von hier.
+      dt.Columns.Add("application_risk", typeof(string));     // Anwendungsrisiko (Rohwert)
+      dt.Columns.Add("training_mandatory", typeof(string));   // daraus: Einweisung noetig?
       dt.Columns.Add("software_version", typeof(string));     // Firmware Versionen
       dt.Columns.Add("manufacturer_id", typeof(string));      // Hersteller Typenschild Id
       dt.Columns.Add("manufacturer", typeof(string));         // Hersteller Typenschild
@@ -481,7 +487,17 @@ namespace SamedisExternalSync
         row["device_type_id"] = attr.DeviceTypeId;
         row["device_type_title"] = attr.DeviceTypeTitle;
         row["emtec_code"] = attr.Regulatory != null && attr.Regulatory.TryGetValue("emtec_code", out string? emtec_value) ? emtec_value : "";
-        row["training_mandatory"] = string.IsNullOrEmpty(attr.OperatorOrdinance) ? "Nein" : "Ja";
+        // Kam bis hierher aus operator_ordinance, also aus der Betreiberverordnung. Das ist
+        // eine andere Frage: die Anlage sagt, welchen Regeln ein Geraet unterliegt, das
+        // Anwendungsrisiko sagt, ob jemand eingewiesen werden muss. Die Anlage steht
+        // unveraendert in according_to_annex.
+        row["application_risk"] = attr.RiskLevel ?? "";
+        row["training_mandatory"] = CatalogValues.RequiresTraining(attr.RiskLevel) switch
+        {
+          true => "Ja",
+          false => "Nein",
+          null => "",
+        };
         row["software_version"] = attr.VersionList != null ? string.Join("; ", attr.VersionList) : "";
         row["manufacturer_id"] = attr.ManufacturerCompanyContactId;
         row["manufacturer"] = attr.ManufacturerAccordingToTypePlate;
@@ -490,8 +506,12 @@ namespace SamedisExternalSync
         row["ce_marking"] = attr.Regulatory != null && attr.Regulatory.ContainsKey("ce") ? "Ja" : "Nein";
         row["ce_notified_body"] = attr.Regulatory != null && attr.Regulatory.TryGetValue("ce", out string? ce_value) ? ce_value.ToLower().Equals("ce") ? "" : ce_value : "";
         row["responsible_5_mpg"] = attr.CurrentResponsibleManufacturer;
-        row["according_to_annex"] = Helper.OrdinanceMap(attr.OperatorOrdinance ?? string.Empty);
-        row["risk_class"] = Helper.RiskClassMap(attr.RiskLevel ?? string.Empty);
+        row["according_to_annex"] = CatalogValues.OperatorOrdinanceMap(attr.OperatorOrdinance ?? string.Empty);
+        // Aus regulatory.eu_mdr, nicht aus risk_level. Die beiden Felder ueberlappen in
+        // ihren Werten ("1", "2"), weshalb die Verwechslung nie aufgefallen ist: ein Geraet,
+        // das bloss eine Anwendereinweisung braucht, stand hier als MDR-Klasse I.
+        row["risk_class"] = CatalogValues.MdrRiskClassMap(
+          attr.Regulatory != null && attr.Regulatory.TryGetValue("eu_mdr", out var euMdr) ? euMdr : null);
         row["active_device"] = attr.DeviceTypeTitle != null && attr.DeviceTypeTitle.ToLower().Contains("mechanisch") ? "Nein" : "Ja";
         row["udi_di"] = attr.Regulatory != null && attr.Regulatory.TryGetValue("eudamed_id", out string? udi_value) ? udi_value : "";
 

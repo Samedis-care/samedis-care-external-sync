@@ -7,6 +7,7 @@ global using SamedisCare.Api.Http;
 global using SamedisCare.Api.Lookup;
 global using SamedisCare.Api.Query;
 global using SamedisCare.Api.Routing;
+global using SamedisCare.Api.V4.Public;
 global using SamedisCare.Api.V4.Common;
 global using SamedisCare.Helper;
 global using SamedisCare.Helper.Config;

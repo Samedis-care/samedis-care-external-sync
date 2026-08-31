@@ -109,50 +109,10 @@ public class InventoryAttributeTests
 }
 
 /// <summary>
-/// The value maps used when exporting device models to the receiving system's CSV.
+/// The value maps moved to SamedisCare.Api (CatalogValues), together with the tests that
+/// hold what MdrRiskClassMap does with a risk_level it was never meant to see. Keeping a
+/// second copy here would be the duplication that prompted the move.
 /// </summary>
-public class DeviceModelExportMapTests
-{
-    [Theory]
-    [InlineData("annex_1", "1")]
-    [InlineData("annex_2", "2")]
-    [InlineData("annex_1_2", "1+2")]
-    [InlineData("none", "")]
-    [InlineData("", "")]
-    public void The_operator_ordinance_maps_onto_the_annex_column(string apiValue, string expected)
-        => Helper.OrdinanceMap(apiValue).Should().Be(expected);
-
-    [Fact]
-    public void An_unknown_ordinance_value_yields_an_empty_column()
-        => Helper.OrdinanceMap("annex_9").Should().BeEmpty();
-
-    // These pin what the export does today, not what it should do. The column is fed
-    // Catalog#risk_level, which the app labels "Anwendungsrisiko" and whose values are
-    // unknown/0/1/2 -- while this map's keys (1, 2, 2a, 2b, 3) are MDR device classes. So
-    // "0" (selbsterklärend) and "unknown" fall out as empty, and 2a/2b/3 can never be hit.
-    // Whether the receiving system wants the Anwendungsrisiko or the MDR class is a question
-    // about that system, so the behaviour is left alone and recorded here instead.
-    [Theory]
-    [InlineData("1", "I")]
-    [InlineData("2", "II")]
-    public void The_risk_level_values_that_do_map_produce_roman_numerals(string riskLevel, string expected)
-        => Helper.RiskClassMap(riskLevel).Should().Be(expected);
-
-    [Theory]
-    [InlineData("0")]
-    [InlineData("unknown")]
-    public void The_remaining_risk_level_values_produce_an_empty_column(string riskLevel)
-        => Helper.RiskClassMap(riskLevel).Should().BeEmpty(
-            "these are real Anwendungsrisiko values that this map has no entry for");
-
-    [Theory]
-    [InlineData("2a", "IIa")]
-    [InlineData("2b", "IIb")]
-    [InlineData("3", "III")]
-    public void The_map_also_carries_MDR_classes_that_risk_level_never_produces(string key, string expected)
-        => Helper.RiskClassMap(key).Should().Be(expected,
-            "kept so the mismatch stays visible rather than being tidied away");
-}
 
 /// <summary>
 /// Dates the source writes in whatever format its system uses.

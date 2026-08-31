@@ -20,8 +20,8 @@
 		<None Remove="tests/**" />
 	</ItemGroup>
 	<ItemGroup>
-		<PackageReference Include="SamedisCare.Api" Version="0.3.0-rc.19" />
-		<PackageReference Include="SamedisCare.Helper" Version="0.3.0-rc.19" />
+		<PackageReference Include="SamedisCare.Api" Version="0.3.0-rc.22" />
+		<PackageReference Include="SamedisCare.Helper" Version="0.3.0-rc.22" />
 		<PackageReference Include="CsvHelper" Version="33.1.0" />
 		<PackageReference Include="ExcelDataReader" Version="3.6.0" />
 		<PackageReference Include="ExcelDataReader.DataSet" Version="3.6.0" />
