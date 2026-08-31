@@ -196,34 +196,7 @@ namespace SamedisExternalSync
     }
 
 
-    public static string OrdinanceMap(string key)
-    {
-      if (string.IsNullOrEmpty(key)) return "";
 
-      var ordinanceMap = new Dictionary<string, string>
-      {
-        { "annex_1", "1" },
-        { "annex_2", "2" },
-        { "annex_1_2", "1+2" },
-        { "none", "" }
-      };
-      return ordinanceMap.ContainsKey(key) ? ordinanceMap[key] : "";
-    }
-
-    public static string RiskClassMap(string key)
-    {
-      if (string.IsNullOrEmpty(key)) return "";
-
-      var riskClassMap = new Dictionary<string, string>
-      {
-        { "1", "I" },
-        { "2", "II" },
-        { "2a", "IIa" },
-        { "2b", "IIb" },
-        { "3", "III" }
-      };
-      return riskClassMap.ContainsKey(key) ? riskClassMap[key] : "";
-    }
 
     /// <summary>
     /// Exports all attributes of a root object (devices, inventories, contacts, ...) to CSV.
