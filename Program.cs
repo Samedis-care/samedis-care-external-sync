@@ -113,8 +113,21 @@ internal class Program
     //define resource
     var samedisClient = new RequestData(samedisUri, bearerToken, httpSettings, log);
 
-    // tenant-level settings
-    var tenantSettings = Tenant.GetSettings(samedisClient, samedisApiVersion, samedisTenantId, log);
+    // Tenant-level settings. No fallback on purpose: use_extended_device_locations and
+    // use_profit_centers decide how EVERY inventory of this run is written, so guessing them
+    // writes a whole import into the wrong shape and reports a clean run.
+    Tenant.Settings tenantSettings;
+    try
+    {
+      tenantSettings = Tenant.GetSettings(samedisClient, samedisApiVersion, samedisTenantId, log);
+    }
+    catch (LookupUnavailableException ex)
+    {
+      log.Error($"Tenant settings could not be read, so the location and profit-center mode of "
+              + $"this run is unknown. Stopping. {ex.Message}");
+      Environment.Exit(1);
+      return;
+    }
     var useExtendedDeviceLocations = tenantSettings.UseExtendedDeviceLocations;
     var useProfitCenters = tenantSettings.UseProfitCenters;
     var locationMode = useExtendedDeviceLocations ? "property" : "standard";
