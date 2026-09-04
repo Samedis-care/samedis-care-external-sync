@@ -1,0 +1,6 @@
+id;incident_number;inventory_id;inventory_number;inventory_device_number;responsible_email;status
+;1;;320000;320000;;new
+;2;;320012;320012;;pending
+;3;;320024;320024;;in_progress
+;4;;320036;320036;;done
+;5;;320048;320048;;pending

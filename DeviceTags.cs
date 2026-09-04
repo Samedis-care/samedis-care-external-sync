@@ -112,30 +112,6 @@ namespace SamedisExternalSync
       public bool Success { get; set; }
       public string? Message { get; set; }
     }
-
-    public class ErrorResponse
-    {
-      [JsonProperty("meta")]
-      public Meta? Meta { get; set; }
-    }
-
-    public static string GetErrorMessage(string jsonResponse)
-    {
-      try
-      {
-        var errorResponse = JsonConvert.DeserializeObject<ErrorResponse>(jsonResponse);
-        if (errorResponse?.Meta?.Msg != null && !errorResponse.Meta.Msg.Success)
-        {
-          return $"Error response: {errorResponse.Meta.Msg.Message}";
-        }
-      }
-      catch (Exception ex)
-      {
-        return $"Failed to parse error message: {ex.Message}";
-      }
-      return "No error message found.";
-    }
-
     public class Root
     {
       [JsonProperty("data")]
