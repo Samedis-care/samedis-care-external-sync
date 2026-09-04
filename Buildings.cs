@@ -64,11 +64,11 @@ namespace SamedisExternalSync
     public class Root
     {
       [JsonProperty("data")]
-      [JsonConverter(typeof(Helper.SingleOrArrayConverter<Data>))]
+      [JsonConverter(typeof(JsonApi.SingleOrArrayConverter<Data>))]
       public List<Data>? Data { get; set; }
     }
 
-    public static Dictionary<string, SourceBuilding> LoadSourceBuildings(string csvPath, Helper helper)
+    public static Dictionary<string, SourceBuilding> LoadSourceBuildings(string csvPath, ISyncLog log)
     {
       var result = new Dictionary<string, SourceBuilding>(StringComparer.OrdinalIgnoreCase);
       if (string.IsNullOrWhiteSpace(csvPath) || !File.Exists(csvPath))
@@ -77,44 +77,44 @@ namespace SamedisExternalSync
       DataTable sourceTable;
       try
       {
-        sourceTable = Helper.ImportCsvToDataTable(csvPath, "SourceBuildings");
+        sourceTable = Csv.Read(csvPath, tableName: "SourceBuildings", trimFields: true);
       }
       catch (Exception ex)
       {
-        helper.Message($"Failed to read source buildings CSV '{csvPath}': {ex.Message}", 1, "WARN");
+        log.Warn($"Failed to read source buildings CSV '{csvPath}': {ex.Message}");
         return result;
       }
 
       foreach (DataRow row in sourceTable.Rows)
       {
-        var sourceId = Helper.GetRowValue(row, "lid");
+        var sourceId = Rows.Value(row, "lid");
         if (string.IsNullOrWhiteSpace(sourceId))
-          sourceId = Helper.GetRowValue(row, "id");
+          sourceId = Rows.Value(row, "id");
 
         if (string.IsNullOrWhiteSpace(sourceId))
           continue;
 
-        var title = Helper.GetRowValue(row, "Bezeichnung");
+        var title = Rows.Value(row, "Bezeichnung");
         if (string.IsNullOrWhiteSpace(title))
-          title = Helper.GetRowValue(row, "description");
+          title = Rows.Value(row, "description");
         if (string.IsNullOrWhiteSpace(title))
-          title = Helper.GetRowValue(row, "descriptions");
+          title = Rows.Value(row, "descriptions");
         if (string.IsNullOrWhiteSpace(title))
-          title = Helper.GetRowValue(row, "title");
-        var parentSourceId = Helper.GetRowValue(row, "parent_id");
+          title = Rows.Value(row, "title");
+        var parentSourceId = Rows.Value(row, "parent_id");
         if (string.IsNullOrWhiteSpace(parentSourceId))
-          parentSourceId = Helper.GetRowValue(row, "Übergeordnet");
+          parentSourceId = Rows.Value(row, "Übergeordnet");
 
-        var number = Helper.GetRowValue(row, "Number");
+        var number = Rows.Value(row, "Number");
         if (string.IsNullOrWhiteSpace(number))
-          number = Helper.GetRowValue(row, "number");
-        var street = Helper.GetRowValue(row, "street");
-        var zip = Helper.GetRowValue(row, "postal_code");
+          number = Rows.Value(row, "number");
+        var street = Rows.Value(row, "street");
+        var zip = Rows.Value(row, "postal_code");
         if (string.IsNullOrWhiteSpace(zip))
-          zip = Helper.GetRowValue(row, "zip");
-        var town = Helper.GetRowValue(row, "city");
+          zip = Rows.Value(row, "zip");
+        var town = Rows.Value(row, "city");
         if (string.IsNullOrWhiteSpace(town))
-          town = Helper.GetRowValue(row, "town");
+          town = Rows.Value(row, "town");
 
         result[sourceId] = new SourceBuilding
         {
@@ -128,194 +128,63 @@ namespace SamedisExternalSync
         };
       }
 
-      helper.Message($"Loaded source building map entries: {result.Count}", 2);
+      log.Debug($"Loaded source building map entries: {result.Count}");
       return result;
     }
 
+    /// <summary>
+    /// Resolves the building the source names, creating it below the property when asked to.
+    /// </summary>
+    /// <remarks>
+    /// Street, zip and town are sent on an update even when the source left them empty, so a
+    /// value removed upstream is cleared here rather than left standing. On a create they
+    /// stay out -- there is nothing to clear, and a new building should not be written full
+    /// of empty strings.
+    /// </remarks>
     public static string? ResolveBuildingId(
-      RequestData client,
+      IApiClient client,
       string resource,
       string propertyId,
       string buildingTitle,
       bool createOnTheFly,
       string inventoryId,
       string inventoryTitle,
-      IDictionary<string, string> buildingsByKey,
-      IDictionary<string, string> checkedBuildings,
-      Helper helper,
+      ResourceLookup lookup,
+      ISyncLog log,
       string externalId = "",
       string street = "",
       string zip = "",
       string town = "",
       bool updateOnExisting = false)
     {
-      var normalizedTitle = buildingTitle.Trim();
-      var normalizedExternalId = externalId?.Trim() ?? string.Empty;
-      var normalizedStreet = street?.Trim() ?? string.Empty;
-      var normalizedZip = zip?.Trim() ?? string.Empty;
-      var normalizedTown = town?.Trim() ?? string.Empty;
-      var key = propertyId + "|" + normalizedTitle;
-      var checkedKey = "title:" + key;
-      var useScopedExternalLookup = !updateOnExisting;
-      var externalScopeKey = useScopedExternalLookup
-        ? (string.IsNullOrWhiteSpace(propertyId) ? string.Empty : propertyId + "|") + normalizedExternalId
-        : normalizedExternalId;
-      var checkedExternalKey = "external_id:" + externalScopeKey;
+      var title = buildingTitle?.Trim() ?? string.Empty;
+      var external = externalId?.Trim() ?? string.Empty;
 
-      Dictionary<string, object?> BuildPayload(bool includeEmptyAddress)
+      Dictionary<string, object?> Attributes(bool clearing)
       {
         var payload = new Dictionary<string, object?>
         {
-          ["title"] = normalizedTitle,
-          ["property_id"] = propertyId
+          ["title"] = title,
+          ["property_id"] = propertyId,
         };
+        if (!string.IsNullOrWhiteSpace(external)) payload["external_id"] = external;
 
-        if (!string.IsNullOrWhiteSpace(normalizedExternalId))
-          payload["external_id"] = normalizedExternalId;
-
-        if (includeEmptyAddress || !string.IsNullOrWhiteSpace(normalizedStreet))
-          payload["street"] = normalizedStreet;
-        if (includeEmptyAddress || !string.IsNullOrWhiteSpace(normalizedZip))
-          payload["zip"] = normalizedZip;
-        if (includeEmptyAddress || !string.IsNullOrWhiteSpace(normalizedTown))
-          payload["town"] = normalizedTown;
-
+        foreach (var (key, value) in new[] { ("street", street), ("zip", zip), ("town", town) })
+        {
+          var v = value?.Trim() ?? string.Empty;
+          if (clearing || !string.IsNullOrWhiteSpace(v)) payload[key] = v;
+        }
         return payload;
       }
 
-      void SyncExistingBuilding(string resolvedId, string matchedBy)
-      {
-        if (!updateOnExisting || string.IsNullOrWhiteSpace(resolvedId))
-          return;
-
-        var updatePayload = JsonConvert.SerializeObject(new
+      return Hierarchy.Resolve(client, resource,
+        new Hierarchy.Node("Building", title, external,
+                           new (string, string?)[] { ("property_id", propertyId) },
+                           Attributes)
         {
-          data = BuildPayload(includeEmptyAddress: true)
-        });
-        var updateResponse = client.Put(resource, resolvedId, updatePayload);
-        if (client.StatusCode >= 200 && client.StatusCode < 300)
-        {
-          helper.Message(
-            $"Building synced via PUT (match_by='{matchedBy}', id='{resolvedId}', title='{normalizedTitle}', external_id='{normalizedExternalId}').",
-            2
-          );
-        }
-        else
-        {
-          helper.Message(
-            $"Failed to sync building via PUT (match_by='{matchedBy}', id='{resolvedId}', title='{normalizedTitle}', property_id='{propertyId}', external_id='{normalizedExternalId}', status={client.StatusCode} {client.Status}, response_status='{client.LastResponseStatus}', error='{client.LastError}'). Response: {updateResponse}",
-            1,
-            "WARN"
-          );
-        }
-      }
-
-      if (!string.IsNullOrWhiteSpace(normalizedExternalId))
-      {
-        if (checkedBuildings.TryGetValue(checkedExternalKey, out var checkedByExternalId))
-        {
-          if (!string.IsNullOrWhiteSpace(checkedByExternalId))
-            return checkedByExternalId;
-        }
-        else
-        {
-          var resolvedByExternalId = Helper.ExternalIdExists(client, resource, normalizedExternalId);
-          if (!string.IsNullOrWhiteSpace(resolvedByExternalId))
-          {
-            checkedBuildings[checkedExternalKey] = resolvedByExternalId;
-            if (!string.IsNullOrWhiteSpace(propertyId) && !string.IsNullOrWhiteSpace(normalizedTitle))
-            {
-              buildingsByKey[key] = resolvedByExternalId;
-              checkedBuildings[checkedKey] = resolvedByExternalId;
-            }
-            SyncExistingBuilding(resolvedByExternalId, "external_id");
-            return resolvedByExternalId;
-          }
-
-          checkedBuildings[checkedExternalKey] = string.Empty;
-        }
-      }
-
-      if (string.IsNullOrWhiteSpace(propertyId) || string.IsNullOrWhiteSpace(normalizedTitle))
-        return null;
-
-      if (buildingsByKey.TryGetValue(key, out var cachedBuildingId))
-      {
-        if (!string.IsNullOrWhiteSpace(cachedBuildingId))
-          return cachedBuildingId;
-
-        // Negative cache hit: building was already checked and not resolvable.
-        return null;
-      }
-
-      if (checkedBuildings.TryGetValue(checkedKey, out var checkedByTitle))
-      {
-        if (!string.IsNullOrWhiteSpace(checkedByTitle))
-          return checkedByTitle;
-
-        // Negative cache hit: building was already checked and not resolvable.
-        return null;
-      }
-
-      var filterBuilder = new FilterBuilder();
-      filterBuilder.Clear();
-      filterBuilder.Add("title", FilterBuilder.FilterType.Equals, FilterBuilder.Type.Text, normalizedTitle);
-      filterBuilder.Add("property_id", FilterBuilder.FilterType.Equals, FilterBuilder.Type.ObjectId, propertyId);
-
-      var listResponse = client.Get(resource + $"?page[number]=1&page[limit]=1&gridfilter={filterBuilder.Get()}");
-      if (client.StatusCode == 200 && !string.IsNullOrWhiteSpace(listResponse))
-      {
-        var listRoot = JsonConvert.DeserializeObject<Root>(listResponse);
-        var foundBuilding = listRoot?.Data?.FirstOrDefault();
-        var resolvedId = foundBuilding?.Attributes?.Id ?? foundBuilding?.Id;
-        if (!string.IsNullOrWhiteSpace(resolvedId))
-        {
-          buildingsByKey[key] = resolvedId;
-          checkedBuildings[checkedKey] = resolvedId;
-          SyncExistingBuilding(resolvedId, "title");
-          return resolvedId;
-        }
-      }
-
-      checkedBuildings[checkedKey] = string.Empty;
-      buildingsByKey[key] = string.Empty;
-
-      if (!createOnTheFly)
-        return null;
-
-      var payload = JsonConvert.SerializeObject(new
-      {
-        data = BuildPayload(includeEmptyAddress: false)
-      });
-
-      var response = client.Post(resource, payload);
-      if (client.StatusCode < 200 || client.StatusCode >= 300)
-      {
-        helper.Message(
-          $"Failed to create building (title='{normalizedTitle}', property_id='{propertyId}', inventory_id='{inventoryId}', inventory_title='{inventoryTitle}', status={client.StatusCode}). Response: {response}",
-          1,
-          "ERROR"
-        );
-        return null;
-      }
-
-      var newBuildingId = Helper.ExtractDataId(response);
-      if (string.IsNullOrWhiteSpace(newBuildingId))
-      {
-        helper.Message(
-          $"Failed to create building (title='{normalizedTitle}', property_id='{propertyId}', inventory_id='{inventoryId}', inventory_title='{inventoryTitle}'): API returned no building id.",
-          1,
-          "ERROR"
-        );
-        return null;
-      }
-
-      buildingsByKey[key] = newBuildingId;
-      checkedBuildings[checkedKey] = newBuildingId;
-      if (!string.IsNullOrWhiteSpace(normalizedExternalId))
-        checkedBuildings[checkedExternalKey] = newBuildingId;
-      helper.Message($"Building created on the fly: '{normalizedTitle}' (property_id='{propertyId}') -> {newBuildingId}", 2);
-      return newBuildingId;
+          Context = $"inventory_id='{inventoryId}', inventory_title='{inventoryTitle}'",
+        },
+        lookup, log, createOnTheFly, updateOnExisting);
     }
   }
 }

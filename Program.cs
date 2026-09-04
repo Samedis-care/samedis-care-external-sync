@@ -9,25 +9,43 @@ internal class Program
   static void Main(string[] args)
   {
     #region init
-    // set log
-    var helper = new Helper
-    {
-      LogFile = "Logfile_" + DateTime.Now.ToShortDateString() + ".log",
-    };
+    // Bootstrap logger with the previous defaults (level 1, console + file), because the
+    // config that carries the real level and mode is only read below - and reading it can
+    // already fail and needs to log.
+    //
+    // The date is formatted invariantly, not with ToShortDateString(): that is
+    // culture-dependent and yields "8/28/2026" in several cultures, whose slash turns the
+    // file name into a directory path. yyyy-MM-dd also sorts.
+    var logFile = Path.Combine("log", $"Logfile_{DateTime.Now:yyyy-MM-dd}.log");
+    ISyncLog log = new FileSyncLog(1, LogMode.Both, logFile);
 
     // read config
     var ymlFilePath = "config.yml";
     if (!File.Exists(ymlFilePath))
-      helper.MessageAndExit($"The file {ymlFilePath} does not exists. Stopping Import.");
+      Abort(log, $"The file {ymlFilePath} does not exists. Stopping Import.");
 
-    AppConfig config = AppConfig.LoadFromYaml(ymlFilePath);
+    AppConfig config = ConfigStore.Load<AppConfig>(ymlFilePath, ignoreUnmatchedProperties: false);
 
-    Helper.DecimalSeparator = config.Formatting?.DecimalSeparator ?? ",";
+    // Now with the configured level and mode.
+    log = new FileSyncLog(config.Logging.Level, (LogMode)config.Logging.Mode, logFile);
 
-    helper.LogLevel = config.Logging.Level;
-    helper.LogMode = config.Logging.Mode;
+    // Passed explicitly wherever numbers are parsed. The version this replaces kept the
+    // separator in a mutable static, so the meaning of a parse depended on load order.
+    NumberFormat numberFormat;
+    try
+    {
+      numberFormat = NumberFormat.FromSetting(config.Formatting?.DecimalSeparator);
+    }
+    catch (ArgumentException ex)
+    {
+      // Caught rather than left to surface as a stack trace: this is the first thing the run
+      // does with the config, and a typo here (the CSV delimiter is a frequent one) should
+      // read as a configuration problem, not as a crash.
+      Abort(log, $"formatting.decimal_separator in config.yml is invalid: {ex.Message}");
+      return;
+    }
 
-    helper.Message("Sync started.", 1);
+    log.Info("Sync started.");
 
     // last run handler (supports legacy date formats and writes ISO datetime with timezone)
     const string lastRunFormat = "yyyy-MM-ddTHH:mm:ss.fffzzz";
@@ -50,7 +68,7 @@ internal class Program
       DateTimeOffset.TryParse(lastRunRaw, CultureInfo.InvariantCulture, DateTimeStyles.AssumeLocal, out parsedLastRun);
 
     var lastRun = parsedLastRunOk ? parsedLastRun.ToString(lastRunFormat, CultureInfo.InvariantCulture) : lastRunFallback;
-    helper.Message($"Last run: {lastRun}", 2);
+    log.Debug($"Last run: {lastRun}");
     var syncStartTime = DateTimeOffset.Now;
 
     // init authentication
@@ -59,18 +77,23 @@ internal class Program
     var authClientSecret = config.Auth.ClientSecret;
     if (string.IsNullOrWhiteSpace(authUri) || string.IsNullOrWhiteSpace(authClientId) || string.IsNullOrWhiteSpace(authClientSecret))
     {
-      helper.Message($"Authentication configuration invalid, please check config.yml.", 1, "ERROR");
+      log.Error($"Authentication configuration invalid, please check config.yml.");
       return;
     }
 
     var samedisUri = config.Samedis.Uri;
     var samedisApiVersion = config.Samedis.ApiVersion;
     var samedisTenantId = config.Samedis.TenantId;
+
     if (string.IsNullOrWhiteSpace(samedisUri) || string.IsNullOrWhiteSpace(samedisApiVersion) || string.IsNullOrWhiteSpace(samedisTenantId))
     {
-      helper.Message($"Samedis configuration invalid, please check config.yml.", 1, "ERROR");
+      log.Error($"Samedis configuration invalid, please check config.yml.");
       return;
     }
+
+    // The one place that knows how a resource path is built. This sync is tenant-scoped and
+    // stays that way; the paths are centralised so the call sites carry no path knowledge.
+    ITenantScope scope = TenantScope.Standard(samedisTenantId, samedisApiVersion);
 
     var httpSettings = new HttpSettings()
     {
@@ -81,24 +104,34 @@ internal class Program
     };
 
     if (!httpSettings.ValidateCertificate)
-      helper.Message("WARNING: TLS certificate validation is disabled (http.valid_certificate: false). Do not use in production.", 2, "WARN");
+      log.Warn("WARNING: TLS certificate validation is disabled (http.valid_certificate: false). Do not use in production.");
 
-    var samedisAuth = new Authenticate(authUri, authClientId, authClientSecret, httpSettings, helper);
-    helper.Message($"Credential checkup Status: {samedisAuth.StatusCode} {samedisAuth.Status} User: {samedisAuth.User}", 1);
+    var samedisAuth = new Authenticate(authUri, authClientId, authClientSecret, httpSettings, log);
+    log.Info($"Credential checkup Status: {samedisAuth.StatusCode} {samedisAuth.Status} User: {samedisAuth.User}");
     var bearerToken = samedisAuth.BearerToken;
 
     //define resource
-    var samedisClient = new RequestData(samedisUri, bearerToken, httpSettings);
+    var samedisClient = new RequestData(samedisUri, bearerToken, httpSettings, log);
 
-    // tenant-level settings
-    var tenantSettings = Tenant.GetSettings(samedisClient, samedisApiVersion, samedisTenantId, helper);
+    // Tenant-level settings. No fallback on purpose: use_extended_device_locations and
+    // use_profit_centers decide how EVERY inventory of this run is written, so guessing them
+    // writes a whole import into the wrong shape and reports a clean run.
+    Tenant.Settings tenantSettings;
+    try
+    {
+      tenantSettings = Tenant.GetSettings(samedisClient, samedisApiVersion, samedisTenantId, log);
+    }
+    catch (LookupUnavailableException ex)
+    {
+      log.Error($"Tenant settings could not be read, so the location and profit-center mode of "
+              + $"this run is unknown. Stopping. {ex.Message}");
+      Environment.Exit(1);
+      return;
+    }
     var useExtendedDeviceLocations = tenantSettings.UseExtendedDeviceLocations;
     var useProfitCenters = tenantSettings.UseProfitCenters;
     var locationMode = useExtendedDeviceLocations ? "property" : "standard";
-    helper.Message(
-      $"Tenant settings loaded. TenantId: {tenantSettings.TenantId} Name: {tenantSettings.Name} LocationMode: {locationMode} use_profit_centers: {useProfitCenters}",
-      1
-    );
+    log.Info($"Tenant settings loaded. TenantId: {tenantSettings.TenantId} Name: {tenantSettings.Name} LocationMode: {locationMode} use_profit_centers: {useProfitCenters}");
 
     // list settings
     var pageSize = 250; // max 250
@@ -107,7 +140,7 @@ internal class Program
     var defaultUploadRoot = Path.Combine("data", "to_samedis");
     var downloadRoot = string.IsNullOrWhiteSpace(config.Paths?.FromSamedis) ? defaultDownloadRoot : config.Paths.FromSamedis.Trim();
     var uploadRoot = string.IsNullOrWhiteSpace(config.Paths?.ToSamedis) ? defaultUploadRoot : config.Paths.ToSamedis.Trim();
-    helper.Message($"Data paths: from_samedis='{downloadRoot}', to_samedis='{uploadRoot}'", 2);
+    log.Debug($"Data paths: from_samedis='{downloadRoot}', to_samedis='{uploadRoot}'");
 
     // clean up download folder only, keep upload folder for import procedures
     if (Directory.Exists(downloadRoot))
@@ -116,1150 +149,62 @@ internal class Program
     Directory.CreateDirectory(uploadRoot);
     #endregion
 
-    #region Tasks Upload
-    if (!config.Sync.TasksUpload)
-    {
-      helper.Message("Tasks Upload sync disabled in config.yml", 1);
-    }
-    else
-    {
-      helper.Message("Tasks Upload sync starting.", 1);
-
-      var tasksResource = $"/api/{samedisApiVersion}/tenants/{samedisTenantId}/issues";
-      var tasksWriteResource = tasksResource + "?locale=en";
-      var inventoryResource = $"/api/{samedisApiVersion}/tenants/{samedisTenantId}/inventories";
-      var tasksCsvPath = Path.Combine(uploadRoot, "tasks.csv");
-      var setInventoryOperationStatusOnFailedMaintenance = config.Sync.TasksUploadSetInventoryOperationStatusOnFailedMaintenance;
-
-      helper.CanDo(samedisClient, tasksResource);
-      helper.CanDo(samedisClient, inventoryResource);
-
-      if (!File.Exists(tasksCsvPath))
-      {
-        helper.Message($"Tasks Upload skipped. CSV not found: {tasksCsvPath}", 1, "WARN");
-      }
-      else
-      {
-        DataTable uploadTable;
-        try
-        {
-          uploadTable = Helper.ImportCsvToDataTable(tasksCsvPath, "TasksUpload");
-        }
-        catch (Exception ex)
-        {
-          helper.Message($"Tasks Upload failed to read CSV {tasksCsvPath}: {ex.Message}", 1, "ERROR");
-          uploadTable = new DataTable("TasksUpload");
-        }
-
-        if (uploadTable.Rows.Count == 0)
-        {
-          helper.Message("Tasks Upload skipped because CSV contains no rows.", 1, "WARN");
-        }
-        else if (!Helper.CheckColumnsExist(uploadTable, Tasks.UploadRequiredColumns))
-        {
-          helper.Message(
-            $"Tasks Upload skipped. CSV missing one or more required columns: {string.Join(", ", Tasks.UploadRequiredColumns)}",
-            1,
-            "ERROR"
-          );
-        }
-        else
-        {
-          var issueByIssueNumber = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-          var inventoryByDeviceNumber = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-          var createdCount = 0;
-          var updatedCount = 0;
-          var skippedCount = 0;
-          var errorCount = 0;
-          var documentsUploadedCount = 0;
-          var documentsSkippedCount = 0;
-          var documentsErrorCount = 0;
-
-          var rowNumber = 0;
-          foreach (DataRow row in uploadTable.Rows)
-          {
-            rowNumber++;
-            var issueNumber = Helper.GetRowValue(row, "issue_number");
-            var inventoryDeviceNumber = Helper.GetRowValue(row, "inventory_device_number");
-            var documentFileName = Tasks.GetTaskDocumentFileName(row);
-            if (string.IsNullOrWhiteSpace(documentFileName))
-            {
-              skippedCount++;
-              documentsSkippedCount++;
-              helper.Message(
-                $"Skipped task row {rowNumber} because document filename is empty (issue_number='{issueNumber}', inventory_device_number='{inventoryDeviceNumber}').",
-                1,
-                "WARN"
-              );
-              continue;
-            }
-
-            var documentPath = Tasks.ResolveTaskDocumentPath(uploadRoot, documentFileName);
-            if (string.IsNullOrWhiteSpace(documentPath))
-            {
-              skippedCount++;
-              documentsSkippedCount++;
-              helper.Message(
-                $"Skipped task row {rowNumber} because document file '{documentFileName}' was not found (issue_number='{issueNumber}', inventory_device_number='{inventoryDeviceNumber}').",
-                1,
-                "WARN"
-              );
-              continue;
-            }
-
-            if (string.IsNullOrWhiteSpace(inventoryDeviceNumber))
-            {
-              skippedCount++;
-              helper.Message($"Skipped task row {rowNumber} because inventory_device_number is empty.", 1, "WARN");
-              continue;
-            }
-
-            var inventoryId = Inventories.ResolveInventoryIdByDeviceNumber(
-              samedisClient,
-              inventoryResource,
-              inventoryDeviceNumber,
-              inventoryByDeviceNumber
-            );
-            if (string.IsNullOrWhiteSpace(inventoryId))
-            {
-              skippedCount++;
-              helper.Message(
-                $"Skipped task row {rowNumber} because inventory_device_number '{inventoryDeviceNumber}' could not be resolved to an inventory id.",
-                1,
-                "WARN"
-              );
-              continue;
-            }
-
-            var targetIssueId = Helper.GetRowValue(row, "id");
-            if (string.IsNullOrWhiteSpace(targetIssueId) && !string.IsNullOrWhiteSpace(issueNumber))
-            {
-              targetIssueId = Tasks.ResolveIssueIdByIssueNumber(
-                samedisClient,
-                tasksResource,
-                issueNumber,
-                issueByIssueNumber
-              );
-            }
-
-            var taskAttributes = Tasks.BuildTaskAttributes(
-              row,
-              inventoryId,
-              setInventoryOperationStatusOnFailedMaintenance,
-              out var buildError,
-              out var buildWarning
-            );
-            if (taskAttributes == null)
-            {
-              errorCount++;
-              helper.Message(
-                $"Failed to process task row {rowNumber} (issue_number='{issueNumber}', inventory_device_number='{inventoryDeviceNumber}'): {buildError}",
-                1,
-                "ERROR"
-              );
-              continue;
-            }
-
-            if (!string.IsNullOrWhiteSpace(buildWarning))
-            {
-              helper.Message(
-                $"Task row {rowNumber} warning (issue_number='{issueNumber}', inventory_device_number='{inventoryDeviceNumber}'): {buildWarning}",
-                1,
-                "WARN"
-              );
-            }
-
-            var requestPayload = JsonConvert.SerializeObject(new
-            {
-              data = taskAttributes
-            });
-
-            var isCreateOperation = string.IsNullOrWhiteSpace(targetIssueId);
-            var response = isCreateOperation
-              ? samedisClient.Post(tasksWriteResource, requestPayload)
-              : samedisClient.Put(tasksWriteResource, targetIssueId, requestPayload);
-
-            if (samedisClient.StatusCode >= 200 && samedisClient.StatusCode < 300)
-            {
-              var resultingIssueId = Helper.ExtractDataId(response) ?? targetIssueId ?? string.Empty;
-              if (!string.IsNullOrWhiteSpace(issueNumber))
-                issueByIssueNumber[issueNumber] = resultingIssueId;
-
-              if (isCreateOperation)
-              {
-                createdCount++;
-                helper.Message(
-                  $"Task created (issue_number='{issueNumber}', inventory_device_number='{inventoryDeviceNumber}', id='{resultingIssueId}').",
-                  2
-                );
-              }
-              else
-              {
-                updatedCount++;
-                helper.Message(
-                  $"Task updated (issue_number='{issueNumber}', inventory_device_number='{inventoryDeviceNumber}', id='{targetIssueId}').",
-                  2
-                );
-              }
-
-              if (!File.Exists(documentPath))
-              {
-                documentsErrorCount++;
-                helper.Message(
-                  $"Task document upload failed because file vanished before upload (issue_number='{issueNumber}', task_id='{resultingIssueId}', file='{documentFileName}').",
-                  1,
-                  "ERROR"
-                );
-              }
-              else if (string.IsNullOrWhiteSpace(resultingIssueId))
-              {
-                documentsErrorCount++;
-                helper.Message(
-                  $"Task document upload failed because issue id is empty (issue_number='{issueNumber}', file='{documentFileName}').",
-                  1,
-                  "ERROR"
-                );
-              }
-              else
-              {
-                var uploadResource = $"{tasksResource}/{resultingIssueId}/uploads";
-                var uploadResponse = samedisClient.PostTaskDocumentUpload(uploadResource, documentPath, Path.GetFileName(documentPath));
-                if (samedisClient.StatusCode >= 200 && samedisClient.StatusCode < 300)
-                {
-                  documentsUploadedCount++;
-                  helper.Message(
-                    $"Task document uploaded (issue_number='{issueNumber}', task_id='{resultingIssueId}', file='{Path.GetFileName(documentPath)}').",
-                    2
-                  );
-                }
-                else
-                {
-                  documentsErrorCount++;
-                  helper.Message(
-                    $"Failed to upload task document (issue_number='{issueNumber}', task_id='{resultingIssueId}', file='{Path.GetFileName(documentPath)}', status={samedisClient.StatusCode}). Response: {uploadResponse}",
-                    1,
-                    "ERROR"
-                  );
-                }
-              }
-            }
-            else
-            {
-              errorCount++;
-              var failedIssueId = string.IsNullOrWhiteSpace(targetIssueId) ? issueNumber : targetIssueId;
-              var operation = isCreateOperation ? "create" : "update";
-              helper.Message(
-                $"Failed to {operation} task (id='{failedIssueId}', issue_number='{issueNumber}', inventory_device_number='{inventoryDeviceNumber}', status={samedisClient.StatusCode}). Response: {response}",
-                1,
-                "ERROR"
-              );
-            }
-          }
-
-          helper.Message(
-            $"Tasks Upload finished. Created: {createdCount}, Updated: {updatedCount}, Skipped: {skippedCount}, Errors: {errorCount}, Documents Uploaded: {documentsUploadedCount}, Documents Skipped: {documentsSkippedCount}, Document Errors: {documentsErrorCount}",
-            1
-          );
-        }
-      }
-    }
-    #endregion
-
-    #region Tasks Download
-    // Document downloads retry up to 5 times on HTTP 202 (document generation pending)
-    if (!config.Sync.TasksDownload)
-    {
-      helper.Message("Tasks Download sync disabled in config.yml", 1);
-    }
-    else
-    {
-      helper.Message("Tasks Download sync starting.");
-      var urlResource = $"/api/{samedisApiVersion}/tenants/{samedisTenantId}/issues";
-      helper.CanDo(samedisClient, urlResource);
-
-      var filterBuilder = new FilterBuilder();
-      filterBuilder.Clear();
-      filterBuilder.Add("updated_at", FilterBuilder.FilterType.GreaterThan, FilterBuilder.Type.DateTime, lastRun);
-
-      var taskDownloadTypes = config.Sync.TaskDownloadTypes ?? string.Empty;
-      var taskDownloadStatus = config.Sync.TaskDownloadStatus ?? string.Empty;
-      var taskTypeFilter = $"&filter[issue_type]={taskDownloadTypes}";
-      var archiveFilter = $"&filter[archive]={config.Sync.TaskArchiveFilter.ToString().ToLower()}";
-      var statusFilter = $"&filter[status]={taskDownloadStatus}";
-
-      var requestResource = urlResource + $"?page[number]=1&page[limit]=0&quickfilter=&gridfilter={filterBuilder.Get()}{archiveFilter}{taskTypeFilter}{statusFilter}";
-      var response = samedisClient.Get(requestResource);
-      var taskList = string.IsNullOrEmpty(response) ? null : JsonConvert.DeserializeObject<Tasks.Root>(response);
-      var totalRecords = taskList?.Meta?.Total ?? 0;
-      var pages = totalRecords % pageSize != 0 ? totalRecords / pageSize + 1 : totalRecords / pageSize;
-
-      helper.LogListStatus(samedisClient, requestResource, totalRecords, pages);
-
-      for (var page = 1; page <= pages; page++)
-      {
-        requestResource = urlResource + $"?page[number]={page}&page[limit]={pageSize}&quickfilter=&gridfilter={filterBuilder.Get()}{archiveFilter}{taskTypeFilter}{statusFilter}";
-        response = samedisClient.Get(requestResource);
-        helper.Message($"Page {page}", 2);
-        helper.Message($"Status Code: {samedisClient.StatusCode} {samedisClient.Status}", 2);
-
-        if (string.IsNullOrEmpty(response)) continue;
-        var taskRoot = JsonConvert.DeserializeObject<Tasks.Root>(response);
-        var tDs = Tasks.CreateTaskDataSet();
-        Tasks.FillTaskDataSet(tDs, response);
-        Helper.ExportDataSetToCsv(tDs, Path.Combine(downloadRoot, "tasks.csv"), "Tasks");
-
-        if (taskRoot?.Data == null || taskRoot.Data.Count == 0)
-          continue;
-
-        var documentsRoot = Path.Combine(downloadRoot, "task_documents");
-        Directory.CreateDirectory(documentsRoot);
-
-        foreach (var task in taskRoot.Data)
-        {
-          var attr = task.Attributes;
-          var taskId = attr?.Id ?? task.Id;
-          if (string.IsNullOrEmpty(taskId)) continue;
-
-          var inventoryDeviceNumber = attr?.InventoryDeviceNumber ?? "unknown";
-          var issueNumber = attr?.IssueNumber?.ToString() ?? taskId;
-          var dateIso = Helper.ToIsoDate(attr?.Date, attr?.DoneAt, attr?.UpdatedAt, attr?.CreatedAt) ?? DateTime.Now.ToString("yyyy-MM-dd");
-
-          var docRequest = $"{urlResource}/{taskId}/uploads?page[number]=1&page[limit]={pageSize}&quickfilter=&gridfilter={{}}";
-          var docResponse = samedisClient.Get(docRequest);
-          Tasks.TaskDocuments.Root? docRoot = string.IsNullOrEmpty(docResponse) ? null : JsonConvert.DeserializeObject<Tasks.TaskDocuments.Root>(docResponse);
-          var docTotal = docRoot?.Meta?.Total ?? 0;
-          var docPages = docTotal % pageSize != 0 ? docTotal / pageSize + 1 : docTotal / pageSize;
-
-          for (var docPage = 1; docPage <= Math.Max(1, docPages); docPage++)
-          {
-            if (docPage > 1)
-            {
-              docRequest = $"{urlResource}/{taskId}/uploads?page[number]={docPage}&page[limit]={pageSize}&quickfilter=&gridfilter={{}}";
-              docResponse = samedisClient.Get(docRequest);
-              docRoot = string.IsNullOrEmpty(docResponse) ? null : JsonConvert.DeserializeObject<Tasks.TaskDocuments.Root>(docResponse);
-            }
-
-            if (docRoot?.Data == null || docRoot.Data.Count == 0)
-              continue;
-
-            var multipleDocs = docRoot.Data.Count > 1 || docTotal > 1;
-
-            foreach (var doc in docRoot.Data)
-            {
-              var docUrl = doc.Links?.Document;
-              if (string.IsNullOrEmpty(docUrl)) continue;
-
-              var ext = Helper.GetExtension(doc.Attributes?.Name, doc.Attributes?.MimeType, docUrl);
-              var safeTaskId = Helper.SanitizeFileName(issueNumber);
-              var safeInventoryId = Helper.SanitizeFileName(inventoryDeviceNumber);
-              var fileName = $"task_{safeTaskId}_inventory_{safeInventoryId}_{dateIso}";
-              if (multipleDocs && !string.IsNullOrEmpty(doc.Id))
-                fileName += $"_doc_{Helper.SanitizeFileName(doc.Id)}";
-              fileName += ext;
-
-              var outputPath = Path.Combine(documentsRoot, fileName);
-              if (File.Exists(outputPath)) continue;
-
-              try
-              {
-                var downloaded = samedisClient.DownloadAsync(docUrl, outputPath).GetAwaiter().GetResult();
-                if (downloaded)
-                  helper.Message($"Downloaded task document: {fileName}", 2);
-                else
-                  helper.Message($"Task document not ready after retries for task {taskId}: {fileName}", 1, "WARN");
-              }
-              catch (Exception ex)
-              {
-                helper.Message($"Failed to download task document for task {taskId}: {ex.Message}", 1, "ERROR");
-              }
-            }
-          }
-
-          var detailResponse = samedisClient.Get(urlResource + "/" + taskId);
-          if (string.IsNullOrEmpty(detailResponse))
-            continue;
-
-          var detailRoot = JsonConvert.DeserializeObject<Tasks.Root>(detailResponse);
-          var detailAttr = detailRoot?.Data?.FirstOrDefault()?.Attributes;
-          var protocolUrl = detailAttr?.TestProtocolUrl;
-
-          if (!string.IsNullOrEmpty(protocolUrl))
-          {
-            var protocolExt = Helper.GetExtension(null, "application/pdf", protocolUrl);
-            var safeTaskId = Helper.SanitizeFileName(issueNumber);
-            var safeInventoryId = Helper.SanitizeFileName(inventoryDeviceNumber);
-            var protocolFileName = $"task_{safeTaskId}_inventory_{safeInventoryId}_{dateIso}_protocol{protocolExt}";
-            var protocolPath = Path.Combine(documentsRoot, protocolFileName);
-
-            if (!File.Exists(protocolPath))
-            {
-              try
-              {
-                var downloaded = samedisClient.DownloadAsync(protocolUrl, protocolPath).GetAwaiter().GetResult();
-                if (downloaded)
-                  helper.Message($"Downloaded task protocol: {protocolFileName}", 2);
-                else
-                  helper.Message($"Task protocol not ready after retries for task {taskId}: {protocolFileName}", 1, "WARN");
-              }
-              catch (Exception ex)
-              {
-                helper.Message($"Failed to download task protocol for task {taskId}: {ex.Message}", 1, "ERROR");
-              }
-            }
-          }
-        }
-      }
-    }
-    #endregion
-
-    #region Requests Upload
-    if (!config.Sync.RequestsUpload)
-    {
-      helper.Message("Requests Upload sync disabled in config.yml", 1);
-    }
-    else
-    {
-      helper.Message("Requests Upload sync starting.", 1);
-
-      var requestsResource = $"/api/{samedisApiVersion}/tenants/{samedisTenantId}/incidents";
-      var requestsWriteResource = requestsResource + "?locale=en";
-      var requestsCsvPath = Path.Combine(uploadRoot, "requests.csv");
-      var requestMessagesCsvPath = Path.Combine(uploadRoot, "request-messages.csv");
-
-      helper.CanDo(samedisClient, requestsResource);
-
-      var inventoriesResource = $"/api/{samedisApiVersion}/tenants/{samedisTenantId}/inventories";
-
-      var incidentByIncidentNumber = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-      var inventoryByDeviceNumber = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-      var supporterByInventoryAndEmail = new Dictionary<string, Helper.ResponsibleSupporter?>(StringComparer.OrdinalIgnoreCase);
-
-      // -- requests.csv: status / responsible / etc. updates on existing requests --
-      if (!File.Exists(requestsCsvPath))
-      {
-        helper.Message($"Requests Upload: status CSV not found, skipping: {requestsCsvPath}", 1, "WARN");
-      }
-      else
-      {
-        DataTable uploadTable;
-        try
-        {
-          uploadTable = Helper.ImportCsvToDataTable(requestsCsvPath, "RequestsUpload");
-        }
-        catch (Exception ex)
-        {
-          helper.Message($"Requests Upload failed to read CSV {requestsCsvPath}: {ex.Message}", 1, "ERROR");
-          uploadTable = new DataTable("RequestsUpload");
-        }
-
-        if (uploadTable.Rows.Count == 0)
-        {
-          helper.Message("Requests Upload skipped because requests.csv contains no rows.", 1, "WARN");
-        }
-        else if (!Helper.CheckColumnsExist(uploadTable, Requests.UploadRequiredColumns))
-        {
-          helper.Message(
-            $"Requests Upload skipped. requests.csv missing one or more required columns: {string.Join(", ", Requests.UploadRequiredColumns)}",
-            1,
-            "ERROR"
-          );
-        }
-        else
-        {
-          var updatedCount = 0;
-          var skippedCount = 0;
-          var errorCount = 0;
-          var rowNumber = 0;
-
-          foreach (DataRow row in uploadTable.Rows)
-          {
-            rowNumber++;
-            var rowId = Helper.GetRowValue(row, "id");
-            var incidentNumber = Helper.GetRowValue(row, "incident_number");
-
-            var targetIncidentId = rowId;
-            if (string.IsNullOrWhiteSpace(targetIncidentId) && !string.IsNullOrWhiteSpace(incidentNumber))
-            {
-              targetIncidentId = Requests.ResolveIncidentIdByIncidentNumber(
-                samedisClient,
-                requestsResource,
-                incidentNumber,
-                incidentByIncidentNumber
-              );
-            }
-
-            if (string.IsNullOrWhiteSpace(targetIncidentId))
-            {
-              skippedCount++;
-              helper.Message(
-                $"Skipped request row {rowNumber} because no existing request could be resolved (id='{rowId}', incident_number='{incidentNumber}').",
-                1,
-                "WARN"
-              );
-              continue;
-            }
-
-            // Resolve inventory first (prefer samedis inventory_id, otherwise look up by device_number).
-            // The responsible lookup below depends on a resolved inventory.
-            var csvInventoryDeviceNumber = Helper.GetRowValue(row, "inventory_device_number");
-            if (string.IsNullOrWhiteSpace(csvInventoryDeviceNumber))
-              csvInventoryDeviceNumber = Helper.GetRowValue(row, "inventory_number");
-
-            var resolvedInventoryId = Inventories.ResolveInventoryIdByIdOrDeviceNumber(
-              samedisClient,
-              inventoriesResource,
-              Helper.GetRowValue(row, "inventory_id"),
-              csvInventoryDeviceNumber,
-              inventoryByDeviceNumber
-            );
-            if (string.IsNullOrWhiteSpace(resolvedInventoryId) && !string.IsNullOrWhiteSpace(csvInventoryDeviceNumber))
-            {
-              helper.Message(
-                $"Request row {rowNumber} (id='{targetIncidentId}', incident_number='{incidentNumber}'): inventory_device_number '{csvInventoryDeviceNumber}' could not be resolved to an inventory.",
-                1,
-                "WARN"
-              );
-            }
-
-            // Resolve "verantwortlich" by email against the inventory's incident supporters
-            // (internal contact, staff member, or external enterprise contact).
-            var responsible = Helper.ResolveResponsibleByEmail(
-              samedisClient,
-              samedisApiVersion,
-              samedisTenantId,
-              resolvedInventoryId,
-              Helper.GetRowValue(row, "responsible_email"),
-              supporterByInventoryAndEmail,
-              helper
-            );
-            var resolvedResponsibleId = responsible?.Id ?? string.Empty;
-            var resolvedResponsibleType = responsible?.Type ?? string.Empty;
-
-            var attributes = Requests.BuildRequestUpdateAttributes(
-              row,
-              out var buildError,
-              out var buildWarning,
-              resolvedResponsibleId,
-              resolvedResponsibleType,
-              resolvedInventoryId
-            );
-            if (attributes == null)
-            {
-              errorCount++;
-              helper.Message(
-                $"Failed to process request row {rowNumber} (id='{targetIncidentId}', incident_number='{incidentNumber}'): {buildError}",
-                1,
-                "ERROR"
-              );
-              continue;
-            }
-
-            if (attributes.Count == 0)
-            {
-              skippedCount++;
-              helper.Message(
-                $"Skipped request row {rowNumber} (id='{targetIncidentId}', incident_number='{incidentNumber}'): {buildWarning}",
-                2
-              );
-              continue;
-            }
-
-            if (!string.IsNullOrWhiteSpace(buildWarning))
-            {
-              helper.Message(
-                $"Request row {rowNumber} warning (id='{targetIncidentId}', incident_number='{incidentNumber}'): {buildWarning}",
-                1,
-                "WARN"
-              );
-            }
-
-            var requestPayload = JsonConvert.SerializeObject(new
-            {
-              data = attributes
-            });
-
-            var response = samedisClient.Put(requestsWriteResource, targetIncidentId, requestPayload);
-
-            if (samedisClient.StatusCode >= 200 && samedisClient.StatusCode < 300)
-            {
-              updatedCount++;
-              helper.Message(
-                $"Request updated (id='{targetIncidentId}', incident_number='{incidentNumber}', fields=[{string.Join(",", attributes.Keys)}]).",
-                2
-              );
-            }
-            else
-            {
-              errorCount++;
-              helper.Message(
-                $"Failed to update request (id='{targetIncidentId}', incident_number='{incidentNumber}', status={samedisClient.StatusCode}). Response: {response}",
-                1,
-                "ERROR"
-              );
-            }
-          }
-
-          helper.Message(
-            $"Requests Upload finished (status updates). Updated: {updatedCount}, Skipped: {skippedCount}, Errors: {errorCount}",
-            1
-          );
-        }
-      }
-
-      // -- request-messages.csv: create new messages (rows with empty id) plus optional asset --
-      if (!File.Exists(requestMessagesCsvPath))
-      {
-        helper.Message($"Requests Upload: messages CSV not found, skipping: {requestMessagesCsvPath}", 1, "WARN");
-      }
-      else
-      {
-        DataTable messagesTable;
-        try
-        {
-          messagesTable = Helper.ImportCsvToDataTable(requestMessagesCsvPath, "RequestMessagesUpload");
-        }
-        catch (Exception ex)
-        {
-          helper.Message($"Requests Upload failed to read CSV {requestMessagesCsvPath}: {ex.Message}", 1, "ERROR");
-          messagesTable = new DataTable("RequestMessagesUpload");
-        }
-
-        if (messagesTable.Rows.Count == 0)
-        {
-          helper.Message("Requests Upload skipped messages because request-messages.csv contains no rows.", 1, "WARN");
-        }
-        else if (!Helper.CheckColumnsExist(messagesTable, Requests.MessageUploadRequiredColumns))
-        {
-          helper.Message(
-            $"Requests Upload skipped messages. request-messages.csv missing one or more required columns: {string.Join(", ", Requests.MessageUploadRequiredColumns)}",
-            1,
-            "ERROR"
-          );
-        }
-        else
-        {
-          var hasFilenameColumn = messagesTable.Columns.Contains("filename");
-          var createdCount = 0;
-          var skippedCount = 0;
-          var errorCount = 0;
-          var documentsUploadedCount = 0;
-          var documentsSkippedCount = 0;
-          var documentsErrorCount = 0;
-          var rowNumber = 0;
-
-          foreach (DataRow row in messagesTable.Rows)
-          {
-            rowNumber++;
-            var existingMessageId = Helper.GetRowValue(row, "id");
-            if (!string.IsNullOrWhiteSpace(existingMessageId))
-            {
-              skippedCount++;
-              helper.Message(
-                $"Skipped message row {rowNumber} because id is non-empty (only new messages with empty id are uploaded). id='{existingMessageId}'.",
-                2
-              );
-              continue;
-            }
-
-            var incidentIdRaw = Helper.GetRowValue(row, "incident_id");
-            var incidentNumberRaw = Helper.GetRowValue(row, "incident_number");
-
-            var targetIncidentId = incidentIdRaw;
-            if (string.IsNullOrWhiteSpace(targetIncidentId) && !string.IsNullOrWhiteSpace(incidentNumberRaw))
-            {
-              targetIncidentId = Requests.ResolveIncidentIdByIncidentNumber(
-                samedisClient,
-                requestsResource,
-                incidentNumberRaw,
-                incidentByIncidentNumber
-              );
-            }
-
-            if (string.IsNullOrWhiteSpace(targetIncidentId))
-            {
-              skippedCount++;
-              helper.Message(
-                $"Skipped message row {rowNumber} because parent request could not be resolved (incident_id='{incidentIdRaw}', incident_number='{incidentNumberRaw}').",
-                1,
-                "WARN"
-              );
-              continue;
-            }
-
-            var messageAttributes = Requests.BuildMessageCreateAttributes(row, out var buildError);
-            if (messageAttributes == null)
-            {
-              errorCount++;
-              helper.Message(
-                $"Failed to process message row {rowNumber} (incident_id='{targetIncidentId}', incident_number='{incidentNumberRaw}'): {buildError}",
-                1,
-                "ERROR"
-              );
-              continue;
-            }
-
-            var messagesWriteResource = $"{requestsResource}/{targetIncidentId}/messages?locale=en";
-            var requestPayload = JsonConvert.SerializeObject(new
-            {
-              data = messageAttributes
-            });
-
-            var response = samedisClient.Post(messagesWriteResource, requestPayload);
-
-            if (samedisClient.StatusCode < 200 || samedisClient.StatusCode >= 300)
-            {
-              errorCount++;
-              helper.Message(
-                $"Failed to create message (incident_id='{targetIncidentId}', incident_number='{incidentNumberRaw}', status={samedisClient.StatusCode}). Response: {response}",
-                1,
-                "ERROR"
-              );
-              continue;
-            }
-
-            createdCount++;
-            var resultingMessageId = Helper.ExtractDataId(response) ?? string.Empty;
-            helper.Message(
-              $"Message created (incident_id='{targetIncidentId}', incident_number='{incidentNumberRaw}', id='{resultingMessageId}').",
-              2
-            );
-
-            // Optional asset attached to this message.
-            if (!hasFilenameColumn)
-              continue;
-
-            var filename = Helper.GetRowValue(row, "filename");
-            if (string.IsNullOrWhiteSpace(filename))
-              continue;
-
-            var documentPath = Requests.ResolveRequestDocumentPath(uploadRoot, filename);
-            if (string.IsNullOrWhiteSpace(documentPath))
-            {
-              documentsSkippedCount++;
-              helper.Message(
-                $"Skipped asset for message row {rowNumber} because file '{filename}' was not found under {uploadRoot}/request_documents/.",
-                1,
-                "WARN"
-              );
-              continue;
-            }
-
-            if (string.IsNullOrWhiteSpace(resultingMessageId))
-            {
-              documentsErrorCount++;
-              helper.Message(
-                $"Asset upload failed because resulting message id is empty (incident_id='{targetIncidentId}', file='{filename}').",
-                1,
-                "ERROR"
-              );
-              continue;
-            }
-
-            var assetResource = $"{requestsResource}/{targetIncidentId}/messages/{resultingMessageId}/uploads";
-            var assetResponse = samedisClient.PostTaskDocumentUpload(assetResource, documentPath, Path.GetFileName(documentPath));
-            if (samedisClient.StatusCode >= 200 && samedisClient.StatusCode < 300)
-            {
-              documentsUploadedCount++;
-              helper.Message(
-                $"Message asset uploaded (incident_id='{targetIncidentId}', message_id='{resultingMessageId}', file='{Path.GetFileName(documentPath)}').",
-                2
-              );
-            }
-            else
-            {
-              documentsErrorCount++;
-              helper.Message(
-                $"Failed to upload message asset (incident_id='{targetIncidentId}', message_id='{resultingMessageId}', file='{Path.GetFileName(documentPath)}', status={samedisClient.StatusCode}). Response: {assetResponse}",
-                1,
-                "ERROR"
-              );
-            }
-          }
-
-          helper.Message(
-            $"Requests Upload finished (messages). Created: {createdCount}, Skipped: {skippedCount}, Errors: {errorCount}, Assets Uploaded: {documentsUploadedCount}, Assets Skipped: {documentsSkippedCount}, Asset Errors: {documentsErrorCount}",
-            1
-          );
-        }
-      }
-    }
-    #endregion
-
-    #region Requests Download
-    if (!config.Sync.RequestsDownload)
-    {
-      helper.Message("Requests Download sync disabled in config.yml", 1);
-    }
-    else
-    {
-      helper.Message("Requests Download sync starting.");
-      var urlResource = $"/api/{samedisApiVersion}/tenants/{samedisTenantId}/incidents";
-      helper.CanDo(samedisClient, urlResource);
-
-      var filterBuilder = new FilterBuilder();
-      filterBuilder.Clear();
-      filterBuilder.Add("updated_at", FilterBuilder.FilterType.GreaterThan, FilterBuilder.Type.DateTime, lastRun);
-
-      var requestResource = urlResource + $"?page[number]=1&page[limit]=0&quickfilter=&gridfilter={filterBuilder.Get()}";
-      var response = samedisClient.Get(requestResource);
-      var requestList = string.IsNullOrEmpty(response) ? null : JsonConvert.DeserializeObject<Requests.Root>(response);
-      var totalRecords = requestList?.Meta?.Total ?? 0;
-      var pages = totalRecords % pageSize != 0 ? totalRecords / pageSize + 1 : totalRecords / pageSize;
-
-      helper.LogListStatus(samedisClient, requestResource, totalRecords, pages);
-
-      for (var page = 1; page <= pages; page++)
-      {
-        requestResource = urlResource + $"?page[number]={page}&page[limit]={pageSize}&quickfilter=&gridfilter={filterBuilder.Get()}";
-        response = samedisClient.Get(requestResource);
-        helper.Message($"Page {page}", 2);
-        helper.Message($"Status Code: {samedisClient.StatusCode} {samedisClient.Status}", 2);
-        if (samedisClient.StatusCode >= 400)
-          helper.Message($"Request URI: {requestResource}", 1, "ERROR");
-
-
-        if (string.IsNullOrEmpty(response)) continue;
-        var requestRoot = JsonConvert.DeserializeObject<Requests.Root>(response);
-        var rDs = Requests.CreateRequestDataSet();
-        Requests.FillRequestDataSet(rDs, response, samedisTenantId, config.Samedis.WebUri);
-        Helper.ExportDataSetToCsv(rDs, Path.Combine(downloadRoot, "requests.csv"), "Requests");
-
-        if (requestRoot?.Data == null || requestRoot.Data.Count == 0)
-          continue;
-
-        var requestDocumentsRoot = Path.Combine(downloadRoot, "request_documents");
-        Directory.CreateDirectory(requestDocumentsRoot);
-
-        foreach (var request in requestRoot.Data)
-        {
-          var rAttr = request.Attributes;
-          var requestId = rAttr?.Id ?? request.Id;
-          if (string.IsNullOrEmpty(requestId)) continue;
-
-          var incidentNumber = rAttr?.IncidentNumber?.ToString() ?? requestId;
-          var safeIncident = Helper.SanitizeFileName(incidentNumber);
-          var dateIso = Helper.ToIsoDate(rAttr?.UpdatedAt, rAttr?.CreatedAt) ?? DateTime.Now.ToString("yyyy-MM-dd");
-
-          // Messages
-          var msgRequest = $"{urlResource}/{requestId}/messages?page[number]=1&page[limit]={pageSize}&quickfilter=&gridfilter={{}}";
-          var msgResponse = samedisClient.Get(msgRequest);
-          var msgRoot = string.IsNullOrEmpty(msgResponse) ? null : JsonConvert.DeserializeObject<Requests.RequestMessages.Root>(msgResponse);
-          var msgTotal = msgRoot?.Meta?.Total ?? 0;
-          var msgPages = msgTotal % pageSize != 0 ? msgTotal / pageSize + 1 : msgTotal / pageSize;
-
-          for (var msgPage = 1; msgPage <= Math.Max(1, msgPages); msgPage++)
-          {
-            if (msgPage > 1)
-            {
-              msgRequest = $"{urlResource}/{requestId}/messages?page[number]={msgPage}&page[limit]={pageSize}&quickfilter=&gridfilter={{}}";
-              msgResponse = samedisClient.Get(msgRequest);
-            }
-            if (string.IsNullOrEmpty(msgResponse)) continue;
-            var rmDs = Requests.CreateRequestMessageDataSet();
-            Requests.FillRequestMessageDataSet(rmDs, msgResponse, requestId, incidentNumber);
-            Helper.ExportDataSetToCsv(rmDs, Path.Combine(downloadRoot, "request-messages.csv"), "RequestMessages");
-          }
-
-          // Uploads / assets attached to the request (and its messages)
-          var docRequest = $"{urlResource}/{requestId}/uploads?page[number]=1&page[limit]={pageSize}&quickfilter=&gridfilter={{}}";
-          var docResponse = samedisClient.Get(docRequest);
-          Requests.RequestUploads.Root? docRoot = string.IsNullOrEmpty(docResponse) ? null : JsonConvert.DeserializeObject<Requests.RequestUploads.Root>(docResponse);
-          var docTotal = docRoot?.Meta?.Total ?? 0;
-          var docPages = docTotal % pageSize != 0 ? docTotal / pageSize + 1 : docTotal / pageSize;
-
-          for (var docPage = 1; docPage <= Math.Max(1, docPages); docPage++)
-          {
-            if (docPage > 1)
-            {
-              docRequest = $"{urlResource}/{requestId}/uploads?page[number]={docPage}&page[limit]={pageSize}&quickfilter=&gridfilter={{}}";
-              docResponse = samedisClient.Get(docRequest);
-              docRoot = string.IsNullOrEmpty(docResponse) ? null : JsonConvert.DeserializeObject<Requests.RequestUploads.Root>(docResponse);
-            }
-
-            if (docRoot?.Data == null || docRoot.Data.Count == 0)
-              continue;
-
-            foreach (var doc in docRoot.Data)
-            {
-              var docUrl = doc.Links?.Document;
-              if (string.IsNullOrEmpty(docUrl)) continue;
-
-              var ext = Helper.GetExtension(doc.Attributes?.Name, doc.Attributes?.MimeType, docUrl);
-              var fileName = $"request_{safeIncident}_{dateIso}";
-              var messageId = doc.Attributes?.MessageId;
-              if (!string.IsNullOrEmpty(messageId))
-                fileName += $"_msg_{Helper.SanitizeFileName(messageId)}";
-              if (!string.IsNullOrEmpty(doc.Id))
-                fileName += $"_doc_{Helper.SanitizeFileName(doc.Id)}";
-              fileName += ext;
-
-              var outputPath = Path.Combine(requestDocumentsRoot, fileName);
-              if (File.Exists(outputPath)) continue;
-
-              try
-              {
-                var downloaded = samedisClient.DownloadAsync(docUrl, outputPath).GetAwaiter().GetResult();
-                if (downloaded)
-                  helper.Message($"Downloaded request document: {fileName}", 2);
-                else
-                  helper.Message($"Request document not ready after retries for request {requestId}: {fileName}", 1, "WARN");
-              }
-              catch (Exception ex)
-              {
-                helper.Message($"Failed to download request document for request {requestId}: {ex.Message}", 1, "ERROR");
-              }
-            }
-          }
-        }
-      }
-    }
-    #endregion
-
-    #region DeviceTypes
-    if (!config.Sync.DeviceTypes)
-    {
-      helper.Message("Device Types sync disabled in config.yml", 1);
-    }
-    else
-    {
-      var urlResource = $"/api/{samedisApiVersion}/tenants/{samedisTenantId}/device_types";
-      helper.CanDo(samedisClient, urlResource);
-
-      var filterBuilder = new FilterBuilder();
-      filterBuilder.Clear();
-      filterBuilder.Add("updated_at", FilterBuilder.FilterType.GreaterThan, FilterBuilder.Type.DateTime, lastRun);
-
-      var requestResource = urlResource + $"?page[number]=1&page[limit]=0&filter[scope]=public_and_tenant&quickfilter=&gridfilter={filterBuilder.Get()}";
-      var response = samedisClient.Get(requestResource);
-      var typelist = string.IsNullOrEmpty(response) ? null : JsonConvert.DeserializeObject<DeviceTypes.Root>(response);
-      var totalRecords = typelist?.Meta?.Total ?? 0;
-      var pages = totalRecords % pageSize != 0 ? totalRecords / pageSize + 1 : totalRecords / pageSize;
-
-      helper.LogListStatus(samedisClient, requestResource, totalRecords, pages);
-
-      // get data
-      for (var page = 1; page <= pages; page++)
-      {
-        requestResource = urlResource + $"?page[number]={page}&page[limit]={pageSize}&filter[scope]=public_and_tenant&quickfilter=&gridfilter={filterBuilder.Get()}";
-        response = samedisClient.Get(requestResource);
-        helper.Message($"Page {page}", 2);
-        helper.Message($"Status Code: {samedisClient.StatusCode} {samedisClient.Status}", 2);
-        DeviceTypes.Root? root = null;
-        if (!string.IsNullOrEmpty(response))
-        {
-          root = JsonConvert.DeserializeObject<DeviceTypes.Root>(response);
-        }
-        if (root == null) continue;
-        Helper.ToCsv<DeviceTypes.Root, DeviceTypes.Attributes>(
-          root,
-          Path.Combine(downloadRoot, "devicetypes.csv"),
-          r => (r.Data ?? Enumerable.Empty<DeviceTypes.Data>()).Select(d => d.Attributes!).Where(attr => attr != null)
-        );
-      }
-    }
-    #endregion
-
-    #region Departments Download
-    if (!config.Sync.DepartmentsDownload)
-    {
-      helper.Message("Departments Download sync disabled in config.yml", 1);
-    }
-    else
-    {
-      var urlResource = $"/api/{samedisApiVersion}/tenants/{samedisTenantId}/departments";
-      helper.CanDo(samedisClient, urlResource);
-
-      var filterBuilder = new FilterBuilder();
-      filterBuilder.Clear();
-      filterBuilder.Add("updated_at", FilterBuilder.FilterType.GreaterThan, FilterBuilder.Type.DateTime, lastRun);
-
-      var requestResource = urlResource + $"?page[number]=1&page[limit]=0&quickfilter=&gridfilter={filterBuilder.Get()}";
-      var response = samedisClient.Get(requestResource);
-      var departmentList = string.IsNullOrEmpty(response) ? null : JsonConvert.DeserializeObject<Departments.Root>(response);
-      var totalRecords = departmentList?.Meta?.Total ?? 0;
-      var pages = totalRecords % pageSize != 0 ? totalRecords / pageSize + 1 : totalRecords / pageSize;
-
-      helper.LogListStatus(samedisClient, requestResource, totalRecords, pages);
-
-      for (var page = 1; page <= pages; page++)
-      {
-        requestResource = urlResource + $"?page[number]={page}&page[limit]={pageSize}&quickfilter=&gridfilter={filterBuilder.Get()}";
-        response = samedisClient.Get(requestResource);
-        helper.Message($"Page {page}", 2);
-        helper.Message($"Status Code: {samedisClient.StatusCode} {samedisClient.Status}", 2);
-
-        if (string.IsNullOrEmpty(response)) continue;
-        var dDs = Departments.CreateDepartmentDataSet();
-        Departments.FillDepartmentDataSet(dDs, response);
-        Helper.ExportDataSetToCsv(dDs, Path.Combine(downloadRoot, "departments.csv"), "Departments");
-      }
-    }
-    #endregion
-
-    #region Locations Download
-    if (!config.Sync.LocationsDownload)
-    {
-      helper.Message("Locations Download sync disabled in config.yml", 1);
-    }
-    else
-    {
-      var urlResource = $"/api/{samedisApiVersion}/tenants/{samedisTenantId}/device_locations";
-      helper.CanDo(samedisClient, urlResource);
-
-      var filterBuilder = new FilterBuilder();
-      filterBuilder.Clear();
-      filterBuilder.Add("updated_at", FilterBuilder.FilterType.GreaterThan, FilterBuilder.Type.DateTime, lastRun);
-
-      var requestResource = urlResource + $"?page[number]=1&page[limit]=0&quickfilter=&gridfilter={filterBuilder.Get()}";
-      var response = samedisClient.Get(requestResource);
-      var locationList = string.IsNullOrEmpty(response) ? null : JsonConvert.DeserializeObject<Locations.Root>(response);
-      var totalRecords = locationList?.Meta?.Total ?? 0;
-      var pages = totalRecords % pageSize != 0 ? totalRecords / pageSize + 1 : totalRecords / pageSize;
-
-      helper.LogListStatus(samedisClient, requestResource, totalRecords, pages);
-
-      for (var page = 1; page <= pages; page++)
-      {
-        requestResource = urlResource + $"?page[number]={page}&page[limit]={pageSize}&quickfilter=&gridfilter={filterBuilder.Get()}";
-        response = samedisClient.Get(requestResource);
-        helper.Message($"Page {page}", 2);
-        helper.Message($"Status Code: {samedisClient.StatusCode} {samedisClient.Status}", 2);
-
-        if (string.IsNullOrEmpty(response)) continue;
-        var lDs = Locations.CreateLocationDataSet();
-        Locations.FillLocationDataSet(lDs, response);
-        Helper.ExportDataSetToCsv(lDs, Path.Combine(downloadRoot, "locations.csv"), "Locations");
-      }
-    }
-    #endregion
-
-    #region DeviceModels
-    if (!config.Sync.DeviceModels)
-    {
-      helper.Message("Device Models sync disabled in config.yml", 1);
-    }
-    else
-    {
-      var urlResource = $"/api/{samedisApiVersion}/tenants/{samedisTenantId}/device_models";
-      helper.CanDo(samedisClient, urlResource);
-
-      var filterBuilder = new FilterBuilder();
-
-      filterBuilder.Clear();
-      filterBuilder.Add("updated_at", FilterBuilder.FilterType.GreaterThan, FilterBuilder.Type.DateTime, lastRun);
-
-      var requestResource = urlResource + $"?page[number]=1&page[limit]=0&filter[scope]=public_and_tenant&quickfilter=&gridfilter={filterBuilder.Get()}";
-      var response = samedisClient.Get(requestResource);
-      var modellist = string.IsNullOrEmpty(response) ? null : JsonConvert.DeserializeObject<DeviceModels.Root>(response);
-      var totalRecords = modellist?.Meta?.Total ?? 0;
-      var pages = totalRecords % pageSize != 0 ? totalRecords / pageSize + 1 : totalRecords / pageSize;
-
-      helper.LogListStatus(samedisClient, requestResource, totalRecords, pages);
-
-      // get data
-      for (var page = 1; page <= pages; page++)
-      {
-        filterBuilder.Clear();
-        //filterBuilder.Add("linked_image_id", FilterBuilder.FilterType.NotEmpty, FilterBuilder.Type.Text);
-        filterBuilder.Add("updated_at", FilterBuilder.FilterType.GreaterThan, FilterBuilder.Type.DateTime, lastRun);
-
-        requestResource = urlResource + $"?page[number]={page}&page[limit]={pageSize}&filter[scope]=public_and_tenant&quickfilter=&gridfilter={filterBuilder.Get()}";
-        requestResource += $"&sort=[{{\"property\":\"device_model_combo_search\",\"direction\":\"ASC\"}}]";
-        response = samedisClient.Get(requestResource);
-        helper.Message($"Page {page}", 2);
-        helper.Message($"Status Code: {samedisClient.StatusCode} {samedisClient.Status}", 2);
-
-        if (string.IsNullOrEmpty(response)) continue;
-        modellist = JsonConvert.DeserializeObject<DeviceModels.Root>(response);
-        //Helper.ToCsv<DeviceModels.Root, DeviceModels.Attributes>(modellist, Path.Combine(downloadRoot, "devicemodels_dump.csv"), r => r.Data.Select(d => d.Attributes));
-
-        if (modellist?.Data != null && modellist.Data.Count > 0)
-        {
-          var dsDm = DeviceModels.CreateDeviceDataSet();
-          var dsC = Contacts.CreateContactDataSet();
-          foreach (var item in modellist.Data)
-          {
-            var attributes = item.Attributes;
-            if (attributes == null) continue;
-            if (attributes.Id == "63e399b904f218000e738670") continue; // ignore "No device model"
-
-            helper.Message($"Id: {attributes.Id} ** Title: {attributes.Title} ** Device Type Id: {attributes.DeviceTypeId}");
-
-            // detail to get service intervals and regulatories
-            var detailResponse = samedisClient.Get(urlResource + "/" + attributes.Id);
-            if (!string.IsNullOrEmpty(detailResponse))
-              DeviceModels.FillDeviceDataSet(dsDm, detailResponse);
-
-            var urlManufacturerResource = $"/api/{samedisApiVersion}/tenants/{samedisTenantId}/contacts";
-            helper.CanDo(samedisClient, urlManufacturerResource);
-            var manufacturerResponse = samedisClient.Get(urlManufacturerResource + "/" + attributes.ManufacturerCompanyContactId);
-            if (!string.IsNullOrEmpty(manufacturerResponse))
-              Contacts.FillContactDataSet(dsC, manufacturerResponse);
-
-          }
-          Helper.ExportDataSetToCsv(dsDm, Path.Combine(downloadRoot, "devicemodels.csv"), "Devices");
-          Helper.ExportDataSetToCsv(dsC, Path.Combine(downloadRoot, "devicemanufacturers.csv"), "Contacts");
-        }
-      }
-    }
-    #endregion
-
     #region Inventories Upload
     if (!config.Sync.InventoriesUpload)
     {
-      helper.Message("Inventories Upload sync disabled in config.yml", 1);
+      log.Info("Inventories Upload sync disabled in config.yml");
     }
     else
     {
-      helper.Message("Inventories Upload sync starting.", 1);
+      log.Info("Inventories Upload sync starting.");
 
-      var inventoryResource = $"/api/{samedisApiVersion}/tenants/{samedisTenantId}/inventories";
+      var inventoryResource = scope.Resource("inventories");
       var inventoryWriteResource = inventoryResource + "?locale=en";
-      var departmentsResource = $"/api/{samedisApiVersion}/tenants/{samedisTenantId}/departments";
-      var profitCentersResource = $"/api/{samedisApiVersion}/tenants/{samedisTenantId}/profit_centers";
-      var propertiesResource = $"/api/{samedisApiVersion}/tenants/{samedisTenantId}/properties";
-      var buildingsResource = $"/api/{samedisApiVersion}/tenants/{samedisTenantId}/buildings";
-      var floorsResource = $"/api/{samedisApiVersion}/tenants/{samedisTenantId}/floors";
-      var locationsResource = $"/api/{samedisApiVersion}/tenants/{samedisTenantId}/device_locations";
-      var deviceModelsResource = $"/api/{samedisApiVersion}/tenants/{samedisTenantId}/device_models";
-      var deviceTypesResource = $"/api/{samedisApiVersion}/tenants/{samedisTenantId}/device_types";
-      var contactsResource = $"/api/{samedisApiVersion}/tenants/{samedisTenantId}/contacts";
-      var issuesResource = $"/api/{samedisApiVersion}/tenants/{samedisTenantId}/issues";
+      var departmentsResource = scope.Resource("departments");
+      var profitCentersResource = scope.Resource("profit_centers");
+      var propertiesResource = scope.Resource("properties");
+      var buildingsResource = scope.Resource("buildings");
+      var floorsResource = scope.Resource("floors");
+      var locationsResource = scope.Resource("device_locations");
+      var deviceModelsResource = scope.Resource("device_models");
+      var deviceTypesResource = scope.Resource("device_types");
+      var contactsResource = scope.Resource("contacts");
+      var issuesResource = scope.Resource("issues");
       var createLocalDeviceModelsOnInventoryLookup = config.Sync.CreateLocalDeviceModelsOnInventoryLookup;
       var resolveServicePartnerCompany = config.Sync.InventoriesUploadResolveServicePartnerCompany;
       var inventoryCsvPath = Path.Combine(uploadRoot, "inventories.csv");
       var departmentsCsvPath = Path.Combine(uploadRoot, "departments.csv");
 
-      helper.CanDo(samedisClient, inventoryResource);
-      helper.CanDo(samedisClient, departmentsResource);
-      helper.CanDo(samedisClient, locationsResource);
-      helper.CanDo(samedisClient, deviceModelsResource);
+      RequireAccess(log, samedisClient, inventoryResource);
+      RequireAccess(log, samedisClient, departmentsResource);
+      RequireAccess(log, samedisClient, locationsResource);
+      RequireAccess(log, samedisClient, deviceModelsResource);
       if (createLocalDeviceModelsOnInventoryLookup)
       {
-        helper.CanDo(samedisClient, deviceTypesResource);
-        helper.CanDo(samedisClient, contactsResource);
+        RequireAccess(log, samedisClient, deviceTypesResource);
+        RequireAccess(log, samedisClient, contactsResource);
       }
       if (useExtendedDeviceLocations)
       {
-        helper.CanDo(samedisClient, propertiesResource);
-        helper.CanDo(samedisClient, buildingsResource);
-        helper.CanDo(samedisClient, floorsResource);
+        RequireAccess(log, samedisClient, propertiesResource);
+        RequireAccess(log, samedisClient, buildingsResource);
+        RequireAccess(log, samedisClient, floorsResource);
       }
 
-      if (!File.Exists(inventoryCsvPath) || Helper.IsFileEffectivelyEmpty(inventoryCsvPath))
+      if (!File.Exists(inventoryCsvPath) || Files.IsEffectivelyEmpty(inventoryCsvPath))
       {
-        helper.Message($"Inventories Upload skipped: no data in CSV ({inventoryCsvPath}).", 1);
+        log.Info($"Inventories Upload skipped: no data in CSV ({inventoryCsvPath}).");
       }
       else
       {
         DataTable uploadTable;
         try
         {
-          uploadTable = Helper.ImportCsvToDataTable(inventoryCsvPath, "InventoriesUpload");
+          uploadTable = Csv.Read(inventoryCsvPath, tableName: "InventoriesUpload", trimFields: true);
         }
         catch (Exception ex)
         {
-          helper.Message($"Inventories Upload failed to read CSV {inventoryCsvPath}: {ex.Message}", 1, "ERROR");
+          log.Error($"Inventories Upload failed to read CSV {inventoryCsvPath}: {ex.Message}");
           uploadTable = new DataTable("InventoriesUpload");
         }
 
@@ -1270,41 +215,37 @@ internal class Program
 
         if (uploadTable.Rows.Count == 0)
         {
-          helper.Message("Inventories Upload skipped because CSV contains no rows.", 1, "WARN");
+          log.Warn("Inventories Upload skipped because CSV contains no rows.");
         }
-        else if (!Helper.CheckColumnsExist(uploadTable, requiredColumns))
+        else if (!Csv.HasColumns(uploadTable, requiredColumns))
         {
-          helper.Message($"Inventories Upload skipped. CSV missing one or more required columns: {string.Join(", ", requiredColumns)}", 1, "ERROR");
+          log.Error($"Inventories Upload skipped. CSV missing one or more required columns: {string.Join(", ", requiredColumns)}");
         }
         else
         {
-          var inventoryById = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-          var inventoryByExternalId = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-          var inventoryByDeviceNumber = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-          var checkedInventoryIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-          var checkedInventoryExternalIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-          var checkedInventoryNumbers = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-          var departmentsById = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-          var departmentsByCostCenter = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-          var departmentsByTitle = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-          var checkedDepartments = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-          var profitCentersByTitle = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-          var checkedProfitCenters = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-          var locationsById = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-          var locationsByTitle = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-          var checkedLocations = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-          var propertiesByTitle = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-          var checkedProperties = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-          var buildingsByKey = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-          var checkedBuildings = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-          var floorsByKey = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-          var checkedFloors = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-          var deviceModelCatalogLookup = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-          var deviceTypesByTitle = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-          var checkedDeviceTypes = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-          var manufacturersByName = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-          var checkedManufacturers = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-          var tenantDeviceModelLookup = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+          // Remembers hits and misses per key kind, which is what the three dictionaries and
+          // three "already checked" sets here used to do by hand.
+          var inventoryLookup = new ResourceLookup(samedisClient, inventoryResource, scope.KeyLookup);
+          var departmentLookup = new ResourceLookup(samedisClient, departmentsResource, scope.KeyLookup);
+          // Records which department/profit-centre pairs were already written this run.
+          var syncedDepartmentProfitCenters = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+          var profitCenterLookup = new ResourceLookup(samedisClient, profitCentersResource, scope.KeyLookup);
+          // Records which department/profit-centre pairs were already linked this run.
+          var linkedProfitCenterDepartments = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+          var locationLookup = new ResourceLookup(samedisClient, locationsResource, scope.KeyLookup);
+          // Not a lookup cache: this maps the SOURCE system's room id onto the samedis id,
+          // filled by the property-mode pre-sync pass. The source key is not an ObjectId, so
+          // it has no place in ResourceLookup.
+          var roomIdBySourceId = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+          var propertyLookup = new ResourceLookup(samedisClient, propertiesResource, scope.KeyLookup);
+          var buildingLookup = new ResourceLookup(samedisClient, buildingsResource, scope.KeyLookup);
+          var floorLookup = new ResourceLookup(samedisClient, floorsResource, scope.KeyLookup);
+          var deviceModelLookup = new ResourceLookup(samedisClient, deviceModelsResource, scope.KeyLookup);
+          var deviceTypeLookup = new ResourceLookup(samedisClient, deviceTypesResource, scope.KeyLookup);
+          var manufacturerLookup = new ResourceLookup(samedisClient, contactsResource, scope.KeyLookup);
+          // Keyed by the source's own title/manufacturer/device-type combination, before any
+          // of them are resolved to ids, so an unresolvable row is not retried per row.
+          var tenantDeviceModelBySourceKey = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
 
           var sourceLocationCsvFiles = Directory.Exists(uploadRoot)
             ? Directory.GetFiles(uploadRoot, "*.csv")
@@ -1320,9 +261,9 @@ internal class Program
             Path.GetFileName(path).Equals("rooms.csv", StringComparison.OrdinalIgnoreCase) ||
             Path.GetFileName(path).StartsWith("StandorteRau", StringComparison.OrdinalIgnoreCase));
 
-          var sourceBuildings = Buildings.LoadSourceBuildings(sourceBuildingsCsvPath ?? string.Empty, helper);
-          var sourceFloors = Floors.LoadSourceFloors(sourceFloorsCsvPath ?? string.Empty, helper);
-          var sourceRooms = Locations.LoadSourceRooms(sourceRoomsCsvPath ?? string.Empty, helper);
+          var sourceBuildings = Buildings.LoadSourceBuildings(sourceBuildingsCsvPath ?? string.Empty, log);
+          var sourceFloors = Floors.LoadSourceFloors(sourceFloorsCsvPath ?? string.Empty, log);
+          var sourceRooms = Locations.LoadSourceRooms(sourceRoomsCsvPath ?? string.Empty, log);
           var roomPlaceholderTitle = string.IsNullOrWhiteSpace(config.Sync.LocationsRoomPlaceholder)
             ? "Keine Raumzuordnung"
             : config.Sync.LocationsRoomPlaceholder.Trim();
@@ -1341,10 +282,7 @@ internal class Program
           {
             if (config.Sync.InventoriesUploadCreateLocationsOnTheFly)
             {
-              helper.Message(
-                "Property mode: sync.inventories_upload_create_locations_on_the_fly is only used in standard mode. Property mode uses hierarchy pre-sync and row-level location assignment resolves references only.",
-                1
-              );
+              log.Info("Property mode: sync.inventories_upload_create_locations_on_the_fly is only used in standard mode. Property mode uses hierarchy pre-sync and row-level location assignment resolves references only.");
             }
 
             // Resolve the property up front regardless of whether buildings/floors/rooms CSV
@@ -1357,38 +295,26 @@ internal class Program
               propertiesResource,
               propertyTitle,
               createPropertyHierarchyOnImport,
-              propertiesByTitle,
-              checkedProperties,
-              helper
+              propertyLookup,
+              log
             );
 
             if (string.IsNullOrWhiteSpace(propertyIdForHierarchySync))
             {
-              helper.Message(
-                $"Property mode: property '{propertyTitle}' could not be resolved/created. On-the-fly placeholder locations will not work for floor-/building-only references.",
-                1,
-                "WARN"
-              );
+              log.Warn($"Property mode: property '{propertyTitle}' could not be resolved/created. On-the-fly placeholder locations will not work for floor-/building-only references.");
             }
 
             if (sourceBuildings.Count == 0 && sourceFloors.Count == 0 && sourceRooms.Count == 0)
             {
-              helper.Message("Property mode hierarchy pre-sync skipped because no buildings/floors/rooms CSV data was found.", 1, "WARN");
+              log.Warn("Property mode hierarchy pre-sync skipped because no buildings/floors/rooms CSV data was found.");
             }
             else if (string.IsNullOrWhiteSpace(propertyIdForHierarchySync))
             {
-              helper.Message(
-                $"Property mode hierarchy pre-sync skipped because property '{propertyTitle}' could not be resolved/created.",
-                1,
-                "WARN"
-              );
+              log.Warn($"Property mode hierarchy pre-sync skipped because property '{propertyTitle}' could not be resolved/created.");
             }
             else
             {
-              helper.Message(
-                $"Property mode hierarchy pre-sync starting. Source buildings: {sourceBuildings.Count}, floors: {sourceFloors.Count}, rooms: {sourceRooms.Count}",
-                1
-              );
+              log.Info($"Property mode hierarchy pre-sync starting. Source buildings: {sourceBuildings.Count}, floors: {sourceFloors.Count}, rooms: {sourceRooms.Count}");
 
                 var sourceBuildingToApiId = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
                 var sourceFloorToApiId = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
@@ -1414,9 +340,8 @@ internal class Program
                     createPropertyHierarchyOnImport,
                     sourceBuilding.SourceId,
                     sourceBuilding.Title,
-                    buildingsByKey,
-                    checkedBuildings,
-                    helper,
+                    buildingLookup,
+                    log,
                     sourceBuilding.SourceId,
                     sourceBuilding.Street,
                     sourceBuilding.Zip,
@@ -1461,9 +386,8 @@ internal class Program
                     createPropertyHierarchyOnImport,
                     sourceFloor.SourceId,
                     sourceFloor.Title,
-                    floorsByKey,
-                    checkedFloors,
-                    helper,
+                    floorLookup,
+                    log,
                     sourceFloor.SourceId,
                     true
                   );
@@ -1509,10 +433,8 @@ internal class Program
                     createPropertyHierarchyOnImport,
                     sourceRoom.SourceId,
                     sourceRoom.Title,
-                    locationsById,
-                    locationsByTitle,
-                    checkedLocations,
-                    helper,
+                    locationLookup,
+                    log,
                     propertyIdForHierarchySync,
                     parentBuildingId,
                     parentFloorId,
@@ -1527,31 +449,18 @@ internal class Program
                     continue;
                   }
 
-                  locationsById[sourceRoom.SourceId] = resolvedRoomId;
+                  roomIdBySourceId[sourceRoom.SourceId] = resolvedRoomId;
                   roomsResolved++;
                 }
 
-                helper.Message(
-                  $"Property mode hierarchy pre-sync finished. Buildings resolved: {buildingsResolved}, unresolved: {buildingsUnresolved}, missing title: {buildingsSkippedNoTitle}.",
-                  1
-                );
-                helper.Message(
-                  $"Property mode hierarchy pre-sync finished. Floors resolved: {floorsResolved}, unresolved: {floorsUnresolved}, missing building parent: {floorsMissingBuildingParent}, missing title: {floorsSkippedNoTitle}.",
-                  1
-                );
-                helper.Message(
-                  $"Property mode hierarchy pre-sync finished. Rooms resolved: {roomsResolved}, unresolved: {roomsUnresolved}, missing floor parent: {roomsMissingFloorParent}, missing title: {roomsSkippedNoTitle}.",
-                  1
-                );
+                log.Info($"Property mode hierarchy pre-sync finished. Buildings resolved: {buildingsResolved}, unresolved: {buildingsUnresolved}, missing title: {buildingsSkippedNoTitle}.");
+                log.Info($"Property mode hierarchy pre-sync finished. Floors resolved: {floorsResolved}, unresolved: {floorsUnresolved}, missing building parent: {floorsMissingBuildingParent}, missing title: {floorsSkippedNoTitle}.");
+                log.Info($"Property mode hierarchy pre-sync finished. Rooms resolved: {roomsResolved}, unresolved: {roomsUnresolved}, missing floor parent: {roomsMissingFloorParent}, missing title: {roomsSkippedNoTitle}.");
             }
           }
           else if (sourceBuildings.Count > 0 || sourceFloors.Count > 0 || sourceRooms.Count > 0)
           {
-            helper.Message(
-              "Tenant location mode is standard. buildings/floors/rooms CSV data was detected but hierarchy pre-sync is skipped.",
-              1,
-              "WARN"
-            );
+            log.Warn("Tenant location mode is standard. buildings/floors/rooms CSV data was detected but hierarchy pre-sync is skipped.");
           }
 
           if (File.Exists(departmentsCsvPath))
@@ -1559,11 +468,11 @@ internal class Program
             DataTable departmentsTable;
             try
             {
-              departmentsTable = Helper.ImportCsvToDataTable(departmentsCsvPath, "DepartmentsUpload");
+              departmentsTable = Csv.Read(departmentsCsvPath, tableName: "DepartmentsUpload", trimFields: true);
             }
             catch (Exception ex)
             {
-              helper.Message($"Departments preload failed to read CSV {departmentsCsvPath}: {ex.Message}", 1, "WARN");
+              log.Warn($"Departments preload failed to read CSV {departmentsCsvPath}: {ex.Message}");
               departmentsTable = new DataTable("DepartmentsUpload");
             }
 
@@ -1573,33 +482,33 @@ internal class Program
               var hasDepartmentCsvProfitCenterColumn =
                 departmentsTable.Columns.Contains("profit_center") ||
                 departmentsTable.Columns.Contains("wirtschaftende_einheit");
-              helper.Message($"Departments preload source rows: {departmentsTable.Rows.Count}", 1);
+              log.Info($"Departments preload source rows: {departmentsTable.Rows.Count}");
 
               foreach (DataRow departmentRow in departmentsTable.Rows)
               {
-                var departmentRowId = Helper.GetRowValue(departmentRow, "id");
-                var departmentApiIdFromCsv = Helper.GetRowValue(departmentRow, "department_id");
-                var departmentCostCenterFromCsv = Helper.GetRowValue(departmentRow, "cost_center_number");
+                var departmentRowId = Rows.Value(departmentRow, "id");
+                var departmentApiIdFromCsv = Rows.Value(departmentRow, "department_id");
+                var departmentCostCenterFromCsv = Rows.Value(departmentRow, "cost_center_number");
 
-                var departmentTitleFromCsv = Helper.GetRowValue(departmentRow, "department");
+                var departmentTitleFromCsv = Rows.Value(departmentRow, "department");
                 if (string.IsNullOrWhiteSpace(departmentTitleFromCsv))
-                  departmentTitleFromCsv = Helper.GetRowValue(departmentRow, "cost_center_description");
+                  departmentTitleFromCsv = Rows.Value(departmentRow, "cost_center_description");
                 if (string.IsNullOrWhiteSpace(departmentTitleFromCsv))
-                  departmentTitleFromCsv = Helper.GetRowValue(departmentRow, "abteilung");
+                  departmentTitleFromCsv = Rows.Value(departmentRow, "abteilung");
 
                 var departmentNotesFromCsv = string.Empty;
                 if (hasDepartmentCsvNotesColumn)
                 {
-                  departmentNotesFromCsv = Helper.GetRowValue(departmentRow, "notes");
+                  departmentNotesFromCsv = Rows.Value(departmentRow, "notes");
                 }
 
                 var departmentProfitCenterTitle = string.Empty;
                 if (useProfitCenters)
                 {
                   if (hasDepartmentCsvProfitCenterColumn)
-                    departmentProfitCenterTitle = Helper.GetRowValue(departmentRow, "profit_center");
+                    departmentProfitCenterTitle = Rows.Value(departmentRow, "profit_center");
                   if (string.IsNullOrWhiteSpace(departmentProfitCenterTitle) && departmentsTable.Columns.Contains("wirtschaftende_einheit"))
-                    departmentProfitCenterTitle = Helper.GetRowValue(departmentRow, "wirtschaftende_einheit");
+                    departmentProfitCenterTitle = Rows.Value(departmentRow, "wirtschaftende_einheit");
                 }
                 var departmentProfitCenterId = string.Empty;
 
@@ -1612,18 +521,13 @@ internal class Program
                     config.Sync.InventoriesUploadCreateDepartmentsOnTheFly,
                     departmentRowId,
                     departmentTitleFromCsv,
-                    profitCentersByTitle,
-                    checkedProfitCenters,
-                    helper
+                    profitCenterLookup,
+                    log
                   ) ?? string.Empty;
 
                   if (string.IsNullOrWhiteSpace(departmentProfitCenterId))
                   {
-                    helper.Message(
-                      $"Departments preload: profit center '{departmentProfitCenterTitle}' could not be resolved/created (department_title='{departmentTitleFromCsv}', cost_center_number='{departmentCostCenterFromCsv}', source_id='{departmentRowId}'). Department will be synced without profit center.",
-                      1,
-                      "WARN"
-                    );
+                    log.Warn($"Departments preload: profit center '{departmentProfitCenterTitle}' could not be resolved/created (department_title='{departmentTitleFromCsv}', cost_center_number='{departmentCostCenterFromCsv}', source_id='{departmentRowId}'). Department will be synced without profit center.");
                     departmentProfitCenterTitle = string.Empty;
                   }
                 }
@@ -1641,21 +545,15 @@ internal class Program
                   config.Sync.InventoriesUploadCreateDepartmentsOnTheFly,
                   departmentRowId,
                   departmentTitleFromCsv,
-                  departmentsById,
-                  departmentsByCostCenter,
-                  departmentsByTitle,
-                  checkedDepartments,
-                  helper,
+                  departmentLookup,
+                  syncedDepartmentProfitCenters,
+                  log,
                   departmentProfitCenterTitle
                 );
 
                 if (string.IsNullOrWhiteSpace(preloadedDepartmentId))
                 {
-                  helper.Message(
-                    $"Departments preload: could not resolve/create department (title='{departmentTitleFromCsv}', cost_center_number='{departmentCostCenterFromCsv}', source_id='{departmentRowId}').",
-                    1,
-                    "WARN"
-                  );
+                  log.Warn($"Departments preload: could not resolve/create department (title='{departmentTitleFromCsv}', cost_center_number='{departmentCostCenterFromCsv}', source_id='{departmentRowId}').");
                 }
                 else if (!string.IsNullOrWhiteSpace(departmentProfitCenterId))
                 {
@@ -1664,16 +562,16 @@ internal class Program
                     profitCentersResource,
                     departmentProfitCenterId,
                     preloadedDepartmentId,
-                    checkedProfitCenters,
-                    helper
+                    linkedProfitCenterDepartments,
+                    log
                   );
                 }
               }
             }
           }
 
-          helper.Message($"Inventories Upload source rows: {uploadTable.Rows.Count}", 1);
-          helper.Message($"Inventories Upload location mode: {(useExtendedDeviceLocations ? "property (building/floor/room)" : "standard (room only)")}", 1);
+          log.Info($"Inventories Upload source rows: {uploadTable.Rows.Count}");
+          log.Info($"Inventories Upload location mode: {(useExtendedDeviceLocations ? "property (building/floor/room)" : "standard (room only)")}");
 
           var createdCount = 0;
           var updatedCount = 0;
@@ -1684,52 +582,52 @@ internal class Program
 
           foreach (DataRow row in uploadTable.Rows)
           {
-            var rowId = Helper.GetRowValue(row, "id");
-            var inventoryTitle = Helper.GetRowValue(row, "title");
+            var rowId = Rows.Value(row, "id");
+            var inventoryTitle = Rows.Value(row, "title");
             if (string.IsNullOrWhiteSpace(inventoryTitle))
-              inventoryTitle = Helper.GetRowValue(row, "device_model_title");
+              inventoryTitle = Rows.Value(row, "device_model_title");
 
-            var inventoryNumber = Helper.GetRowValue(row, "inventory_number");
-            var inventoryExternalId = Helper.GetRowValue(row, "external_id");
-            var departmentCostCenterNumber = Helper.GetRowValue(row, "cost_center_number");
-            var departmentTitle = Helper.GetRowValue(row, "department");
+            var inventoryNumber = Rows.Value(row, "inventory_number");
+            var inventoryExternalId = Rows.Value(row, "external_id");
+            var departmentCostCenterNumber = Rows.Value(row, "cost_center_number");
+            var departmentTitle = Rows.Value(row, "department");
             if (string.IsNullOrWhiteSpace(departmentTitle))
-              departmentTitle = Helper.GetRowValue(row, "cost_center_description");
-            var departmentNotes = hasDepartmentNotesColumn ? Helper.GetRowValue(row, "notes") : string.Empty;
+              departmentTitle = Rows.Value(row, "cost_center_description");
+            var departmentNotes = hasDepartmentNotesColumn ? Rows.Value(row, "notes") : string.Empty;
             var departmentProfitCenterTitle = string.Empty;
             if (useProfitCenters && hasDepartmentProfitCenterColumn)
             {
-              departmentProfitCenterTitle = Helper.GetRowValue(row, "profit_center");
+              departmentProfitCenterTitle = Rows.Value(row, "profit_center");
               if (string.IsNullOrWhiteSpace(departmentProfitCenterTitle))
-                departmentProfitCenterTitle = Helper.GetRowValue(row, "wirtschaftende_einheit");
+                departmentProfitCenterTitle = Rows.Value(row, "wirtschaftende_einheit");
             }
             var departmentProfitCenterId = string.Empty;
 
-            var locationTitle = Helper.GetRowValue(row, "location");
+            var locationTitle = Rows.Value(row, "location");
 
-            var operationStatus = Helper.GetRowValue(row, "operation_status");
+            var operationStatus = Rows.Value(row, "operation_status");
             var sourceBuildingTitle = string.Empty;
             var sourceFloorTitle = string.Empty;
             var sourceRoomTitle = string.Empty;
-            var sourceLocationId = Helper.GetRowValue(row, "source_location_id");
-            var sourceLocationType = Helper.GetRowValue(row, "source_location_type");
+            var sourceLocationId = Rows.Value(row, "source_location_id");
+            var sourceLocationType = Rows.Value(row, "source_location_type");
             var normalizedSourceLocationType = sourceLocationType.Trim().ToLowerInvariant();
             Buildings.SourceBuilding? resolvedSourceBuilding = null;
             Floors.SourceFloor? resolvedSourceFloor = null;
             Locations.SourceRoom? resolvedSourceRoom = null;
             var sourceLocationResolved = false;
-            var catalogId = Helper.GetRowValue(row, "catalog_id");
+            var catalogId = Rows.Value(row, "catalog_id");
             var lookupTitle = inventoryTitle;
             if (string.IsNullOrWhiteSpace(lookupTitle))
-              lookupTitle = Helper.GetRowValue(row, "device_model_title");
+              lookupTitle = Rows.Value(row, "device_model_title");
 
-            var lookupManufacturer = Helper.GetRowValue(row, "manufacturer");
+            var lookupManufacturer = Rows.Value(row, "manufacturer");
             if (string.IsNullOrWhiteSpace(lookupManufacturer))
-              lookupManufacturer = Helper.GetRowValue(row, "responsible_manufacturer");
+              lookupManufacturer = Rows.Value(row, "responsible_manufacturer");
             if (string.IsNullOrWhiteSpace(lookupManufacturer))
-              lookupManufacturer = Helper.GetRowValue(row, "company");
+              lookupManufacturer = Rows.Value(row, "company");
 
-            var lookupDeviceTypeTitle = Helper.GetRowValue(row, "device_type_title");
+            var lookupDeviceTypeTitle = Rows.Value(row, "device_type_title");
             var isPlaceholderDeviceModel = Inventories.IsPlaceholderDeviceModel(row);
 
             if (!string.IsNullOrWhiteSpace(sourceLocationId))
@@ -1799,18 +697,11 @@ internal class Program
 
             var isRetiredRow = Inventories.IsRetiredOperationStatus(operationStatus);
             var targetInventoryId = Inventories.ResolveExistingInventoryId(
-              samedisClient,
-              inventoryResource,
+              inventoryLookup,
               rowId,
               inventoryExternalId,
               inventoryNumber,
-              config.Sync.InventoriesUploadFallbackByDeviceNumber,
-              inventoryById,
-              inventoryByExternalId,
-              inventoryByDeviceNumber,
-              checkedInventoryIds,
-              checkedInventoryExternalIds,
-              checkedInventoryNumbers
+              config.Sync.InventoriesUploadFallbackByDeviceNumber
             );
             var isCreateOperation = string.IsNullOrWhiteSpace(targetInventoryId);
 
@@ -1830,14 +721,11 @@ internal class Program
               if (Inventories.IsInventoryDeviceRetired(samedisClient, inventoryResource, targetInventoryId))
               {
                 skippedCount++;
-                helper.Message(
-                  $"Inventory already retired in samedis, no device_retired issue needed (id='{targetInventoryId}', inventory_number='{inventoryNumber}').",
-                  2
-                );
+                log.Debug($"Inventory already retired in samedis, no device_retired issue needed (id='{targetInventoryId}', inventory_number='{inventoryNumber}').");
                 continue;
               }
 
-              var retirementDateForIssue = Helper.NormalizeDate(Helper.GetRowValue(row, "retirement_date"));
+              var retirementDateForIssue = Helper.NormalizeDate(Rows.Value(row, "retirement_date"));
               var retiredResponse = Inventories.PostDeviceRetiredIssue(
                 samedisClient,
                 issuesResource,
@@ -1845,35 +733,25 @@ internal class Program
                 inventoryNumber,
                 inventoryTitle,
                 retirementDateForIssue,
-                helper
+                log
               );
 
               if (samedisClient.StatusCode >= 200 && samedisClient.StatusCode < 300)
               {
                 retiredCount++;
                 updatedCount++;
-                helper.Message(
-                  $"Inventory retired via device_retired issue (id='{targetInventoryId}', inventory_number='{inventoryNumber}', title='{inventoryTitle}').",
-                  2
-                );
+                log.Debug($"Inventory retired via device_retired issue (id='{targetInventoryId}', inventory_number='{inventoryNumber}', title='{inventoryTitle}').");
               }
               else if (Inventories.IsAlreadyRetiredError(retiredResponse))
               {
                 // Already retired in samedis -- nothing to do, no error.
                 skippedCount++;
-                helper.Message(
-                  $"Inventory already retired in samedis, no device_retired issue needed (id='{targetInventoryId}', inventory_number='{inventoryNumber}').",
-                  2
-                );
+                log.Debug($"Inventory already retired in samedis, no device_retired issue needed (id='{targetInventoryId}', inventory_number='{inventoryNumber}').");
               }
               else
               {
                 errorCount++;
-                helper.Message(
-                  $"Failed to retire inventory via device_retired issue (id='{targetInventoryId}', title='{inventoryTitle}', inventory_number='{inventoryNumber}', status={samedisClient.StatusCode}). Response: {retiredResponse}",
-                  1,
-                  "ERROR"
-                );
+                log.Error($"Failed to retire inventory via device_retired issue (id='{targetInventoryId}', title='{inventoryTitle}', inventory_number='{inventoryNumber}', status={samedisClient.StatusCode}). Response: {retiredResponse}");
               }
 
               continue;
@@ -1888,70 +766,49 @@ internal class Program
             {
               if (isPlaceholderDeviceModel)
               {
-                helper.Message(
-                  $"Placeholder device model row detected. Skipping catalog/device-model lookup and local model/type/manufacturer creation (inventory_number='{inventoryNumber}', title='{lookupTitle}').",
-                  2
-                );
+                log.Debug($"Placeholder device model row detected. Skipping catalog/device-model lookup and local model/type/manufacturer creation (inventory_number='{inventoryNumber}', title='{lookupTitle}').");
               }
               else
               {
                 catalogId = DeviceModels.ResolveCatalogId(
-                  samedisClient,
-                  deviceModelsResource,
+                  deviceModelLookup,
                   lookupTitle,
-                  lookupManufacturer,
-                  deviceModelCatalogLookup
+                  lookupManufacturer
                 ) ?? string.Empty;
 
                 if (!string.IsNullOrWhiteSpace(catalogId))
                 {
-                  helper.Message($"Resolved catalog_id '{catalogId}' via device model lookup (title='{lookupTitle}', manufacturer='{lookupManufacturer}').", 2);
+                  log.Debug($"Resolved catalog_id '{catalogId}' via device model lookup (title='{lookupTitle}', manufacturer='{lookupManufacturer}').");
                 }
                 else if (createLocalDeviceModelsOnInventoryLookup)
                 {
                   catalogId = DeviceModels.ResolveOrCreateTenantCatalogIdForInventory(
                     samedisClient,
-                    deviceModelsResource,
-                    deviceTypesResource,
-                    contactsResource,
                     samedisTenantId,
                     lookupTitle,
                     lookupManufacturer,
                     lookupDeviceTypeTitle,
-                    deviceTypesByTitle,
-                    checkedDeviceTypes,
-                    manufacturersByName,
-                    checkedManufacturers,
-                    tenantDeviceModelLookup,
-                    deviceModelCatalogLookup,
-                    helper,
+                    deviceModelLookup,
+                    deviceTypeLookup,
+                    manufacturerLookup,
+                    tenantDeviceModelBySourceKey,
+                    log,
                     rowId,
                     inventoryNumber
                   ) ?? string.Empty;
 
                   if (!string.IsNullOrWhiteSpace(catalogId))
                   {
-                    helper.Message(
-                      $"Resolved catalog_id '{catalogId}' via local tenant device model lookup/create (title='{lookupTitle}', manufacturer='{lookupManufacturer}', device_type_title='{lookupDeviceTypeTitle}', inventory_number='{inventoryNumber}').",
-                      2
-                    );
+                    log.Debug($"Resolved catalog_id '{catalogId}' via local tenant device model lookup/create (title='{lookupTitle}', manufacturer='{lookupManufacturer}', device_type_title='{lookupDeviceTypeTitle}', inventory_number='{inventoryNumber}').");
                   }
                   else if (!string.IsNullOrWhiteSpace(lookupTitle))
                   {
-                    helper.Message(
-                      $"No device model match found and local tenant device model creation failed/skipped (title='{lookupTitle}', manufacturer='{lookupManufacturer}', device_type_title='{lookupDeviceTypeTitle}', inventory_number='{inventoryNumber}').",
-                      2,
-                      "WARN"
-                    );
+                    log.Warn($"No device model match found and local tenant device model creation failed/skipped (title='{lookupTitle}', manufacturer='{lookupManufacturer}', device_type_title='{lookupDeviceTypeTitle}', inventory_number='{inventoryNumber}').");
                   }
                 }
                 else if (!string.IsNullOrWhiteSpace(lookupTitle))
                 {
-                  helper.Message(
-                    $"No device model match found for catalog lookup (title='{lookupTitle}', manufacturer='{lookupManufacturer}', inventory_number='{inventoryNumber}').",
-                    2,
-                    "WARN"
-                  );
+                  log.Warn($"No device model match found for catalog lookup (title='{lookupTitle}', manufacturer='{lookupManufacturer}', inventory_number='{inventoryNumber}').");
                 }
               }
             }
@@ -1965,18 +822,13 @@ internal class Program
                 config.Sync.InventoriesUploadCreateDepartmentsOnTheFly,
                 rowId,
                 inventoryTitle,
-                profitCentersByTitle,
-                checkedProfitCenters,
-                helper
+                profitCenterLookup,
+                log
               ) ?? string.Empty;
 
               if (string.IsNullOrWhiteSpace(departmentProfitCenterId))
               {
-                helper.Message(
-                  $"Profit center '{departmentProfitCenterTitle}' could not be resolved/created for inventory row (id='{rowId}', inventory_number='{inventoryNumber}'). Department will be synced without profit center.",
-                  1,
-                  "WARN"
-                );
+                log.Warn($"Profit center '{departmentProfitCenterTitle}' could not be resolved/created for inventory row (id='{rowId}', inventory_number='{inventoryNumber}'). Department will be synced without profit center.");
                 departmentProfitCenterTitle = string.Empty;
               }
             }
@@ -1984,28 +836,22 @@ internal class Program
             var departmentId = Departments.ResolveDepartmentId(
               samedisClient,
               departmentsResource,
-              Helper.GetRowValue(row, "department_id"),
+              Rows.Value(row, "department_id"),
               departmentCostCenterNumber,
               departmentTitle,
               departmentNotes,
               config.Sync.InventoriesUploadCreateDepartmentsOnTheFly,
               rowId,
               inventoryTitle,
-              departmentsById,
-              departmentsByCostCenter,
-              departmentsByTitle,
-              checkedDepartments,
-              helper,
+              departmentLookup,
+              syncedDepartmentProfitCenters,
+              log,
               departmentProfitCenterTitle
             );
 
             if ((!string.IsNullOrWhiteSpace(departmentTitle) || !string.IsNullOrWhiteSpace(departmentCostCenterNumber)) && string.IsNullOrWhiteSpace(departmentId))
             {
-              helper.Message(
-                $"Department could not be resolved/created (title='{departmentTitle}', cost_center_number='{departmentCostCenterNumber}', id='{rowId}', inventory_number='{inventoryNumber}'). Proceeding without department reference.",
-                1,
-                "WARN"
-              );
+              log.Warn($"Department could not be resolved/created (title='{departmentTitle}', cost_center_number='{departmentCostCenterNumber}', id='{rowId}', inventory_number='{inventoryNumber}'). Proceeding without department reference.");
             }
             else if (!string.IsNullOrWhiteSpace(departmentId) && !string.IsNullOrWhiteSpace(departmentProfitCenterId))
             {
@@ -2014,8 +860,8 @@ internal class Program
                 profitCentersResource,
                 departmentProfitCenterId,
                 departmentId,
-                checkedProfitCenters,
-                helper
+                linkedProfitCenterDepartments,
+                log
               );
             }
 
@@ -2027,10 +873,7 @@ internal class Program
                 // A completely empty source_location_id is an expected normal case
                 // (~35% of rows have no location at all), not a problem -- log it at
                 // debug level instead of flooding the WARN log.
-                helper.Message(
-                  $"Property mode: source_location_id is missing for inventory row (id='{rowId}', inventory_number='{inventoryNumber}'). Proceeding without location reference.",
-                  2
-                );
+                log.Debug($"Property mode: source_location_id is missing for inventory row (id='{rowId}', inventory_number='{inventoryNumber}'). Proceeding without location reference.");
               }
               else if (!sourceLocationResolved)
               {
@@ -2044,10 +887,8 @@ internal class Program
                   false,
                   rowId,
                   inventoryTitle,
-                  locationsById,
-                  locationsByTitle,
-                  checkedLocations,
-                  helper,
+                  locationLookup,
+                  log,
                   null,
                   null,
                   null,
@@ -2071,9 +912,8 @@ internal class Program
                     false,
                     rowId,
                     inventoryTitle,
-                    floorsByKey,
-                    checkedFloors,
-                    helper,
+                    floorLookup,
+                    log,
                     sourceLocationId
                   );
                   if (!string.IsNullOrWhiteSpace(floorByExternalId))
@@ -2089,10 +929,8 @@ internal class Program
                       createPropertyHierarchyOnImport,
                       rowId,
                       inventoryTitle,
-                      locationsById,
-                      locationsByTitle,
-                      checkedLocations,
-                      helper,
+                      locationLookup,
+                      log,
                       propertyIdForHierarchySync,
                       null,
                       floorByExternalId
@@ -2111,9 +949,8 @@ internal class Program
                     false,
                     rowId,
                     inventoryTitle,
-                    buildingsByKey,
-                    checkedBuildings,
-                    helper,
+                    buildingLookup,
+                    log,
                     sourceLocationId
                   );
                   if (!string.IsNullOrWhiteSpace(buildingByExternalId))
@@ -2131,9 +968,8 @@ internal class Program
                       createPropertyHierarchyOnImport,
                       rowId,
                       inventoryTitle,
-                      floorsByKey,
-                      checkedFloors,
-                      helper
+                      floorLookup,
+                      log
                     );
                     if (!string.IsNullOrWhiteSpace(buildingFloorPlaceholderId))
                     {
@@ -2145,10 +981,8 @@ internal class Program
                         createPropertyHierarchyOnImport,
                         rowId,
                         inventoryTitle,
-                        locationsById,
-                        locationsByTitle,
-                        checkedLocations,
-                        helper,
+                        locationLookup,
+                        log,
                         propertyIdForHierarchySync,
                         buildingByExternalId,
                         buildingFloorPlaceholderId
@@ -2157,29 +991,18 @@ internal class Program
                     }
                     else
                     {
-                      helper.Message(
-                        $"Property mode: building matched via external_id '{sourceLocationId}' but the placeholder floor '{floorPlaceholderTitle}' could not be created/resolved (id='{rowId}', inventory_number='{inventoryNumber}'). Proceeding without location reference.",
-                        1,
-                        "WARN"
-                      );
+                      log.Warn($"Property mode: building matched via external_id '{sourceLocationId}' but the placeholder floor '{floorPlaceholderTitle}' could not be created/resolved (id='{rowId}', inventory_number='{inventoryNumber}'). Proceeding without location reference.");
                     }
                   }
                 }
 
                 if (resolvedByExternalId)
                 {
-                  helper.Message(
-                    $"Property mode: resolved source_location_id '{sourceLocationId}' via API external_id lookup (id='{rowId}', inventory_number='{inventoryNumber}').",
-                    2
-                  );
+                  log.Debug($"Property mode: resolved source_location_id '{sourceLocationId}' via API external_id lookup (id='{rowId}', inventory_number='{inventoryNumber}').");
                   goto SkipPropertyLocationAssignment;
                 }
 
-                helper.Message(
-                  $"Property mode: source_location_id '{sourceLocationId}' could not be mapped from CSV or resolved by API external_id (id='{rowId}', inventory_number='{inventoryNumber}'). Proceeding without location reference.",
-                  1,
-                  "WARN"
-                );
+                log.Warn($"Property mode: source_location_id '{sourceLocationId}' could not be mapped from CSV or resolved by API external_id (id='{rowId}', inventory_number='{inventoryNumber}'). Proceeding without location reference.");
               }
               else
               {
@@ -2202,11 +1025,7 @@ internal class Program
                 if (isRoomSourceReference && resolvedSourceRoom == null && (resolvedSourceFloor != null || resolvedSourceBuilding != null))
                 {
                   var resolvedAs = resolvedSourceFloor != null ? "floor" : "building";
-                  helper.Message(
-                    $"Property mode: source_location_type '{sourceLocationType}' indicates room, but source_location_id '{sourceLocationId}' maps to a {resolvedAs} in CSV hierarchy. Falling back to placeholder room handling.",
-                    2,
-                    "WARN"
-                  );
+                  log.Warn($"Property mode: source_location_type '{sourceLocationType}' indicates room, but source_location_id '{sourceLocationId}' maps to a {resolvedAs} in CSV hierarchy. Falling back to placeholder room handling.");
                   isRoomSourceReference = false;
                   if (resolvedSourceFloor != null)
                     isFloorSourceReference = true;
@@ -2230,28 +1049,17 @@ internal class Program
 
                 if (string.IsNullOrWhiteSpace(roomTitle) && string.IsNullOrWhiteSpace(roomIdFromCsv))
                 {
-                  helper.Message(
-                    $"Property mode: final room title could not be determined from source_location_id '{sourceLocationId}' (id='{rowId}', inventory_number='{inventoryNumber}'). Proceeding without location reference.",
-                    1,
-                    "WARN"
-                  );
+                  log.Warn($"Property mode: final room title could not be determined from source_location_id '{sourceLocationId}' (id='{rowId}', inventory_number='{inventoryNumber}'). Proceeding without location reference.");
                   goto SkipPropertyLocationAssignment;
                 }
                 else if (string.IsNullOrWhiteSpace(roomTitle) && !string.IsNullOrWhiteSpace(roomIdFromCsv))
                 {
-                  helper.Message(
-                    $"Property mode: room title missing for source_location_id '{sourceLocationId}' (id='{rowId}', inventory_number='{inventoryNumber}'). Attempting room resolution by external_id only.",
-                    2
-                  );
+                  log.Debug($"Property mode: room title missing for source_location_id '{sourceLocationId}' (id='{rowId}', inventory_number='{inventoryNumber}'). Attempting room resolution by external_id only.");
                 }
 
                 if (string.IsNullOrWhiteSpace(propertyIdForHierarchySync))
                 {
-                  helper.Message(
-                    $"Property mode: hierarchy property reference is missing (id='{rowId}', inventory_number='{inventoryNumber}'). Proceeding without location reference.",
-                    1,
-                    "WARN"
-                  );
+                  log.Warn($"Property mode: hierarchy property reference is missing (id='{rowId}', inventory_number='{inventoryNumber}'). Proceeding without location reference.");
                   goto SkipPropertyLocationAssignment;
                 }
 
@@ -2267,18 +1075,13 @@ internal class Program
                     false,
                     rowId,
                     inventoryTitle,
-                    buildingsByKey,
-                    checkedBuildings,
-                    helper,
+                    buildingLookup,
+                    log,
                     sourceBuildingExternalId
                   );
                   if (string.IsNullOrWhiteSpace(buildingId))
                   {
-                    helper.Message(
-                      $"Property mode: building '{sourceBuildingTitle}' could not be resolved in imported hierarchy (id='{rowId}', inventory_number='{inventoryNumber}'). Proceeding without location reference.",
-                      1,
-                      "WARN"
-                    );
+                    log.Warn($"Property mode: building '{sourceBuildingTitle}' could not be resolved in imported hierarchy (id='{rowId}', inventory_number='{inventoryNumber}'). Proceeding without location reference.");
                     goto SkipPropertyLocationAssignment;
                   }
                 }
@@ -2289,11 +1092,7 @@ internal class Program
                   var sourceFloorExternalId = resolvedSourceFloor?.SourceId ?? (isFloorSourceReference ? sourceLocationId : string.Empty);
                   if (string.IsNullOrWhiteSpace(buildingId))
                   {
-                    helper.Message(
-                      $"Property mode: floor '{sourceFloorTitle}' requires a resolved building from source hierarchy (id='{rowId}', inventory_number='{inventoryNumber}'). Proceeding without location reference.",
-                      1,
-                      "WARN"
-                    );
+                    log.Warn($"Property mode: floor '{sourceFloorTitle}' requires a resolved building from source hierarchy (id='{rowId}', inventory_number='{inventoryNumber}'). Proceeding without location reference.");
                     goto SkipPropertyLocationAssignment;
                   }
                   else
@@ -2306,21 +1105,44 @@ internal class Program
                       false,
                       rowId,
                       inventoryTitle,
-                      floorsByKey,
-                      checkedFloors,
-                      helper,
+                      floorLookup,
+                      log,
                       sourceFloorExternalId
                     );
                     if (string.IsNullOrWhiteSpace(floorId))
                     {
-                      helper.Message(
-                        $"Property mode: floor '{sourceFloorTitle}' could not be resolved in imported hierarchy (id='{rowId}', inventory_number='{inventoryNumber}'). Proceeding without location reference.",
-                        1,
-                        "WARN"
-                      );
+                      log.Warn($"Property mode: floor '{sourceFloorTitle}' could not be resolved in imported hierarchy (id='{rowId}', inventory_number='{inventoryNumber}'). Proceeding without location reference.");
                       goto SkipPropertyLocationAssignment;
                     }
                   }
+                }
+
+                // A building reference brings no floor with it, and a room needs one. The
+                // same placeholder is created in the external_id path further up; without it
+                // here, every inventory whose source location is a building ends up with no
+                // location at all.
+                if (string.IsNullOrWhiteSpace(floorId) && isBuildingSourceReference
+                    && !string.IsNullOrWhiteSpace(buildingId))
+                {
+                  floorId = Floors.ResolveFloorId(
+                    samedisClient,
+                    floorsResource,
+                    buildingId,
+                    floorPlaceholderTitle,
+                    createPropertyHierarchyOnImport,
+                    rowId,
+                    inventoryTitle,
+                    floorLookup,
+                    log
+                  );
+
+                  if (string.IsNullOrWhiteSpace(floorId))
+                  {
+                    log.Warn($"Property mode: the placeholder floor '{floorPlaceholderTitle}' could not be created below building '{buildingId}' (id='{rowId}', inventory_number='{inventoryNumber}'). Proceeding without location reference.");
+                    goto SkipPropertyLocationAssignment;
+                  }
+
+                  log.Debug($"Property mode: created/resolved placeholder floor '{floorPlaceholderTitle}' below building '{buildingId}' (id='{rowId}', inventory_number='{inventoryNumber}').");
                 }
 
                 if (!string.IsNullOrWhiteSpace(roomTitle) &&
@@ -2328,11 +1150,7 @@ internal class Program
                     string.IsNullOrWhiteSpace(floorId) &&
                     string.IsNullOrWhiteSpace(roomIdFromCsv))
                 {
-                  helper.Message(
-                    $"Property mode: room '{roomTitle}' needs a resolved floor from source hierarchy (id='{rowId}', inventory_number='{inventoryNumber}'). Proceeding without location reference.",
-                    1,
-                    "WARN"
-                  );
+                  log.Warn($"Property mode: room '{roomTitle}' needs a resolved floor from source hierarchy (id='{rowId}', inventory_number='{inventoryNumber}'). Proceeding without location reference.");
                   goto SkipPropertyLocationAssignment;
                 }
                 else if (!string.IsNullOrWhiteSpace(roomTitle) &&
@@ -2340,11 +1158,7 @@ internal class Program
                          string.IsNullOrWhiteSpace(buildingId) &&
                          string.IsNullOrWhiteSpace(roomIdFromCsv))
                 {
-                  helper.Message(
-                    $"Property mode: room '{roomTitle}' needs a resolved building from source hierarchy (id='{rowId}', inventory_number='{inventoryNumber}'). Proceeding without location reference.",
-                    1,
-                    "WARN"
-                  );
+                  log.Warn($"Property mode: room '{roomTitle}' needs a resolved building from source hierarchy (id='{rowId}', inventory_number='{inventoryNumber}'). Proceeding without location reference.");
                   goto SkipPropertyLocationAssignment;
                 }
                 else
@@ -2352,20 +1166,14 @@ internal class Program
                   var resolveRoomByExternalOnly = !string.IsNullOrWhiteSpace(roomIdFromCsv);
                   if (resolveRoomByExternalOnly)
                   {
-                    if (locationsById.TryGetValue(roomIdFromCsv, out var mappedLocationId) && !string.IsNullOrWhiteSpace(mappedLocationId))
+                    if (roomIdBySourceId.TryGetValue(roomIdFromCsv, out var mappedLocationId) && !string.IsNullOrWhiteSpace(mappedLocationId))
                     {
                       locationId = mappedLocationId;
-                      helper.Message(
-                        $"Property mode: resolved room from CSV/pre-sync cache by source_location_id '{roomIdFromCsv}' -> '{locationId}' (id='{rowId}', inventory_number='{inventoryNumber}').",
-                        2
-                      );
+                      log.Debug($"Property mode: resolved room from CSV/pre-sync cache by source_location_id '{roomIdFromCsv}' -> '{locationId}' (id='{rowId}', inventory_number='{inventoryNumber}').");
                     }
                     else
                     {
-                      helper.Message(
-                        $"Property mode: source_location_id '{roomIdFromCsv}' not found in CSV/pre-sync cache. Resolving via API external_id only (type='{sourceLocationType}', id='{rowId}', inventory_number='{inventoryNumber}').",
-                        2
-                      );
+                      log.Debug($"Property mode: source_location_id '{roomIdFromCsv}' not found in CSV/pre-sync cache. Resolving via API external_id only (type='{sourceLocationType}', id='{rowId}', inventory_number='{inventoryNumber}').");
 
                       locationId = Locations.ResolveLocationId(
                         samedisClient,
@@ -2375,10 +1183,8 @@ internal class Program
                         false,
                         rowId,
                         inventoryTitle,
-                        locationsById,
-                        locationsByTitle,
-                        checkedLocations,
-                        helper,
+                        locationLookup,
+                        log,
                         null,
                         null,
                         null,
@@ -2389,28 +1195,26 @@ internal class Program
 
                     if (string.IsNullOrWhiteSpace(locationId))
                     {
-                      helper.Message(
-                        $"Property mode: room lookup via source_location_id '{roomIdFromCsv}' failed (source_location_type='{sourceLocationType}', id='{rowId}', inventory_number='{inventoryNumber}'). Proceeding without location reference.",
-                        1,
-                        "WARN"
-                      );
+                      log.Warn($"Property mode: room lookup via source_location_id '{roomIdFromCsv}' failed (source_location_type='{sourceLocationType}', id='{rowId}', inventory_number='{inventoryNumber}'). Proceeding without location reference.");
                       goto SkipPropertyLocationAssignment;
                     }
                   }
                   else
                   {
+                    // createPropertyHierarchyOnImport, not false: where the source location
+                    // is a floor or a building, roomTitle is the placeholder room, and a
+                    // lookup that may not create it can never succeed on a first import.
+                    // The external_id path above already creates the same placeholder.
                     locationId = Locations.ResolveLocationId(
                       samedisClient,
                       locationsResource,
                       string.Empty,
                       roomTitle,
-                      false,
+                      createPropertyHierarchyOnImport,
                       rowId,
                       inventoryTitle,
-                      locationsById,
-                      locationsByTitle,
-                      checkedLocations,
-                      helper,
+                      locationLookup,
+                      log,
                       propertyIdForHierarchySync,
                       buildingId,
                       floorId,
@@ -2421,11 +1225,7 @@ internal class Program
 
                   if (!string.IsNullOrWhiteSpace(roomTitle) && string.IsNullOrWhiteSpace(locationId))
                   {
-                    helper.Message(
-                      $"Property mode: room '{roomTitle}' could not be resolved in imported hierarchy (source_location_id='{sourceLocationId}', source_location_type='{sourceLocationType}', building_id='{buildingId}', floor_id='{floorId}', id='{rowId}', inventory_number='{inventoryNumber}'). Proceeding without location reference.",
-                      1,
-                      "WARN"
-                    );
+                    log.Warn($"Property mode: room '{roomTitle}' could not be resolved in imported hierarchy (source_location_id='{sourceLocationId}', source_location_type='{sourceLocationType}', building_id='{buildingId}', floor_id='{floorId}', id='{rowId}', inventory_number='{inventoryNumber}'). Proceeding without location reference.");
                     goto SkipPropertyLocationAssignment;
                   }
                 }
@@ -2436,7 +1236,7 @@ internal class Program
             }
             else
             {
-              var standardLocationId = Helper.GetRowValue(row, "location_id");
+              var standardLocationId = Rows.Value(row, "location_id");
 
               locationId = Locations.ResolveLocationId(
                 samedisClient,
@@ -2446,27 +1246,25 @@ internal class Program
                 createStandardLocationsOnTheFly,
                 rowId,
                 inventoryTitle,
-                locationsById,
-                locationsByTitle,
-                checkedLocations,
-                helper
+                locationLookup,
+                log
               );
 
               if (!string.IsNullOrWhiteSpace(locationTitle) && string.IsNullOrWhiteSpace(locationId))
               {
                 skippedCount++;
-                helper.Message($"Skipped inventory row because location '{locationTitle}' could not be resolved/created (id='{rowId}', inventory_number='{inventoryNumber}').", 1, "WARN");
+                log.Warn($"Skipped inventory row because location '{locationTitle}' could not be resolved/created (id='{rowId}', inventory_number='{inventoryNumber}').");
                 continue;
               }
             }
 
-            var attributes = Inventories.BuildInventoryAttributes(row, departmentId, locationId, catalogId, isCreateOperation);
+            var attributes = Inventories.BuildInventoryAttributes(row, departmentId, locationId, numberFormat, catalogId, isCreateOperation);
             if (!isCreateOperation)
               attributes.Remove("comments_field");
 
             if (resolveServicePartnerCompany)
             {
-              var servicePartnerName = Helper.GetRowValue(row, "service_partner");
+              var servicePartnerName = Rows.Value(row, "service_partner");
               if (!string.IsNullOrWhiteSpace(servicePartnerName))
               {
                 var servicePartnerCompanyId = Contacts.ResolveCompanyContactId(
@@ -2474,9 +1272,8 @@ internal class Program
                   contactsResource,
                   servicePartnerName,
                   false,
-                  manufacturersByName,
-                  checkedManufacturers,
-                  helper,
+                  manufacturerLookup,
+                  log,
                   rowId,
                   inventoryTitle
                 );
@@ -2492,7 +1289,7 @@ internal class Program
                 }
                 else
                 {
-                  helper.Message($"service_partner company '{servicePartnerName}' konnte nicht aufgelöst werden (id='{rowId}', inventory_number='{inventoryNumber}') – wird ohne Service-Company hochgeladen.", 2, "WARN");
+                  log.Warn($"service_partner company '{servicePartnerName}' konnte nicht aufgelöst werden (id='{rowId}', inventory_number='{inventoryNumber}') – wird ohne Service-Company hochgeladen.");
                 }
               }
             }
@@ -2500,18 +1297,14 @@ internal class Program
             if (attributes.Count == 0)
             {
               skippedCount++;
-              helper.Message($"Skipped inventory row because no writable fields were provided (id='{rowId}', inventory_number='{inventoryNumber}').", 2, "WARN");
+              log.Warn($"Skipped inventory row because no writable fields were provided (id='{rowId}', inventory_number='{inventoryNumber}').");
               continue;
             }
 
             if (isCreateOperation && string.IsNullOrWhiteSpace(catalogId) && !isPlaceholderDeviceModel)
             {
               skippedCount++;
-              helper.Message(
-                $"Skipped inventory row because no existing inventory was found and catalog_id is missing (id='{rowId}', inventory_number='{inventoryNumber}').",
-                1,
-                "WARN"
-              );
+              log.Warn($"Skipped inventory row because no existing inventory was found and catalog_id is missing (id='{rowId}', inventory_number='{inventoryNumber}').");
               continue;
             }
 
@@ -2543,45 +1336,45 @@ internal class Program
 
             void HandleInventorySuccess(string? successResponse)
             {
-              var resultingId = Helper.ExtractDataId(successResponse) ?? targetInventoryId ?? rowId;
+              var resultingId = JsonApi.ExtractDataId(successResponse) ?? targetInventoryId ?? rowId;
               if (!string.IsNullOrWhiteSpace(resultingId))
               {
-                inventoryById[resultingId] = resultingId;
-                if (!string.IsNullOrWhiteSpace(rowId))
-                  inventoryById[rowId] = resultingId;
-                if (!string.IsNullOrWhiteSpace(inventoryExternalId))
-                  inventoryByExternalId[inventoryExternalId] = resultingId;
-                if (!string.IsNullOrWhiteSpace(inventoryNumber))
-                  inventoryByDeviceNumber[inventoryNumber] = resultingId;
+                // Seed every key this row was identified by, so a later row referring to the
+                // same device is answered from memory instead of asking for what this run
+                // just wrote.
+                inventoryLookup.RememberId(resultingId);
+                inventoryLookup.RememberId(rowId, resultingId);
+                inventoryLookup.RememberUniqueField("external_id", inventoryExternalId, resultingId);
+                inventoryLookup.RememberField("device_number", inventoryNumber, resultingId);
               }
 
               if (string.IsNullOrWhiteSpace(targetInventoryId))
               {
                 createdCount++;
-                helper.Message($"Inventory created (inventory_number='{inventoryNumber}', id='{resultingId}').", 2);
+                log.Debug($"Inventory created (inventory_number='{inventoryNumber}', id='{resultingId}').");
 
                 // Source row is retired: the device was just created ACTIVE -- retire
                 // it now via a device_retired issue so it ends up consistently retired.
                 if (isRetiredRow && !string.IsNullOrWhiteSpace(resultingId))
                 {
-                  var retDate = Helper.NormalizeDate(Helper.GetRowValue(row, "retirement_date"));
+                  var retDate = Helper.NormalizeDate(Rows.Value(row, "retirement_date"));
                   var retResp = Inventories.PostDeviceRetiredIssue(
-                    samedisClient, issuesResource, resultingId, inventoryNumber, inventoryTitle, retDate, helper);
+                    samedisClient, issuesResource, resultingId, inventoryNumber, inventoryTitle, retDate, log);
                   if (samedisClient.StatusCode >= 200 && samedisClient.StatusCode < 300)
                   {
                     retiredCount++;
-                    helper.Message($"Newly created inventory retired via device_retired issue (inventory_number='{inventoryNumber}', id='{resultingId}').", 2);
+                    log.Debug($"Newly created inventory retired via device_retired issue (inventory_number='{inventoryNumber}', id='{resultingId}').");
                   }
                   else
                   {
-                    helper.Message($"Inventory created but device_retired issue failed (inventory_number='{inventoryNumber}', id='{resultingId}', status={samedisClient.StatusCode}). Response: {retResp}", 1, "WARN");
+                    log.Warn($"Inventory created but device_retired issue failed (inventory_number='{inventoryNumber}', id='{resultingId}', status={samedisClient.StatusCode}). Response: {retResp}");
                   }
                 }
               }
               else
               {
                 updatedCount++;
-                helper.Message($"Inventory updated (inventory_number='{inventoryNumber}', id='{targetInventoryId}').", 2);
+                log.Debug($"Inventory updated (inventory_number='{inventoryNumber}', id='{targetInventoryId}').");
               }
             }
 
@@ -2612,12 +1405,8 @@ internal class Program
                   && failedStatus == 400
                   && Inventories.IsDeviceRetiredError(failedResponse))
               {
-                helper.Message(
-                  $"Create was rejected with \"Device retired.\" -- an existing retired device was not resolvable by id/external_id/device_number "
-                  + $"(external_id='{inventoryExternalId}', inventory_number='{inventoryNumber}', title='{inventoryTitle}'). Check the identity mapping; no recommission attempted.",
-                  1,
-                  "WARN"
-                );
+                log.Warn($"Create was rejected with \"Device retired.\" -- an existing retired device was not resolvable by id/external_id/device_number "
+                  + $"(external_id='{inventoryExternalId}', inventory_number='{inventoryNumber}', title='{inventoryTitle}'). Check the identity mapping; no recommission attempted.");
               }
 
               if (!isCreateOperation
@@ -2633,18 +1422,11 @@ internal class Program
                 // anchor; we must recommission and retry-update the exact device this
                 // row maps to, not whatever a (possibly changed) number points at.
                 var recommissionInventoryId = Inventories.ResolveExistingInventoryId(
-                  samedisClient,
-                  inventoryResource,
+                  inventoryLookup,
                   rowId,
                   inventoryExternalId,
                   inventoryNumber,
-                  config.Sync.InventoriesUploadFallbackByDeviceNumber,
-                  inventoryById,
-                  inventoryByExternalId,
-                  inventoryByDeviceNumber,
-                  checkedInventoryIds,
-                  checkedInventoryExternalIds,
-                  checkedInventoryNumbers
+                  config.Sync.InventoriesUploadFallbackByDeviceNumber
                 );
                 if (string.IsNullOrWhiteSpace(recommissionInventoryId))
                   recommissionInventoryId = targetInventoryId;
@@ -2681,23 +1463,15 @@ internal class Program
                   // Don't post a recommission issue: the backend would reject it with
                   // "The inventory is not retired and therefore cannot be recommissioned."
                   skipRecommission = true;
-                  helper.Message(
-                    $"Update was rejected with \"Device retired.\" although the device reports device_retired=false "
+                  log.Warn($"Update was rejected with \"Device retired.\" although the device reports device_retired=false "
                     + $"(operation_status='{persistedOperationStatus}', id='{recommissionInventoryId}', inventory_number='{inventoryNumber}'). "
-                    + "Skipping recommission -- needs backend investigation.",
-                    1,
-                    "WARN"
-                  );
+                    + "Skipping recommission -- needs backend investigation.");
                 }
                 else if (retirementStateKnown
                          && !Inventories.IsRetiredOperationStatus(persistedOperationStatus))
                 {
-                  helper.Message(
-                    $"Inconsistent retirement state (device_retired=true but operation_status='{persistedOperationStatus}'): a recommission alone would be a silent no-op. "
-                    + $"Creating a device_retired issue to normalize first (id='{recommissionInventoryId}', inventory_number='{inventoryNumber}').",
-                    1,
-                    "WARN"
-                  );
+                  log.Warn($"Inconsistent retirement state (device_retired=true but operation_status='{persistedOperationStatus}'): a recommission alone would be a silent no-op. "
+                    + $"Creating a device_retired issue to normalize first (id='{recommissionInventoryId}', inventory_number='{inventoryNumber}').");
                   var normalizeResponse = Inventories.PostDeviceRetiredIssue(
                     samedisClient,
                     issuesResource,
@@ -2705,17 +1479,13 @@ internal class Program
                     inventoryNumber,
                     inventoryTitle,
                     null,
-                    helper,
+                    log,
                     deleteOpenTasks: false
                   );
                   if (samedisClient.StatusCode < 200 || samedisClient.StatusCode >= 300)
                   {
-                    helper.Message(
-                      $"Normalizing device_retired issue was rejected (id='{recommissionInventoryId}', inventory_number='{inventoryNumber}', status={samedisClient.StatusCode}). "
-                      + $"The recommission below will most likely stay without effect. Response: {normalizeResponse}",
-                      1,
-                      "WARN"
-                    );
+                    log.Warn($"Normalizing device_retired issue was rejected (id='{recommissionInventoryId}', inventory_number='{inventoryNumber}', status={samedisClient.StatusCode}). "
+                      + $"The recommission below will most likely stay without effect. Response: {normalizeResponse}");
                   }
                 }
 
@@ -2723,10 +1493,7 @@ internal class Program
                 // the resulting inventory update will already be counted via
                 // HandleInventorySuccess (which logs at level 2). Only escalate to
                 // WARN/ERROR if the recommission or the retry itself fails.
-                helper.Message(
-                  $"Inventory is retired in samedis but CSV row is not (id='{recommissionInventoryId}', external_id='{inventoryExternalId}', inventory_number='{inventoryNumber}'). Attempting recommission and update retry.",
-                  2
-                );
+                log.Debug($"Inventory is retired in samedis but CSV row is not (id='{recommissionInventoryId}', external_id='{inventoryExternalId}', inventory_number='{inventoryNumber}'). Attempting recommission and update retry.");
 
                 var recommissionResponse = skipRecommission
                   ? null
@@ -2736,7 +1503,7 @@ internal class Program
                     recommissionInventoryId,
                     inventoryNumber,
                     inventoryTitle,
-                    helper
+                    log
                   );
 
                 if (recommissionResponse != null)
@@ -2744,10 +1511,7 @@ internal class Program
                   response = samedisClient.Put(inventoryWriteResource, recommissionInventoryId, requestPayload);
                   if (samedisClient.StatusCode >= 200 && samedisClient.StatusCode < 300)
                   {
-                    helper.Message(
-                      $"Inventory recommissioned and updated after retry (inventory_number='{inventoryNumber}', id='{recommissionInventoryId}').",
-                      2
-                    );
+                    log.Debug($"Inventory recommissioned and updated after retry (inventory_number='{inventoryNumber}', id='{recommissionInventoryId}').");
                     HandleInventorySuccess(response);
                     recommissionedCount++;
                     recommissionRetrySucceeded = true;
@@ -2778,12 +1542,8 @@ internal class Program
                       ? $"device_retired={deviceRetiredAfter.ToString().ToLowerInvariant()}, operation_status='{operationStatusAfter}'"
                       : "state could not be re-read";
 
-                    helper.Message(
-                      $"Recommission issue was created but the update retry was still rejected (id='{recommissionInventoryId}', inventory_number='{inventoryNumber}', status={failedStatus}, {stateAfter}). "
-                      + "The recommission_device issue did not clear the retirement -- needs backend investigation (samedis-care-issues#2380).",
-                      1,
-                      "WARN"
-                    );
+                    log.Warn($"Recommission issue was created but the update retry was still rejected (id='{recommissionInventoryId}', inventory_number='{inventoryNumber}', status={failedStatus}, {stateAfter}). "
+                      + "The recommission_device issue did not clear the retirement -- needs backend investigation (samedis-care-issues#2380).");
                   }
                 }
               }
@@ -2792,17 +1552,704 @@ internal class Program
               {
                 errorCount++;
                 var failedInventoryId = string.IsNullOrWhiteSpace(targetInventoryId) ? rowId : targetInventoryId;
-                helper.Message(
-                  $"Failed to {operation} inventory (id='{failedInventoryId}', title='{inventoryTitle}', inventory_number='{inventoryNumber}', status={failedStatus}). Response: {failedResponse}",
-                  1,
-                  "ERROR"
-                );
+                log.Error($"Failed to {operation} inventory (id='{failedInventoryId}', title='{inventoryTitle}', inventory_number='{inventoryNumber}', status={failedStatus}). Response: {failedResponse}");
               }
             }
           }
 
-          helper.Message($"Inventories Upload finished. Created: {createdCount}, Updated: {updatedCount} (incl. {recommissionedCount} recommissioned, {retiredCount} retired), Skipped: {skippedCount}, Errors: {errorCount}", 1);
+          log.Info($"Inventories Upload finished. Created: {createdCount}, Updated: {updatedCount} (incl. {recommissionedCount} recommissioned, {retiredCount} retired), Skipped: {skippedCount}, Errors: {errorCount}");
         }
+      }
+    }
+    #endregion
+
+    #region Tasks Upload
+    if (!config.Sync.TasksUpload)
+    {
+      log.Info("Tasks Upload sync disabled in config.yml");
+    }
+    else
+    {
+      log.Info("Tasks Upload sync starting.");
+
+      var tasksResource = scope.Resource("issues");
+      var tasksWriteResource = tasksResource + "?locale=en";
+      var inventoryResource = scope.Resource("inventories");
+      var tasksCsvPath = Path.Combine(uploadRoot, "tasks.csv");
+      var setInventoryOperationStatusOnFailedMaintenance = config.Sync.TasksUploadSetInventoryOperationStatusOnFailedMaintenance;
+
+      RequireAccess(log, samedisClient, tasksResource);
+      RequireAccess(log, samedisClient, inventoryResource);
+
+      if (!File.Exists(tasksCsvPath))
+      {
+        log.Warn($"Tasks Upload skipped. CSV not found: {tasksCsvPath}");
+      }
+      else
+      {
+        DataTable uploadTable;
+        try
+        {
+          uploadTable = Csv.Read(tasksCsvPath, tableName: "TasksUpload", trimFields: true);
+        }
+        catch (Exception ex)
+        {
+          log.Error($"Tasks Upload failed to read CSV {tasksCsvPath}: {ex.Message}");
+          uploadTable = new DataTable("TasksUpload");
+        }
+
+        if (uploadTable.Rows.Count == 0)
+        {
+          log.Warn("Tasks Upload skipped because CSV contains no rows.");
+        }
+        else if (!Csv.HasColumns(uploadTable, Tasks.UploadRequiredColumns))
+        {
+          log.Error($"Tasks Upload skipped. CSV missing one or more required columns: {string.Join(", ", Tasks.UploadRequiredColumns)}");
+        }
+        else
+        {
+          var issueLookup = new ResourceLookup(samedisClient, tasksResource, scope.KeyLookup);
+          var taskInventoryLookup = new ResourceLookup(samedisClient, inventoryResource, scope.KeyLookup);
+          var createdCount = 0;
+          var updatedCount = 0;
+          var skippedCount = 0;
+          var errorCount = 0;
+          var documentsUploadedCount = 0;
+          var documentsSkippedCount = 0;
+          var documentsErrorCount = 0;
+
+          var rowNumber = 0;
+          foreach (DataRow row in uploadTable.Rows)
+          {
+            rowNumber++;
+            var issueNumber = Rows.Value(row, "issue_number");
+            var inventoryDeviceNumber = Rows.Value(row, "inventory_device_number");
+            var documentFileName = Tasks.GetTaskDocumentFileName(row);
+            if (string.IsNullOrWhiteSpace(documentFileName))
+            {
+              skippedCount++;
+              documentsSkippedCount++;
+              log.Warn($"Skipped task row {rowNumber} because document filename is empty (issue_number='{issueNumber}', inventory_device_number='{inventoryDeviceNumber}').");
+              continue;
+            }
+
+            var documentPath = Tasks.ResolveTaskDocumentPath(uploadRoot, documentFileName);
+            if (string.IsNullOrWhiteSpace(documentPath))
+            {
+              skippedCount++;
+              documentsSkippedCount++;
+              log.Warn($"Skipped task row {rowNumber} because document file '{documentFileName}' was not found (issue_number='{issueNumber}', inventory_device_number='{inventoryDeviceNumber}').");
+              continue;
+            }
+
+            if (string.IsNullOrWhiteSpace(inventoryDeviceNumber))
+            {
+              skippedCount++;
+              log.Warn($"Skipped task row {rowNumber} because inventory_device_number is empty.");
+              continue;
+            }
+
+            var inventoryId = Inventories.ResolveInventoryIdByDeviceNumber(
+              taskInventoryLookup,
+              inventoryDeviceNumber
+            );
+            if (string.IsNullOrWhiteSpace(inventoryId))
+            {
+              skippedCount++;
+              log.Warn($"Skipped task row {rowNumber} because inventory_device_number '{inventoryDeviceNumber}' could not be resolved to an inventory id.");
+              continue;
+            }
+
+            var targetIssueId = Rows.Value(row, "id");
+            if (string.IsNullOrWhiteSpace(targetIssueId) && !string.IsNullOrWhiteSpace(issueNumber))
+            {
+              // external_id first, because that is the key this sync writes: the task is created
+              // with external_id set to the source's issue_number, and the unique index is on
+              // (tenant_id, external_id).
+              //
+              // issue_number is the SERVER's own running number, assigned on create and unrelated
+              // to the source's. Looking up by it alone therefore never found a task this sync had
+              // created, so every re-run tried to create it again and was rejected with a
+              // duplicate-key error -- which also meant the document could never be re-attached.
+              targetIssueId = issueLookup.First(
+                () => issueLookup.ByUniqueField("external_id", issueNumber),
+                () => Tasks.ResolveIssueIdByIssueNumber(issueLookup, issueNumber) is { Length: > 0 } byNumber
+                        ? byNumber
+                        : null);
+            }
+
+            var taskAttributes = Tasks.BuildTaskAttributes(
+              row,
+              inventoryId,
+              setInventoryOperationStatusOnFailedMaintenance,
+              out var buildError,
+              out var buildWarning
+            );
+            if (taskAttributes == null)
+            {
+              errorCount++;
+              log.Error($"Failed to process task row {rowNumber} (issue_number='{issueNumber}', inventory_device_number='{inventoryDeviceNumber}'): {buildError}");
+              continue;
+            }
+
+            if (!string.IsNullOrWhiteSpace(buildWarning))
+            {
+              log.Warn($"Task row {rowNumber} warning (issue_number='{issueNumber}', inventory_device_number='{inventoryDeviceNumber}'): {buildWarning}");
+            }
+
+            var requestPayload = JsonConvert.SerializeObject(new
+            {
+              data = taskAttributes
+            });
+
+            var existingIssueId = string.IsNullOrWhiteSpace(targetIssueId) ? null : targetIssueId;
+            var isCreateOperation = existingIssueId is null;
+            var response = existingIssueId is null
+              ? samedisClient.Post(tasksWriteResource, requestPayload)
+              : samedisClient.Put(tasksWriteResource, existingIssueId, requestPayload);
+
+            if (samedisClient.StatusCode >= 200 && samedisClient.StatusCode < 300)
+            {
+              var resultingIssueId = JsonApi.ExtractDataId(response) ?? targetIssueId ?? string.Empty;
+              if (!string.IsNullOrWhiteSpace(issueNumber))
+                issueLookup.RememberField("issue_number", issueNumber, resultingIssueId);
+
+              if (isCreateOperation)
+              {
+                createdCount++;
+                log.Debug($"Task created (issue_number='{issueNumber}', inventory_device_number='{inventoryDeviceNumber}', id='{resultingIssueId}').");
+              }
+              else
+              {
+                updatedCount++;
+                log.Debug($"Task updated (issue_number='{issueNumber}', inventory_device_number='{inventoryDeviceNumber}', id='{targetIssueId}').");
+              }
+
+              if (!File.Exists(documentPath))
+              {
+                documentsErrorCount++;
+                log.Error($"Task document upload failed because file vanished before upload (issue_number='{issueNumber}', task_id='{resultingIssueId}', file='{documentFileName}').");
+              }
+              else if (string.IsNullOrWhiteSpace(resultingIssueId))
+              {
+                documentsErrorCount++;
+                log.Error($"Task document upload failed because issue id is empty (issue_number='{issueNumber}', file='{documentFileName}').");
+              }
+              else if (Tasks.IsDocumentAlreadyAttached(samedisClient, tasksResource, resultingIssueId,
+                                                       Path.GetFileName(documentPath), log))
+              {
+                documentsSkippedCount++;
+                log.Debug($"Task document already attached, not uploading again (issue_number='{issueNumber}', task_id='{resultingIssueId}', file='{Path.GetFileName(documentPath)}').");
+              }
+              else
+              {
+                var uploadResource = $"{tasksResource}/{resultingIssueId}/uploads";
+                var uploadResponse = samedisClient.PostDocument(uploadResource, documentPath, Path.GetFileName(documentPath));
+                if (samedisClient.StatusCode >= 200 && samedisClient.StatusCode < 300)
+                {
+                  documentsUploadedCount++;
+                  log.Debug($"Task document uploaded (issue_number='{issueNumber}', task_id='{resultingIssueId}', file='{Path.GetFileName(documentPath)}').");
+                }
+                else
+                {
+                  documentsErrorCount++;
+                  log.Error($"Failed to upload task document (issue_number='{issueNumber}', task_id='{resultingIssueId}', file='{Path.GetFileName(documentPath)}', status={samedisClient.StatusCode}). Response: {uploadResponse}");
+                }
+              }
+            }
+            else
+            {
+              errorCount++;
+              var failedIssueId = string.IsNullOrWhiteSpace(targetIssueId) ? issueNumber : targetIssueId;
+              var operation = isCreateOperation ? "create" : "update";
+              log.Error($"Failed to {operation} task (id='{failedIssueId}', issue_number='{issueNumber}', inventory_device_number='{inventoryDeviceNumber}', status={samedisClient.StatusCode}). Response: {response}");
+            }
+          }
+
+          log.Info($"Tasks Upload finished. Created: {createdCount}, Updated: {updatedCount}, Skipped: {skippedCount}, Errors: {errorCount}, Documents Uploaded: {documentsUploadedCount}, Documents Skipped: {documentsSkippedCount}, Document Errors: {documentsErrorCount}");
+        }
+      }
+    }
+    #endregion
+
+    #region Requests Upload
+    if (!config.Sync.RequestsUpload)
+    {
+      log.Info("Requests Upload sync disabled in config.yml");
+    }
+    else
+    {
+      log.Info("Requests Upload sync starting.");
+
+      var requestsResource = scope.Resource("incidents");
+      var requestsWriteResource = requestsResource + "?locale=en";
+      var requestsCsvPath = Path.Combine(uploadRoot, "requests.csv");
+      var requestMessagesCsvPath = Path.Combine(uploadRoot, "request-messages.csv");
+
+      RequireAccess(log, samedisClient, requestsResource);
+
+      var inventoriesResource = scope.Resource("inventories");
+
+      var incidentLookup = new ResourceLookup(samedisClient, requestsResource, scope.KeyLookup);
+      var requestInventoryLookup = new ResourceLookup(samedisClient, inventoriesResource, scope.KeyLookup);
+      var supporterByInventoryAndEmail = new Dictionary<string, Helper.ResponsibleSupporter?>(StringComparer.OrdinalIgnoreCase);
+
+      // -- requests.csv: status / responsible / etc. updates on existing requests --
+      if (!File.Exists(requestsCsvPath))
+      {
+        log.Warn($"Requests Upload: status CSV not found, skipping: {requestsCsvPath}");
+      }
+      else
+      {
+        DataTable uploadTable;
+        try
+        {
+          uploadTable = Csv.Read(requestsCsvPath, tableName: "RequestsUpload", trimFields: true);
+        }
+        catch (Exception ex)
+        {
+          log.Error($"Requests Upload failed to read CSV {requestsCsvPath}: {ex.Message}");
+          uploadTable = new DataTable("RequestsUpload");
+        }
+
+        if (uploadTable.Rows.Count == 0)
+        {
+          log.Warn("Requests Upload skipped because requests.csv contains no rows.");
+        }
+        else if (!Csv.HasColumns(uploadTable, Requests.UploadRequiredColumns))
+        {
+          log.Error($"Requests Upload skipped. requests.csv missing one or more required columns: {string.Join(", ", Requests.UploadRequiredColumns)}");
+        }
+        else
+        {
+          var updatedCount = 0;
+          var skippedCount = 0;
+          var errorCount = 0;
+          var rowNumber = 0;
+
+          foreach (DataRow row in uploadTable.Rows)
+          {
+            rowNumber++;
+            var rowId = Rows.Value(row, "id");
+            var incidentNumber = Rows.Value(row, "incident_number");
+
+            var targetIncidentId = rowId;
+            if (string.IsNullOrWhiteSpace(targetIncidentId) && !string.IsNullOrWhiteSpace(incidentNumber))
+            {
+              targetIncidentId = Requests.ResolveIncidentIdByIncidentNumber(
+                incidentLookup,
+                incidentNumber
+              );
+            }
+
+            if (string.IsNullOrWhiteSpace(targetIncidentId))
+            {
+              skippedCount++;
+              log.Warn($"Skipped request row {rowNumber} because no existing request could be resolved (id='{rowId}', incident_number='{incidentNumber}').");
+              continue;
+            }
+
+            // Resolve inventory first (prefer samedis inventory_id, otherwise look up by device_number).
+            // The responsible lookup below depends on a resolved inventory.
+            var csvInventoryDeviceNumber = Rows.Value(row, "inventory_device_number");
+            if (string.IsNullOrWhiteSpace(csvInventoryDeviceNumber))
+              csvInventoryDeviceNumber = Rows.Value(row, "inventory_number");
+
+            var resolvedInventoryId = Inventories.ResolveInventoryIdByIdOrDeviceNumber(
+              requestInventoryLookup,
+              Rows.Value(row, "inventory_id"),
+              csvInventoryDeviceNumber
+            );
+            if (string.IsNullOrWhiteSpace(resolvedInventoryId) && !string.IsNullOrWhiteSpace(csvInventoryDeviceNumber))
+            {
+              log.Warn($"Request row {rowNumber} (id='{targetIncidentId}', incident_number='{incidentNumber}'): inventory_device_number '{csvInventoryDeviceNumber}' could not be resolved to an inventory.");
+            }
+
+            // Resolve "verantwortlich" by email against the inventory's incident supporters
+            // (internal contact, staff member, or external enterprise contact).
+            var responsible = Helper.ResolveResponsibleByEmail(
+              samedisClient,
+              scope,
+              resolvedInventoryId,
+              Rows.Value(row, "responsible_email"),
+              supporterByInventoryAndEmail,
+              log
+            );
+            var resolvedResponsibleId = responsible?.Id ?? string.Empty;
+            var resolvedResponsibleType = responsible?.Type ?? string.Empty;
+
+            var attributes = Requests.BuildRequestUpdateAttributes(
+              row,
+              out var buildError,
+              out var buildWarning,
+              resolvedResponsibleId,
+              resolvedResponsibleType,
+              resolvedInventoryId
+            );
+            if (attributes == null)
+            {
+              errorCount++;
+              log.Error($"Failed to process request row {rowNumber} (id='{targetIncidentId}', incident_number='{incidentNumber}'): {buildError}");
+              continue;
+            }
+
+            if (attributes.Count == 0)
+            {
+              skippedCount++;
+              log.Debug($"Skipped request row {rowNumber} (id='{targetIncidentId}', incident_number='{incidentNumber}'): {buildWarning}");
+              continue;
+            }
+
+            if (!string.IsNullOrWhiteSpace(buildWarning))
+            {
+              log.Warn($"Request row {rowNumber} warning (id='{targetIncidentId}', incident_number='{incidentNumber}'): {buildWarning}");
+            }
+
+            var requestPayload = JsonConvert.SerializeObject(new
+            {
+              data = attributes
+            });
+
+            var response = samedisClient.Put(requestsWriteResource, targetIncidentId, requestPayload);
+
+            if (samedisClient.StatusCode >= 200 && samedisClient.StatusCode < 300)
+            {
+              updatedCount++;
+              log.Debug($"Request updated (id='{targetIncidentId}', incident_number='{incidentNumber}', fields=[{string.Join(",", attributes.Keys)}]).");
+            }
+            else
+            {
+              errorCount++;
+              log.Error($"Failed to update request (id='{targetIncidentId}', incident_number='{incidentNumber}', status={samedisClient.StatusCode}). Response: {response}");
+            }
+          }
+
+          log.Info($"Requests Upload finished (status updates). Updated: {updatedCount}, Skipped: {skippedCount}, Errors: {errorCount}");
+        }
+      }
+
+      // -- request-messages.csv: create new messages (rows with empty id) plus optional asset --
+      if (!File.Exists(requestMessagesCsvPath))
+      {
+        log.Warn($"Requests Upload: messages CSV not found, skipping: {requestMessagesCsvPath}");
+      }
+      else
+      {
+        DataTable messagesTable;
+        try
+        {
+          messagesTable = Csv.Read(requestMessagesCsvPath, tableName: "RequestMessagesUpload", trimFields: true);
+        }
+        catch (Exception ex)
+        {
+          log.Error($"Requests Upload failed to read CSV {requestMessagesCsvPath}: {ex.Message}");
+          messagesTable = new DataTable("RequestMessagesUpload");
+        }
+
+        if (messagesTable.Rows.Count == 0)
+        {
+          log.Warn("Requests Upload skipped messages because request-messages.csv contains no rows.");
+        }
+        else if (!Csv.HasColumns(messagesTable, Requests.MessageUploadRequiredColumns))
+        {
+          log.Error($"Requests Upload skipped messages. request-messages.csv missing one or more required columns: {string.Join(", ", Requests.MessageUploadRequiredColumns)}");
+        }
+        else
+        {
+          var hasFilenameColumn = messagesTable.Columns.Contains("filename");
+          var createdCount = 0;
+          var skippedCount = 0;
+          var errorCount = 0;
+          var documentsUploadedCount = 0;
+          var documentsSkippedCount = 0;
+          var documentsErrorCount = 0;
+          var rowNumber = 0;
+
+          foreach (DataRow row in messagesTable.Rows)
+          {
+            rowNumber++;
+            var existingMessageId = Rows.Value(row, "id");
+            if (!string.IsNullOrWhiteSpace(existingMessageId))
+            {
+              skippedCount++;
+              log.Debug($"Skipped message row {rowNumber} because id is non-empty (only new messages with empty id are uploaded). id='{existingMessageId}'.");
+              continue;
+            }
+
+            var incidentIdRaw = Rows.Value(row, "incident_id");
+            var incidentNumberRaw = Rows.Value(row, "incident_number");
+
+            var targetIncidentId = incidentIdRaw;
+            if (string.IsNullOrWhiteSpace(targetIncidentId) && !string.IsNullOrWhiteSpace(incidentNumberRaw))
+            {
+              targetIncidentId = Requests.ResolveIncidentIdByIncidentNumber(
+                incidentLookup,
+                incidentNumberRaw
+              );
+            }
+
+            if (string.IsNullOrWhiteSpace(targetIncidentId))
+            {
+              skippedCount++;
+              log.Warn($"Skipped message row {rowNumber} because parent request could not be resolved (incident_id='{incidentIdRaw}', incident_number='{incidentNumberRaw}').");
+              continue;
+            }
+
+            var messageAttributes = Requests.BuildMessageCreateAttributes(row, out var buildError);
+            if (messageAttributes == null)
+            {
+              errorCount++;
+              log.Error($"Failed to process message row {rowNumber} (incident_id='{targetIncidentId}', incident_number='{incidentNumberRaw}'): {buildError}");
+              continue;
+            }
+
+            var messagesWriteResource = $"{requestsResource}/{targetIncidentId}/messages?locale=en";
+            var requestPayload = JsonConvert.SerializeObject(new
+            {
+              data = messageAttributes
+            });
+
+            var response = samedisClient.Post(messagesWriteResource, requestPayload);
+
+            if (samedisClient.StatusCode < 200 || samedisClient.StatusCode >= 300)
+            {
+              errorCount++;
+              log.Error($"Failed to create message (incident_id='{targetIncidentId}', incident_number='{incidentNumberRaw}', status={samedisClient.StatusCode}). Response: {response}");
+              continue;
+            }
+
+            createdCount++;
+            var resultingMessageId = JsonApi.ExtractDataId(response) ?? string.Empty;
+            log.Debug($"Message created (incident_id='{targetIncidentId}', incident_number='{incidentNumberRaw}', id='{resultingMessageId}').");
+
+            // Optional asset attached to this message.
+            if (!hasFilenameColumn)
+              continue;
+
+            var filename = Rows.Value(row, "filename");
+            if (string.IsNullOrWhiteSpace(filename))
+              continue;
+
+            var documentPath = Requests.ResolveRequestDocumentPath(uploadRoot, filename);
+            if (string.IsNullOrWhiteSpace(documentPath))
+            {
+              documentsSkippedCount++;
+              log.Warn($"Skipped asset for message row {rowNumber} because file '{filename}' was not found under {uploadRoot}/request_documents/.");
+              continue;
+            }
+
+            if (string.IsNullOrWhiteSpace(resultingMessageId))
+            {
+              documentsErrorCount++;
+              log.Error($"Asset upload failed because resulting message id is empty (incident_id='{targetIncidentId}', file='{filename}').");
+              continue;
+            }
+
+            var assetResource = $"{requestsResource}/{targetIncidentId}/messages/{resultingMessageId}/uploads";
+            var assetResponse = samedisClient.PostDocument(assetResource, documentPath, Path.GetFileName(documentPath));
+            if (samedisClient.StatusCode >= 200 && samedisClient.StatusCode < 300)
+            {
+              documentsUploadedCount++;
+              log.Debug($"Message asset uploaded (incident_id='{targetIncidentId}', message_id='{resultingMessageId}', file='{Path.GetFileName(documentPath)}').");
+            }
+            else
+            {
+              documentsErrorCount++;
+              log.Error($"Failed to upload message asset (incident_id='{targetIncidentId}', message_id='{resultingMessageId}', file='{Path.GetFileName(documentPath)}', status={samedisClient.StatusCode}). Response: {assetResponse}");
+            }
+          }
+
+          log.Info($"Requests Upload finished (messages). Created: {createdCount}, Skipped: {skippedCount}, Errors: {errorCount}, Assets Uploaded: {documentsUploadedCount}, Assets Skipped: {documentsSkippedCount}, Asset Errors: {documentsErrorCount}");
+        }
+      }
+    }
+    #endregion
+
+    #region DeviceTypes
+    if (!config.Sync.DeviceTypes)
+    {
+      log.Info("Device Types sync disabled in config.yml");
+    }
+    else
+    {
+      var urlResource = scope.Resource("device_types");
+      RequireAccess(log, samedisClient, urlResource);
+
+      var filterBuilder = new FilterBuilder();
+      filterBuilder.Clear();
+      filterBuilder.Add("updated_at", FilterBuilder.FilterType.GreaterThan, FilterBuilder.Type.DateTime, lastRun);
+
+      var requestResource = urlResource + $"?page[number]=1&page[limit]=0&filter[scope]=public_and_tenant&quickfilter=&gridfilter={filterBuilder.Get()}";
+      var response = samedisClient.Get(requestResource);
+      var typelist = string.IsNullOrEmpty(response) ? null : JsonConvert.DeserializeObject<DeviceTypes.Root>(response);
+      var totalRecords = typelist?.Meta?.Total ?? 0;
+      var pages = totalRecords % pageSize != 0 ? totalRecords / pageSize + 1 : totalRecords / pageSize;
+
+      LogListStatus(log, samedisClient, requestResource, totalRecords, pages);
+
+      // get data
+      for (var page = 1; page <= pages; page++)
+      {
+        requestResource = urlResource + $"?page[number]={page}&page[limit]={pageSize}&filter[scope]=public_and_tenant&quickfilter=&gridfilter={filterBuilder.Get()}";
+        response = samedisClient.Get(requestResource);
+        log.Debug($"Page {page}");
+        log.Debug($"Status Code: {samedisClient.StatusCode} {samedisClient.Status}");
+        DeviceTypes.Root? root = null;
+        if (!string.IsNullOrEmpty(response))
+        {
+          root = JsonConvert.DeserializeObject<DeviceTypes.Root>(response);
+        }
+        if (root == null) continue;
+        Helper.ToCsv<DeviceTypes.Root, DeviceTypes.Attributes>(
+          root,
+          Path.Combine(downloadRoot, "devicetypes.csv"),
+          r => (r.Data ?? Enumerable.Empty<DeviceTypes.Data>()).Select(d => d.Attributes!).Where(attr => attr != null)
+        );
+      }
+    }
+    #endregion
+
+    #region DeviceModels
+    if (!config.Sync.DeviceModels)
+    {
+      log.Info("Device Models sync disabled in config.yml");
+    }
+    else
+    {
+      var urlResource = scope.Resource("device_models");
+      RequireAccess(log, samedisClient, urlResource);
+
+      var filterBuilder = new FilterBuilder();
+
+      filterBuilder.Clear();
+      filterBuilder.Add("updated_at", FilterBuilder.FilterType.GreaterThan, FilterBuilder.Type.DateTime, lastRun);
+
+      var requestResource = urlResource + $"?page[number]=1&page[limit]=0&filter[scope]=public_and_tenant&quickfilter=&gridfilter={filterBuilder.Get()}";
+      var response = samedisClient.Get(requestResource);
+      var modellist = string.IsNullOrEmpty(response) ? null : JsonConvert.DeserializeObject<DeviceModels.Root>(response);
+      var totalRecords = modellist?.Meta?.Total ?? 0;
+      var pages = totalRecords % pageSize != 0 ? totalRecords / pageSize + 1 : totalRecords / pageSize;
+
+      LogListStatus(log, samedisClient, requestResource, totalRecords, pages);
+
+      // get data
+      for (var page = 1; page <= pages; page++)
+      {
+        filterBuilder.Clear();
+        //filterBuilder.Add("linked_image_id", FilterBuilder.FilterType.NotEmpty, FilterBuilder.Type.Text);
+        filterBuilder.Add("updated_at", FilterBuilder.FilterType.GreaterThan, FilterBuilder.Type.DateTime, lastRun);
+
+        requestResource = urlResource + $"?page[number]={page}&page[limit]={pageSize}&filter[scope]=public_and_tenant&quickfilter=&gridfilter={filterBuilder.Get()}";
+        requestResource += $"&sort=[{{\"property\":\"device_model_combo_search\",\"direction\":\"ASC\"}}]";
+        response = samedisClient.Get(requestResource);
+        log.Debug($"Page {page}");
+        log.Debug($"Status Code: {samedisClient.StatusCode} {samedisClient.Status}");
+
+        if (string.IsNullOrEmpty(response)) continue;
+        modellist = JsonConvert.DeserializeObject<DeviceModels.Root>(response);
+        //Helper.ToCsv<DeviceModels.Root, DeviceModels.Attributes>(modellist, Path.Combine(downloadRoot, "devicemodels_dump.csv"), r => r.Data.Select(d => d.Attributes));
+
+        if (modellist?.Data != null && modellist.Data.Count > 0)
+        {
+          var dsDm = DeviceModels.CreateDeviceDataSet();
+          var dsC = Contacts.CreateContactDataSet();
+          foreach (var item in modellist.Data)
+          {
+            var attributes = item.Attributes;
+            if (attributes == null) continue;
+            if (attributes.Id == "63e399b904f218000e738670") continue; // ignore "No device model"
+
+            log.Info($"Id: {attributes.Id} ** Title: {attributes.Title} ** Device Type Id: {attributes.DeviceTypeId}");
+
+            // detail to get service intervals and regulatories
+            var detailResponse = samedisClient.Get(urlResource + "/" + attributes.Id);
+            if (!string.IsNullOrEmpty(detailResponse))
+              DeviceModels.FillDeviceDataSet(dsDm, detailResponse);
+
+            var urlManufacturerResource = scope.Resource("contacts");
+            RequireAccess(log, samedisClient, urlManufacturerResource);
+            var manufacturerResponse = samedisClient.Get(urlManufacturerResource + "/" + attributes.ManufacturerCompanyContactId);
+            if (!string.IsNullOrEmpty(manufacturerResponse))
+              Contacts.FillContactDataSet(dsC, manufacturerResponse);
+
+          }
+          Csv.Append(Path.Combine(downloadRoot, "devicemodels.csv"), dsDm.Tables["Devices"]!);
+          Csv.Append(Path.Combine(downloadRoot, "devicemanufacturers.csv"), dsC.Tables["Contacts"]!);
+        }
+      }
+    }
+    #endregion
+
+    #region Departments Download
+    if (!config.Sync.DepartmentsDownload)
+    {
+      log.Info("Departments Download sync disabled in config.yml");
+    }
+    else
+    {
+      var urlResource = scope.Resource("departments");
+      RequireAccess(log, samedisClient, urlResource);
+
+      var filterBuilder = new FilterBuilder();
+      filterBuilder.Clear();
+      filterBuilder.Add("updated_at", FilterBuilder.FilterType.GreaterThan, FilterBuilder.Type.DateTime, lastRun);
+
+      var requestResource = urlResource + $"?page[number]=1&page[limit]=0&quickfilter=&gridfilter={filterBuilder.Get()}";
+      var response = samedisClient.Get(requestResource);
+      var departmentList = string.IsNullOrEmpty(response) ? null : JsonConvert.DeserializeObject<Departments.Root>(response);
+      var totalRecords = departmentList?.Meta?.Total ?? 0;
+      var pages = totalRecords % pageSize != 0 ? totalRecords / pageSize + 1 : totalRecords / pageSize;
+
+      LogListStatus(log, samedisClient, requestResource, totalRecords, pages);
+
+      for (var page = 1; page <= pages; page++)
+      {
+        requestResource = urlResource + $"?page[number]={page}&page[limit]={pageSize}&quickfilter=&gridfilter={filterBuilder.Get()}";
+        response = samedisClient.Get(requestResource);
+        log.Debug($"Page {page}");
+        log.Debug($"Status Code: {samedisClient.StatusCode} {samedisClient.Status}");
+
+        if (string.IsNullOrEmpty(response)) continue;
+        var dDs = Departments.CreateDepartmentDataSet();
+        Departments.FillDepartmentDataSet(dDs, response);
+        Csv.Append(Path.Combine(downloadRoot, "departments.csv"), dDs.Tables["Departments"]!);
+      }
+    }
+    #endregion
+
+    #region Locations Download
+    if (!config.Sync.LocationsDownload)
+    {
+      log.Info("Locations Download sync disabled in config.yml");
+    }
+    else
+    {
+      var urlResource = scope.Resource("device_locations");
+      RequireAccess(log, samedisClient, urlResource);
+
+      var filterBuilder = new FilterBuilder();
+      filterBuilder.Clear();
+      filterBuilder.Add("updated_at", FilterBuilder.FilterType.GreaterThan, FilterBuilder.Type.DateTime, lastRun);
+
+      var requestResource = urlResource + $"?page[number]=1&page[limit]=0&quickfilter=&gridfilter={filterBuilder.Get()}";
+      var response = samedisClient.Get(requestResource);
+      var locationList = string.IsNullOrEmpty(response) ? null : JsonConvert.DeserializeObject<Locations.Root>(response);
+      var totalRecords = locationList?.Meta?.Total ?? 0;
+      var pages = totalRecords % pageSize != 0 ? totalRecords / pageSize + 1 : totalRecords / pageSize;
+
+      LogListStatus(log, samedisClient, requestResource, totalRecords, pages);
+
+      for (var page = 1; page <= pages; page++)
+      {
+        requestResource = urlResource + $"?page[number]={page}&page[limit]={pageSize}&quickfilter=&gridfilter={filterBuilder.Get()}";
+        response = samedisClient.Get(requestResource);
+        log.Debug($"Page {page}");
+        log.Debug($"Status Code: {samedisClient.StatusCode} {samedisClient.Status}");
+
+        if (string.IsNullOrEmpty(response)) continue;
+        var lDs = Locations.CreateLocationDataSet();
+        Locations.FillLocationDataSet(lDs, response);
+        Csv.Append(Path.Combine(downloadRoot, "locations.csv"), lDs.Tables["Locations"]!);
       }
     }
     #endregion
@@ -2810,21 +2257,20 @@ internal class Program
     #region Inventories Download
     if (!config.Sync.InventoriesDownload)
     {
-      helper.Message("Inventories Download sync disabled in config.yml", 1);
+      log.Info("Inventories Download sync disabled in config.yml");
     }
     else
     {
-      var urlResource = $"/api/{samedisApiVersion}/tenants/{samedisTenantId}/inventories";
-      var locationsResource = $"/api/{samedisApiVersion}/tenants/{samedisTenantId}/device_locations";
-      var floorsResource = $"/api/{samedisApiVersion}/tenants/{samedisTenantId}/floors";
-      //urlResource = $"/api/{samedisApiVersion}/enterprise/tenants/{samedisTenantId}/inventories";
+      var urlResource = scope.Resource("inventories");
+      var locationsResource = scope.Resource("device_locations");
+      var floorsResource = scope.Resource("floors");
 
-      helper.Message($"Using resource: {urlResource}", 1);
-      helper.CanDo(samedisClient, urlResource);
+      log.Info($"Using resource: {urlResource}");
+      RequireAccess(log, samedisClient, urlResource);
       if (useExtendedDeviceLocations)
       {
-        helper.CanDo(samedisClient, locationsResource);
-        helper.CanDo(samedisClient, floorsResource);
+        RequireAccess(log, samedisClient, locationsResource);
+        RequireAccess(log, samedisClient, floorsResource);
       }
 
       var filterBuilder = new FilterBuilder();
@@ -2846,11 +2292,7 @@ internal class Program
         var locationResponse = samedisClient.Get(locationsResource + "/" + Uri.EscapeDataString(deviceLocationId));
         if (samedisClient.StatusCode != 200 || string.IsNullOrWhiteSpace(locationResponse))
         {
-          helper.Message(
-            $"Property mode export: failed room lookup for source_location_id fallback (inventory_id='{inventoryId}', location_id='{deviceLocationId}', status={samedisClient.StatusCode} {samedisClient.Status}).",
-            1,
-            "WARN"
-          );
+          log.Warn($"Property mode export: failed room lookup for source_location_id fallback (inventory_id='{inventoryId}', location_id='{deviceLocationId}', status={samedisClient.StatusCode} {samedisClient.Status}).");
           sourceLocationByLocationId[deviceLocationId] = emptyResult;
           return emptyResult;
         }
@@ -2887,11 +2329,7 @@ internal class Program
           }
           else
           {
-            helper.Message(
-              $"Property mode export: failed floor lookup for source_location_id fallback (inventory_id='{inventoryId}', floor_id='{floorId}', status={samedisClient.StatusCode} {samedisClient.Status}).",
-              1,
-              "WARN"
-            );
+            log.Warn($"Property mode export: failed floor lookup for source_location_id fallback (inventory_id='{inventoryId}', floor_id='{floorId}', status={samedisClient.StatusCode} {samedisClient.Status}).");
           }
 
           floorExternalIdByFloorId[floorId] = floorExternalId;
@@ -2915,7 +2353,7 @@ internal class Program
       var totalRecords = inventoryList?.Meta?.Total ?? 0;
       var pages = totalRecords % pageSize != 0 ? totalRecords / pageSize + 1 : totalRecords / pageSize;
 
-      helper.LogListStatus(samedisClient, requestResource, totalRecords, pages);
+      LogListStatus(log, samedisClient, requestResource, totalRecords, pages);
 
       // get data
       for (var page = 1; page <= pages; page++)
@@ -2923,8 +2361,8 @@ internal class Program
         requestResource = urlResource + $"?page[number]={page}&page[limit]={pageSize}&filter[scope]=public_and_tenant&quickfilter=&gridfilter={filterBuilder.Get()}";
         requestResource += $"&sort=[{{\"property\":\"device_model_combo_search\",\"direction\":\"ASC\"}}]";
         response = samedisClient.Get(requestResource);
-        helper.Message($"Page {page}", 2);
-        helper.Message($"Status Code: {samedisClient.StatusCode} {samedisClient.Status}", 2);
+        log.Debug($"Page {page}");
+        log.Debug($"Status Code: {samedisClient.StatusCode} {samedisClient.Status}");
 
         if (string.IsNullOrEmpty(response)) continue;
         inventoryList = JsonConvert.DeserializeObject<Inventories.Root>(response);
@@ -2937,7 +2375,7 @@ internal class Program
           {
             var attributes = item.Attributes;
             if (attributes == null) continue;
-            helper.Message($"Id: {attributes.Id} ** Inventory Nr: {attributes.DeviceNumber} ** Device Model: {attributes.DeviceModelTitle}");
+            log.Info($"Id: {attributes.Id} ** Inventory Nr: {attributes.DeviceNumber} ** Device Model: {attributes.DeviceModelTitle}");
 
             // detail to get service intervals and regulatories
             var detailResponse = samedisClient.Get(urlResource + "/" + attributes.Id);
@@ -2945,11 +2383,289 @@ internal class Program
               Inventories.FillInventoryDataSet(
                 iDs,
                 detailResponse,
+                numberFormat,
                 includeSourceLocationDetails ? ResolveSourceLocationForExport : null
               );
 
           }
-          Helper.ExportDataSetToCsv(iDs, Path.Combine(downloadRoot, "inventories.csv"), "Inventories");
+          Csv.Append(Path.Combine(downloadRoot, "inventories.csv"), iDs.Tables["Inventories"]!);
+        }
+      }
+    }
+    #endregion
+
+    #region Tasks Download
+    // Document downloads retry up to 5 times on HTTP 202 (document generation pending)
+    if (!config.Sync.TasksDownload)
+    {
+      log.Info("Tasks Download sync disabled in config.yml");
+    }
+    else
+    {
+      log.Info("Tasks Download sync starting.");
+      var urlResource = scope.Resource("issues");
+      RequireAccess(log, samedisClient, urlResource);
+
+      var filterBuilder = new FilterBuilder();
+      filterBuilder.Clear();
+      filterBuilder.Add("updated_at", FilterBuilder.FilterType.GreaterThan, FilterBuilder.Type.DateTime, lastRun);
+
+      var taskDownloadTypes = config.Sync.TaskDownloadTypes ?? string.Empty;
+      var taskDownloadStatus = config.Sync.TaskDownloadStatus ?? string.Empty;
+      var taskTypeFilter = $"&filter[issue_type]={taskDownloadTypes}";
+      var archiveFilter = $"&filter[archive]={config.Sync.TaskArchiveFilter.ToString().ToLower()}";
+      var statusFilter = $"&filter[status]={taskDownloadStatus}";
+
+      var requestResource = urlResource + $"?page[number]=1&page[limit]=0&quickfilter=&gridfilter={filterBuilder.Get()}{archiveFilter}{taskTypeFilter}{statusFilter}";
+      var response = samedisClient.Get(requestResource);
+      var taskList = string.IsNullOrEmpty(response) ? null : JsonConvert.DeserializeObject<Tasks.Root>(response);
+      var totalRecords = taskList?.Meta?.Total ?? 0;
+      var pages = totalRecords % pageSize != 0 ? totalRecords / pageSize + 1 : totalRecords / pageSize;
+
+      LogListStatus(log, samedisClient, requestResource, totalRecords, pages);
+
+      for (var page = 1; page <= pages; page++)
+      {
+        requestResource = urlResource + $"?page[number]={page}&page[limit]={pageSize}&quickfilter=&gridfilter={filterBuilder.Get()}{archiveFilter}{taskTypeFilter}{statusFilter}";
+        response = samedisClient.Get(requestResource);
+        log.Debug($"Page {page}");
+        log.Debug($"Status Code: {samedisClient.StatusCode} {samedisClient.Status}");
+
+        if (string.IsNullOrEmpty(response)) continue;
+        var taskRoot = JsonConvert.DeserializeObject<Tasks.Root>(response);
+        var tDs = Tasks.CreateTaskDataSet();
+        Tasks.FillTaskDataSet(tDs, response);
+        Csv.Append(Path.Combine(downloadRoot, "tasks.csv"), tDs.Tables["Tasks"]!);
+
+        if (taskRoot?.Data == null || taskRoot.Data.Count == 0)
+          continue;
+
+        var documentsRoot = Path.Combine(downloadRoot, "task_documents");
+        Directory.CreateDirectory(documentsRoot);
+
+        foreach (var task in taskRoot.Data)
+        {
+          var attr = task.Attributes;
+          var taskId = attr?.Id ?? task.Id;
+          if (string.IsNullOrEmpty(taskId)) continue;
+
+          var inventoryDeviceNumber = attr?.InventoryDeviceNumber ?? "unknown";
+          var issueNumber = attr?.IssueNumber?.ToString() ?? taskId;
+          var dateIso = Dates.ToIsoDate(attr?.Date, attr?.DoneAt, attr?.UpdatedAt, attr?.CreatedAt) ?? DateTime.Now.ToString("yyyy-MM-dd");
+
+          var docRequest = $"{urlResource}/{taskId}/uploads?page[number]=1&page[limit]={pageSize}&quickfilter=&gridfilter={{}}";
+          var docResponse = samedisClient.Get(docRequest);
+          Tasks.TaskDocuments.Root? docRoot = string.IsNullOrEmpty(docResponse) ? null : JsonConvert.DeserializeObject<Tasks.TaskDocuments.Root>(docResponse);
+          var docTotal = docRoot?.Meta?.Total ?? 0;
+          var docPages = docTotal % pageSize != 0 ? docTotal / pageSize + 1 : docTotal / pageSize;
+
+          for (var docPage = 1; docPage <= Math.Max(1, docPages); docPage++)
+          {
+            if (docPage > 1)
+            {
+              docRequest = $"{urlResource}/{taskId}/uploads?page[number]={docPage}&page[limit]={pageSize}&quickfilter=&gridfilter={{}}";
+              docResponse = samedisClient.Get(docRequest);
+              docRoot = string.IsNullOrEmpty(docResponse) ? null : JsonConvert.DeserializeObject<Tasks.TaskDocuments.Root>(docResponse);
+            }
+
+            if (docRoot?.Data == null || docRoot.Data.Count == 0)
+              continue;
+
+            var multipleDocs = docRoot.Data.Count > 1 || docTotal > 1;
+
+            foreach (var doc in docRoot.Data)
+            {
+              var docUrl = doc.Links?.Document;
+              if (string.IsNullOrEmpty(docUrl)) continue;
+
+              var ext = Files.Extension(doc.Attributes?.Name, doc.Attributes?.MimeType, docUrl, ".pdf");
+              var safeTaskId = Strings.SanitizeFileName(issueNumber);
+              var safeInventoryId = Strings.SanitizeFileName(inventoryDeviceNumber);
+              var fileName = $"task_{safeTaskId}_inventory_{safeInventoryId}_{dateIso}";
+              if (multipleDocs && !string.IsNullOrEmpty(doc.Id))
+                fileName += $"_doc_{Strings.SanitizeFileName(doc.Id)}";
+              fileName += ext;
+
+              var outputPath = Path.Combine(documentsRoot, fileName);
+              if (File.Exists(outputPath)) continue;
+
+              try
+              {
+                var downloaded = samedisClient.DownloadAsync(docUrl, outputPath).GetAwaiter().GetResult();
+                if (downloaded)
+                  log.Debug($"Downloaded task document: {fileName}");
+                else
+                  log.Warn($"Task document not ready after retries for task {taskId}: {fileName}");
+              }
+              catch (Exception ex)
+              {
+                log.Error($"Failed to download task document for task {taskId}: {ex.Message}");
+              }
+            }
+          }
+
+          var detailResponse = samedisClient.Get(urlResource + "/" + taskId);
+          if (string.IsNullOrEmpty(detailResponse))
+            continue;
+
+          var detailRoot = JsonConvert.DeserializeObject<Tasks.Root>(detailResponse);
+          var detailAttr = detailRoot?.Data?.FirstOrDefault()?.Attributes;
+          var protocolUrl = detailAttr?.TestProtocolUrl;
+
+          if (!string.IsNullOrEmpty(protocolUrl))
+          {
+            var protocolExt = Files.Extension(null, "application/pdf", protocolUrl, ".pdf");
+            var safeTaskId = Strings.SanitizeFileName(issueNumber);
+            var safeInventoryId = Strings.SanitizeFileName(inventoryDeviceNumber);
+            var protocolFileName = $"task_{safeTaskId}_inventory_{safeInventoryId}_{dateIso}_protocol{protocolExt}";
+            var protocolPath = Path.Combine(documentsRoot, protocolFileName);
+
+            if (!File.Exists(protocolPath))
+            {
+              try
+              {
+                var downloaded = samedisClient.DownloadAsync(protocolUrl, protocolPath).GetAwaiter().GetResult();
+                if (downloaded)
+                  log.Debug($"Downloaded task protocol: {protocolFileName}");
+                else
+                  log.Warn($"Task protocol not ready after retries for task {taskId}: {protocolFileName}");
+              }
+              catch (Exception ex)
+              {
+                log.Error($"Failed to download task protocol for task {taskId}: {ex.Message}");
+              }
+            }
+          }
+        }
+      }
+    }
+    #endregion
+
+    #region Requests Download
+    if (!config.Sync.RequestsDownload)
+    {
+      log.Info("Requests Download sync disabled in config.yml");
+    }
+    else
+    {
+      log.Info("Requests Download sync starting.");
+      var urlResource = scope.Resource("incidents");
+      RequireAccess(log, samedisClient, urlResource);
+
+      var filterBuilder = new FilterBuilder();
+      filterBuilder.Clear();
+      filterBuilder.Add("updated_at", FilterBuilder.FilterType.GreaterThan, FilterBuilder.Type.DateTime, lastRun);
+
+      var requestResource = urlResource + $"?page[number]=1&page[limit]=0&quickfilter=&gridfilter={filterBuilder.Get()}";
+      var response = samedisClient.Get(requestResource);
+      var requestList = string.IsNullOrEmpty(response) ? null : JsonConvert.DeserializeObject<Requests.Root>(response);
+      var totalRecords = requestList?.Meta?.Total ?? 0;
+      var pages = totalRecords % pageSize != 0 ? totalRecords / pageSize + 1 : totalRecords / pageSize;
+
+      LogListStatus(log, samedisClient, requestResource, totalRecords, pages);
+
+      for (var page = 1; page <= pages; page++)
+      {
+        requestResource = urlResource + $"?page[number]={page}&page[limit]={pageSize}&quickfilter=&gridfilter={filterBuilder.Get()}";
+        response = samedisClient.Get(requestResource);
+        log.Debug($"Page {page}");
+        log.Debug($"Status Code: {samedisClient.StatusCode} {samedisClient.Status}");
+        if (samedisClient.StatusCode >= 400)
+          log.Error($"Request URI: {requestResource}");
+
+
+        if (string.IsNullOrEmpty(response)) continue;
+        var requestRoot = JsonConvert.DeserializeObject<Requests.Root>(response);
+        var rDs = Requests.CreateRequestDataSet();
+        Requests.FillRequestDataSet(rDs, response, samedisTenantId, config.Samedis.WebUri);
+        Csv.Append(Path.Combine(downloadRoot, "requests.csv"), rDs.Tables["Requests"]!);
+
+        if (requestRoot?.Data == null || requestRoot.Data.Count == 0)
+          continue;
+
+        var requestDocumentsRoot = Path.Combine(downloadRoot, "request_documents");
+        Directory.CreateDirectory(requestDocumentsRoot);
+
+        foreach (var request in requestRoot.Data)
+        {
+          var rAttr = request.Attributes;
+          var requestId = rAttr?.Id ?? request.Id;
+          if (string.IsNullOrEmpty(requestId)) continue;
+
+          var incidentNumber = rAttr?.IncidentNumber?.ToString() ?? requestId;
+          var safeIncident = Strings.SanitizeFileName(incidentNumber);
+          var dateIso = Dates.ToIsoDate(rAttr?.UpdatedAt, rAttr?.CreatedAt) ?? DateTime.Now.ToString("yyyy-MM-dd");
+
+          // Messages
+          var msgRequest = $"{urlResource}/{requestId}/messages?page[number]=1&page[limit]={pageSize}&quickfilter=&gridfilter={{}}";
+          var msgResponse = samedisClient.Get(msgRequest);
+          var msgRoot = string.IsNullOrEmpty(msgResponse) ? null : JsonConvert.DeserializeObject<Requests.RequestMessages.Root>(msgResponse);
+          var msgTotal = msgRoot?.Meta?.Total ?? 0;
+          var msgPages = msgTotal % pageSize != 0 ? msgTotal / pageSize + 1 : msgTotal / pageSize;
+
+          for (var msgPage = 1; msgPage <= Math.Max(1, msgPages); msgPage++)
+          {
+            if (msgPage > 1)
+            {
+              msgRequest = $"{urlResource}/{requestId}/messages?page[number]={msgPage}&page[limit]={pageSize}&quickfilter=&gridfilter={{}}";
+              msgResponse = samedisClient.Get(msgRequest);
+            }
+            if (string.IsNullOrEmpty(msgResponse)) continue;
+            var rmDs = Requests.CreateRequestMessageDataSet();
+            Requests.FillRequestMessageDataSet(rmDs, msgResponse, requestId, incidentNumber);
+            Csv.Append(Path.Combine(downloadRoot, "request-messages.csv"), rmDs.Tables["RequestMessages"]!);
+          }
+
+          // Uploads / assets attached to the request (and its messages)
+          var docRequest = $"{urlResource}/{requestId}/uploads?page[number]=1&page[limit]={pageSize}&quickfilter=&gridfilter={{}}";
+          var docResponse = samedisClient.Get(docRequest);
+          Requests.RequestUploads.Root? docRoot = string.IsNullOrEmpty(docResponse) ? null : JsonConvert.DeserializeObject<Requests.RequestUploads.Root>(docResponse);
+          var docTotal = docRoot?.Meta?.Total ?? 0;
+          var docPages = docTotal % pageSize != 0 ? docTotal / pageSize + 1 : docTotal / pageSize;
+
+          for (var docPage = 1; docPage <= Math.Max(1, docPages); docPage++)
+          {
+            if (docPage > 1)
+            {
+              docRequest = $"{urlResource}/{requestId}/uploads?page[number]={docPage}&page[limit]={pageSize}&quickfilter=&gridfilter={{}}";
+              docResponse = samedisClient.Get(docRequest);
+              docRoot = string.IsNullOrEmpty(docResponse) ? null : JsonConvert.DeserializeObject<Requests.RequestUploads.Root>(docResponse);
+            }
+
+            if (docRoot?.Data == null || docRoot.Data.Count == 0)
+              continue;
+
+            foreach (var doc in docRoot.Data)
+            {
+              var docUrl = doc.Links?.Document;
+              if (string.IsNullOrEmpty(docUrl)) continue;
+
+              var ext = Files.Extension(doc.Attributes?.Name, doc.Attributes?.MimeType, docUrl, ".pdf");
+              var fileName = $"request_{safeIncident}_{dateIso}";
+              var messageId = doc.Attributes?.MessageId;
+              if (!string.IsNullOrEmpty(messageId))
+                fileName += $"_msg_{Strings.SanitizeFileName(messageId)}";
+              if (!string.IsNullOrEmpty(doc.Id))
+                fileName += $"_doc_{Strings.SanitizeFileName(doc.Id)}";
+              fileName += ext;
+
+              var outputPath = Path.Combine(requestDocumentsRoot, fileName);
+              if (File.Exists(outputPath)) continue;
+
+              try
+              {
+                var downloaded = samedisClient.DownloadAsync(docUrl, outputPath).GetAwaiter().GetResult();
+                if (downloaded)
+                  log.Debug($"Downloaded request document: {fileName}");
+                else
+                  log.Warn($"Request document not ready after retries for request {requestId}: {fileName}");
+              }
+              catch (Exception ex)
+              {
+                log.Error($"Failed to download request document for request {requestId}: {ex.Message}");
+              }
+            }
+          }
         }
       }
     }
@@ -2957,10 +2673,43 @@ internal class Program
 
     if (config.Sync.ArchiveToSamedisCsvFiles)
     {
-      helper.ArchiveUploadCsvFiles(uploadRoot, config.Sync.InventoriesUpload);
+      Helper.ArchiveUploadCsvFiles(log, uploadRoot, config.Sync.InventoriesUpload);
     }
 
     File.WriteAllText(lastRunFilePath, syncStartTime.ToString(lastRunFormat, CultureInfo.InvariantCulture));
-    helper.Message("Sync finised.", 1);
+    log.Info("Sync finised.");
+
+
   }
+
+    /// <summary>Logs the message as an error and stops the run.</summary>
+    private static void Abort(ISyncLog log, string message)
+    {
+      log.Error(message);
+      Environment.Exit(1);
+    }
+
+    /// <summary>
+    /// Stops the run unless the authenticated user may read the resource.
+    /// </summary>
+    /// <remarks>
+    /// Replaces Helper.CanDo, which deserialized an unrelated resource model just to reach
+    /// meta.msg.message and called Environment.Exit from inside a helper class.
+    /// </remarks>
+    private static void RequireAccess(ISyncLog log, RequestData client, string resource)
+    {
+      var result = Capability.Probe(client, resource);
+      if (!result.Allowed)
+        Abort(log, $"Sync stopped. {result.StatusCode} {result.Message} for {resource}");
+    }
+
+    /// <summary>Logs the outcome of a list request: status, record count and page count.</summary>
+    private static void LogListStatus(ISyncLog log, RequestData client, string requestResource,
+                                     int totalRecords, int pages)
+    {
+      log.Debug($"Status Code: {client.StatusCode} {client.Status}");
+      if (client.StatusCode >= 400)
+        log.Error($"Request URI: {requestResource}");
+      log.Debug($"Total: {totalRecords} Pages: {pages}");
+    }
 }

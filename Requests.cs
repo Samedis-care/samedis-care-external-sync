@@ -141,7 +141,7 @@ namespace SamedisExternalSync
       public class Root
       {
         [JsonProperty("data")]
-        [JsonConverter(typeof(Helper.SingleOrArrayConverter<Data>))]
+        [JsonConverter(typeof(JsonApi.SingleOrArrayConverter<Data>))]
         public List<Data>? Data { get; set; }
 
         [JsonProperty("meta")]
@@ -259,7 +259,7 @@ namespace SamedisExternalSync
       public class Root
       {
         [JsonProperty("data")]
-        [JsonConverter(typeof(Helper.SingleOrArrayConverter<Data>))]
+        [JsonConverter(typeof(JsonApi.SingleOrArrayConverter<Data>))]
         public List<Data>? Data { get; set; }
 
         [JsonProperty("meta")]
@@ -450,7 +450,7 @@ namespace SamedisExternalSync
     public class Root
     {
       [JsonProperty("data")]
-      [JsonConverter(typeof(Helper.SingleOrArrayConverter<Data>))]
+      [JsonConverter(typeof(JsonApi.SingleOrArrayConverter<Data>))]
       public List<Data>? Data { get; set; }
 
       [JsonProperty("meta")]
@@ -641,41 +641,6 @@ namespace SamedisExternalSync
         table.Rows.Add(row);
       }
     }
-
-    public static string ResolveIncidentIdByIncidentNumber(
-      RequestData samedisClient,
-      string incidentsResource,
-      string incidentNumber,
-      IDictionary<string, string> incidentByIncidentNumber)
-    {
-      if (string.IsNullOrWhiteSpace(incidentNumber))
-        return string.Empty;
-
-      var normalizedIncidentNumber = incidentNumber.Trim();
-      if (incidentByIncidentNumber.TryGetValue(normalizedIncidentNumber, out var cachedIncidentId))
-        return cachedIncidentId;
-
-      var filterBuilder = new FilterBuilder();
-      filterBuilder.Clear();
-      if (Helper.TryParseInt(normalizedIncidentNumber, out var incidentNumberAsInt))
-        filterBuilder.Add("incident_number", FilterBuilder.FilterType.Equals, FilterBuilder.Type.Number, incidentNumberAsInt);
-      else
-        filterBuilder.Add("incident_number", FilterBuilder.FilterType.Equals, FilterBuilder.Type.Text, normalizedIncidentNumber);
-
-      var requestResource = incidentsResource + $"?page[number]=1&page[limit]=1&quickfilter=&gridfilter={filterBuilder.Get()}";
-      var response = samedisClient.Get(requestResource);
-
-      if (samedisClient.StatusCode >= 200 && samedisClient.StatusCode < 300)
-      {
-        var resolvedIncidentId = Helper.ExtractDataId(response) ?? string.Empty;
-        incidentByIncidentNumber[normalizedIncidentNumber] = resolvedIncidentId;
-        return resolvedIncidentId;
-      }
-
-      incidentByIncidentNumber[normalizedIncidentNumber] = string.Empty;
-      return string.Empty;
-    }
-
     public static Dictionary<string, object>? BuildRequestUpdateAttributes(
       DataRow row,
       out string errorMessage,
@@ -689,7 +654,7 @@ namespace SamedisExternalSync
 
       var attributes = new Dictionary<string, object>();
 
-      var statusRaw = Helper.GetRowValue(row, "status");
+      var statusRaw = Rows.Value(row, "status");
       if (!string.IsNullOrWhiteSpace(statusRaw))
       {
         var normalizedStatus = statusRaw.Trim().ToLowerInvariant();
@@ -703,26 +668,26 @@ namespace SamedisExternalSync
 
       // responsible_id: prefer the value resolved from responsible_email via the inventory's
       // incident supporters, otherwise fall back to a value supplied directly in the CSV.
-      Helper.AddStringAttribute(attributes, "responsible_id",
+      JsonApi.AddStringAttribute(attributes, "responsible_id",
         !string.IsNullOrWhiteSpace(resolvedResponsibleId)
           ? resolvedResponsibleId
-          : Helper.GetRowValue(row, "responsible_id"));
+          : Rows.Value(row, "responsible_id"));
       // responsible_type accompanies responsible_id because a supporter may be a staff
       // member, an internal contact, or an external contact (enterprise tenant).
-      Helper.AddStringAttribute(attributes, "responsible_type",
+      JsonApi.AddStringAttribute(attributes, "responsible_type",
         !string.IsNullOrWhiteSpace(resolvedResponsibleType)
           ? resolvedResponsibleType
-          : Helper.GetRowValue(row, "responsible_type"));
-      Helper.AddStringAttribute(attributes, "responsible_user_id", Helper.GetRowValue(row, "responsible_user_id"));
-      Helper.AddStringAttribute(attributes, "external_id", Helper.GetRowValue(row, "external_id"));
-      Helper.AddStringAttribute(attributes, "inventory_operation_status", Helper.GetRowValue(row, "inventory_operation_status"));
+          : Rows.Value(row, "responsible_type"));
+      JsonApi.AddStringAttribute(attributes, "responsible_user_id", Rows.Value(row, "responsible_user_id"));
+      JsonApi.AddStringAttribute(attributes, "external_id", Rows.Value(row, "external_id"));
+      JsonApi.AddStringAttribute(attributes, "inventory_operation_status", Rows.Value(row, "inventory_operation_status"));
       // inventory_id: resolved from samedis inventory id or inventory_device_number lookup.
-      Helper.AddStringAttribute(attributes, "inventory_id", resolvedInventoryId ?? "");
+      JsonApi.AddStringAttribute(attributes, "inventory_id", resolvedInventoryId ?? "");
 
-      var needsTransportRaw = Helper.GetRowValue(row, "needs_transport");
+      var needsTransportRaw = Rows.Value(row, "needs_transport");
       if (!string.IsNullOrWhiteSpace(needsTransportRaw))
       {
-        if (Helper.TryParseBool(needsTransportRaw, out var needsTransport))
+        if (Strings.TryParseBool(needsTransportRaw, out var needsTransport))
         {
           attributes["needs_transport"] = needsTransport;
         }
@@ -744,7 +709,7 @@ namespace SamedisExternalSync
       out string errorMessage)
     {
       errorMessage = string.Empty;
-      var content = Helper.GetRowValue(row, "content");
+      var content = Rows.Value(row, "content");
       if (string.IsNullOrWhiteSpace(content))
       {
         errorMessage = "content is empty.";
@@ -792,5 +757,29 @@ namespace SamedisExternalSync
 
       return string.Empty;
     }
+    /// <summary>
+    /// Resolves an incident by its number.
+    /// </summary>
+    /// <remarks>
+    /// The number is filtered as a number when it parses as one and as text otherwise: the
+    /// server rejects a text filter on a numeric field and vice versa, and source exports are
+    /// not consistent about which they write.
+    /// </remarks>
+    public static string ResolveIncidentIdByIncidentNumber(
+      ResourceLookup lookup,
+      string incidentNumber)
+    {
+      if (string.IsNullOrWhiteSpace(incidentNumber))
+        return string.Empty;
+
+      var normalized = incidentNumber.Trim();
+      var condition = Strings.TryParseInt(normalized, out var asNumber)
+        ? new Condition("incident_number", FilterBuilder.FilterType.Equals, FilterBuilder.Type.Number, asNumber)
+        : new Condition("incident_number", FilterBuilder.FilterType.Equals, FilterBuilder.Type.Text, normalized);
+
+      return lookup.ByConditions(new[] { condition }) ?? string.Empty;
+    }
+
+
   }
 }
