@@ -385,6 +385,7 @@ Depending on enabled sync flags, these files are generated in `<paths.from_samed
 - `devicemodels.csv`
 - `devicemanufacturers.csv`
 - `inventories.csv`
+- `device_model_merges.csv` (only with the inventory upload enabled)
 - `task_documents/*` (task documents and protocol files)
 
 Requests download note:
@@ -408,7 +409,27 @@ Device model download note (`devicemodels.csv`):
   before a merge: the merge hard-destroys the model that was merged away, so its id stops
   resolving on its own and only shows up here. The column is filled from the per-model
   detail request the export already makes — the paged list does not carry the field.
+  Note that this column only travels on a **full** export: a merge does not bump the
+  surviving model's `updated_at`, so the incremental download filtered by
+  `updated_at > lastRun` skips it. For the actual merge notification see
+  `device_model_merges.csv` below.
   See [samedis-care-issues#2347](https://github.com/Samedis-care/samedis-care-issues/issues/2347).
+
+Device model merge report (`device_model_merges.csv`):
+- One row per device model the source system references that samedis has since merged away,
+  with the id it sent, the id that is valid today, both titles and how many inventory rows of
+  this run carried the historic id.
+- **This is the only channel that reports a merge.** `devicemodels.csv` cannot: a merge
+  records `merged_catalog_ids` with an atomic `add_to_set` and never touches `updated_at`, so
+  the surviving model does not appear in the incremental device model download at all.
+- Written on every run of the inventory upload, header row and all, so "no merges" stays
+  distinguishable from "the sync did not get this far".
+- One row per **model**, not per device: the source system has to correct its stored
+  reference once. `affected_inventories` shows how much is behind it.
+- No state is kept between runs. While the source still sends a historic id, the next run
+  resolves it again and reports it again — a file nobody read loses nothing.
+- Only ids that actually appear in this run's rows are found. A stale reference on a device
+  type with no devices in the export stays unnoticed until one shows up.
 
 Inventory download note:
 - In tenant property mode (`use_extended_device_locations=true`), `inventories.csv` includes `source_location_id`.

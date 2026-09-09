@@ -27,6 +27,26 @@ public class MergedCatalogTests
     private static (int, string) Found(string id) => (200, $"{{\"data\":[{{\"id\":\"{id}\"}}],\"meta\":{{\"total\":1}}}}");
     private static (int, string) NotFound() => (404, "{\"meta\":{\"msg\":{\"success\":false,\"error\":\"record_not_found_error\"}}}");
 
+    /// <summary>
+    /// One body that serves both reads of the surviving model: ById takes data[0].id, the
+    /// merge report takes data[0].attributes.
+    /// </summary>
+    private static (int, string) SurvivorDetail(string title = "Perfusor Space", string maker = "B. Braun")
+        => (200, $@"{{""data"":[{{""id"":""{Survivor}"",""attributes"":{{
+               ""id"":""{Survivor}"",""title"":""{title}"",
+               ""manufacturer_according_to_type_plate"":""{maker}""}}}}],""meta"":{{""total"":1}}}}");
+
+    /// <summary>
+    /// A merged model, as the two reads see it: asking for the historic id answers with the
+    /// survivor (that is the server's merge fallback), asking for the survivor answers with
+    /// its attributes.
+    /// </summary>
+    private static FakeApiWithWrites MergedApi()
+        => new(get: url => url.Contains(Historic) ? Found(Survivor)
+                         : url.Contains(Survivor) ? SurvivorDetail()
+                         : NotFound(),
+               post: _ => throw new NotSupportedException());
+
     private static DeviceModels.InventoryCatalogContext Context(IApiClient api, ISyncLog log,
                                                                 bool mayCreate = true)
         => new(api, TenantId,
@@ -260,5 +280,109 @@ public class MergedCatalogTests
         }}}}]}}");
 
         ds.Tables["Devices"]!.Rows[0]["merged_catalog_ids"].Should().Be("");
+    }
+
+    // ------------------------------------------------------------------- the merge report
+
+    // The download cannot carry this: a merge writes merged_catalog_ids with an atomic
+    // add_to_set and never touches updated_at, so the surviving model never turns up in the
+    // incremental devicemodels.csv. Only the ids the source itself sends reveal a merge.
+    [Fact]
+    public void A_remap_is_reported_with_both_titles()
+    {
+        var api = MergedApi();
+        var ctx = Context(api, new NullSyncLog());
+
+        Resolve(ctx, sourceCatalogId: Historic, title: "Perfusor-Space");
+
+        var remap = ctx.Remaps.Values.Should().ContainSingle().Subject;
+        remap.OldCatalogId.Should().Be(Historic);
+        remap.CatalogId.Should().Be(Survivor);
+        remap.SourceDeviceModelTitle.Should().Be("Perfusor-Space");
+        remap.DeviceModelTitle.Should().Be("Perfusor Space");
+        remap.Manufacturer.Should().Be("B. Braun");
+        remap.AffectedInventories.Should().Be(1);
+    }
+
+    // One row per model, not per device -- the source system has to correct its reference
+    // once. The device count is what tells an operator how much is behind it.
+    [Fact]
+    public void Many_devices_of_one_merged_model_make_one_row_with_a_count()
+    {
+        var api = MergedApi();
+        var ctx = Context(api, new NullSyncLog());
+
+        Resolve(ctx, sourceCatalogId: Historic);
+        Resolve(ctx, sourceCatalogId: Historic);
+        Resolve(ctx, sourceCatalogId: Historic);
+
+        ctx.Remaps.Should().ContainSingle();
+        ctx.Remaps[Historic].AffectedInventories.Should().Be(3);
+    }
+
+    // The name is a courtesy; the id pair is the payload. Losing the mapping because the
+    // second read failed would defeat the whole file.
+    [Fact]
+    public void A_remap_is_still_reported_when_the_survivors_name_cannot_be_read()
+    {
+        var api = new FakeApiWithWrites(
+            get: url => url.Contains(Historic) ? Found(Survivor)
+               : url.Contains(Survivor) ? (500, "{}")
+               : NotFound(),
+            post: _ => throw new NotSupportedException());
+        var ctx = Context(api, new NullSyncLog());
+
+        Resolve(ctx, sourceCatalogId: Historic);
+
+        var remap = ctx.Remaps.Values.Should().ContainSingle().Subject;
+        remap.CatalogId.Should().Be(Survivor);
+        remap.DeviceModelTitle.Should().BeEmpty();
+    }
+
+    [Fact]
+    public void A_live_catalog_id_is_not_reported_as_a_merge()
+    {
+        var api = new FakeApiWithWrites(
+            get: url => url.Contains(Survivor) ? Found(Survivor) : NotFound(),
+            post: _ => throw new NotSupportedException());
+        var ctx = Context(api, new NullSyncLog());
+
+        Resolve(ctx, sourceCatalogId: Survivor);
+
+        ctx.Remaps.Should().BeEmpty();
+    }
+
+    // The row has to line up with the header, or the file is worse than none.
+    [Fact]
+    public void The_report_row_follows_the_header_order()
+    {
+        var api = MergedApi();
+        var ctx = Context(api, new NullSyncLog());
+
+        Resolve(ctx, sourceCatalogId: Historic, title: "Perfusor-Space");
+
+        var row = DeviceModels.MergeReportRows(ctx.Remaps.Values).Should().ContainSingle().Subject;
+        row.Should().HaveCount(DeviceModels.MergeReportHeaders.Length);
+
+        var byName = DeviceModels.MergeReportHeaders
+            .Select((h, i) => (h, v: row[i]))
+            .ToDictionary(x => x.h, x => x.v);
+
+        byName["old_catalog_id"].Should().Be(Historic);
+        byName["catalog_id"].Should().Be(Survivor);
+        byName["source_device_model_title"].Should().Be("Perfusor-Space");
+        byName["device_model_title"].Should().Be("Perfusor Space");
+        byName["affected_inventories"].Should().Be("1");
+        byName["detected_at"].Should().NotBeEmpty();
+    }
+
+    // A run without merges still writes the file -- Csv.Write emits the header for an empty
+    // row set -- so "nothing was merged" cannot be mistaken for "the sync never got here".
+    [Fact]
+    public void A_run_without_merges_reports_no_rows()
+    {
+        DeviceModels.MergeReportRows(Array.Empty<DeviceModels.MergedCatalogRemap>())
+            .Should().BeEmpty();
+        DeviceModels.MergeReportHeaders.Should().NotBeEmpty();
     }
 }

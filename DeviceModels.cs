@@ -1,4 +1,5 @@
 using System.Data;
+using System.Globalization;
 using System.Reflection;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
@@ -7,6 +8,56 @@ namespace SamedisExternalSync
 {
   public class DeviceModels
   {
+
+    /// <summary>
+    /// One device model id the source system still uses that samedis has since merged away.
+    /// </summary>
+    /// <remarks>
+    /// Carries both titles on purpose. The id pair is what a machine needs; the two titles
+    /// are what a person needs to find the right record in the source system -- "you call it
+    /// Perfusor-Space, it is Perfusor Space here now".
+    /// </remarks>
+    public sealed class MergedCatalogRemap
+    {
+      public string OldCatalogId { get; init; } = string.Empty;
+      public string CatalogId { get; init; } = string.Empty;
+      public string SourceDeviceModelTitle { get; init; } = string.Empty;
+      public string DeviceModelTitle { get; init; } = string.Empty;
+      public string Manufacturer { get; init; } = string.Empty;
+      public DateTime DetectedAt { get; init; } = DateTime.Now;
+
+      /// <summary>How many rows of this run carried the historic id.</summary>
+      public int AffectedInventories { get; set; }
+    }
+
+    /// <summary>
+    /// Column headers of <c>device_model_merges.csv</c>, in file order.
+    /// </summary>
+    public static readonly string[] MergeReportHeaders =
+    {
+      "old_catalog_id", "catalog_id", "source_device_model_title",
+      "device_model_title", "manufacturer", "affected_inventories", "detected_at"
+    };
+
+    /// <summary>
+    /// Renders the collected remaps as CSV rows, in the order of <see cref="MergeReportHeaders"/>.
+    /// </summary>
+    public static IReadOnlyList<IReadOnlyList<string>> MergeReportRows(
+      IEnumerable<MergedCatalogRemap> remaps)
+      => remaps
+         .OrderBy(r => r.DeviceModelTitle, StringComparer.OrdinalIgnoreCase)
+         .ThenBy(r => r.OldCatalogId, StringComparer.Ordinal)
+         .Select(r => (IReadOnlyList<string>)new[]
+         {
+           r.OldCatalogId,
+           r.CatalogId,
+           r.SourceDeviceModelTitle,
+           r.DeviceModelTitle,
+           r.Manufacturer,
+           r.AffectedInventories.ToString(CultureInfo.InvariantCulture),
+           r.DetectedAt.ToString(LogFormat.TimeFormat, CultureInfo.InvariantCulture)
+         })
+         .ToList();
 
     /// <summary>
     /// Everything the catalog resolution needs that does not change from row to row.
@@ -19,7 +70,18 @@ namespace SamedisExternalSync
       ResourceLookup ManufacturerLookup,
       IDictionary<string, string> TenantModelBySourceKey,
       bool MayCreateLocalDeviceModels,
-      ISyncLog Log);
+      ISyncLog Log)
+    {
+      /// <summary>
+      /// Device model ids the source still uses that resolved to a different record, keyed by
+      /// the historic id. Filled while inventory rows are processed and written out as
+      /// <c>device_model_merges.csv</c> -- the export cannot carry this: a merge writes
+      /// merged_catalog_ids with an atomic add_to_set and never touches updated_at, so the
+      /// surviving model does not turn up in the incremental device model download at all.
+      /// </summary>
+      public IDictionary<string, MergedCatalogRemap> Remaps { get; }
+        = new Dictionary<string, MergedCatalogRemap>(StringComparer.Ordinal);
+    }
 
     /// <summary>
     /// Decides which device model an inventory row is written with: the id the source gave,
@@ -142,12 +204,64 @@ namespace SamedisExternalSync
         }
         else if (!string.Equals(resolvedCatalogId, catalogId, StringComparison.Ordinal))
         {
-          ctx.Log.Info($"Device model '{catalogId}' was merged into '{resolvedCatalogId}'; writing the current id (inventory_number='{inventoryNumber}', title='{title}'). The source still holds the historic id -- devicemodels.csv carries it in merged_catalog_ids so it can be updated there.");
+          ctx.Log.Info($"Device model '{catalogId}' was merged into '{resolvedCatalogId}'; writing the current id (inventory_number='{inventoryNumber}', title='{title}'). Reported in device_model_merges.csv so the source system can update its own reference.");
+          RecordRemap(ctx, catalogId, resolvedCatalogId!, title);
           catalogId = resolvedCatalogId;
         }
       }
 
       return catalogId;
+    }
+
+    /// <summary>
+    /// Notes that <paramref name="oldCatalogId"/> resolved to a different record, for
+    /// <c>device_model_merges.csv</c>. Counts every row that carried the historic id, but
+    /// asks the API for the surviving model's name only the first time -- one extra request
+    /// per actual merge per run, and merges are rare by construction.
+    /// </summary>
+    private static void RecordRemap(InventoryCatalogContext ctx, string oldCatalogId,
+                                    string newCatalogId, string sourceTitle)
+    {
+      if (ctx.Remaps.TryGetValue(oldCatalogId, out var known))
+      {
+        known.AffectedInventories++;
+        return;
+      }
+
+      var title = string.Empty;
+      var maker = string.Empty;
+
+      // Best effort: the id pair is the part that matters, and it is already established.
+      // A failure to read the survivor's name must not cost us the mapping.
+      try
+      {
+        var body = ctx.Client.Get($"{ctx.DeviceModelLookup.Resource}/{Uri.EscapeDataString(newCatalogId)}");
+        if (JsonApi.IsSuccess(ctx.Client.StatusCode))
+        {
+          var attributes = JsonConvert.DeserializeObject<Root>(body)?.Data?.FirstOrDefault()?.Attributes;
+          title = attributes?.Title ?? string.Empty;
+          maker = attributes?.ManufacturerAccordingToTypePlate
+                  ?? attributes?.CurrentResponsibleManufacturer ?? string.Empty;
+        }
+        else
+        {
+          ctx.Log.Debug($"Could not read the surviving device model '{newCatalogId}' for the merge report (status={ctx.Client.StatusCode}); reporting the id pair without its name.");
+        }
+      }
+      catch (Exception ex)
+      {
+        ctx.Log.Debug($"Could not read the surviving device model '{newCatalogId}' for the merge report: {ex.Message}");
+      }
+
+      ctx.Remaps[oldCatalogId] = new MergedCatalogRemap
+      {
+        OldCatalogId = oldCatalogId,
+        CatalogId = newCatalogId,
+        SourceDeviceModelTitle = sourceTitle ?? string.Empty,
+        DeviceModelTitle = title,
+        Manufacturer = maker,
+        AffectedInventories = 1
+      };
     }
 
     /// <summary>
