@@ -1,4 +1,5 @@
 using System.Data;
+using System.Globalization;
 using System.Reflection;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
@@ -7,6 +8,262 @@ namespace SamedisExternalSync
 {
   public class DeviceModels
   {
+
+    /// <summary>
+    /// One device model id the source system still uses that samedis has since merged away.
+    /// </summary>
+    /// <remarks>
+    /// Carries both titles on purpose. The id pair is what a machine needs; the two titles
+    /// are what a person needs to find the right record in the source system -- "you call it
+    /// Perfusor-Space, it is Perfusor Space here now".
+    /// </remarks>
+    public sealed class MergedCatalogRemap
+    {
+      public string OldCatalogId { get; init; } = string.Empty;
+      public string CatalogId { get; init; } = string.Empty;
+      public string SourceDeviceModelTitle { get; init; } = string.Empty;
+      public string DeviceModelTitle { get; init; } = string.Empty;
+      public string Manufacturer { get; init; } = string.Empty;
+      public DateTime DetectedAt { get; init; } = DateTime.Now;
+
+      /// <summary>How many rows of this run carried the historic id.</summary>
+      public int AffectedInventories { get; set; }
+    }
+
+    /// <summary>
+    /// Column headers of <c>device_model_merges.csv</c>, in file order.
+    /// </summary>
+    public static readonly string[] MergeReportHeaders =
+    {
+      "old_catalog_id", "catalog_id", "source_device_model_title",
+      "device_model_title", "manufacturer", "affected_inventories", "detected_at"
+    };
+
+    /// <summary>
+    /// Renders the collected remaps as CSV rows, in the order of <see cref="MergeReportHeaders"/>.
+    /// </summary>
+    public static IReadOnlyList<IReadOnlyList<string>> MergeReportRows(
+      IEnumerable<MergedCatalogRemap> remaps)
+      => remaps
+         .OrderBy(r => r.DeviceModelTitle, StringComparer.OrdinalIgnoreCase)
+         .ThenBy(r => r.OldCatalogId, StringComparer.Ordinal)
+         .Select(r => (IReadOnlyList<string>)new[]
+         {
+           r.OldCatalogId,
+           r.CatalogId,
+           r.SourceDeviceModelTitle,
+           r.DeviceModelTitle,
+           r.Manufacturer,
+           r.AffectedInventories.ToString(CultureInfo.InvariantCulture),
+           r.DetectedAt.ToString(LogFormat.TimeFormat, CultureInfo.InvariantCulture)
+         })
+         .ToList();
+
+    /// <summary>
+    /// Everything the catalog resolution needs that does not change from row to row.
+    /// </summary>
+    public sealed record InventoryCatalogContext(
+      IApiClient Client,
+      string TenantId,
+      ResourceLookup DeviceModelLookup,
+      ResourceLookup DeviceTypeLookup,
+      ResourceLookup ManufacturerLookup,
+      IDictionary<string, string> TenantModelBySourceKey,
+      bool MayCreateLocalDeviceModels,
+      ISyncLog Log)
+    {
+      /// <summary>
+      /// Device model ids the source still uses that resolved to a different record, keyed by
+      /// the historic id. Filled while inventory rows are processed and written out as
+      /// <c>device_model_merges.csv</c> -- the export cannot carry this: a merge writes
+      /// merged_catalog_ids with an atomic add_to_set and never touches updated_at, so the
+      /// surviving model does not turn up in the incremental device model download at all.
+      /// </summary>
+      public IDictionary<string, MergedCatalogRemap> Remaps { get; }
+        = new Dictionary<string, MergedCatalogRemap>(StringComparer.Ordinal);
+    }
+
+    /// <summary>
+    /// Decides which device model an inventory row is written with: the id the source gave,
+    /// the id it resolves to today, one looked up from title and manufacturer, or a newly
+    /// created facility-local model.
+    /// </summary>
+    /// <param name="sourceCatalogId">The <c>catalog_id</c> column of the source row, if any.</param>
+    /// <param name="isCreateOperation">
+    /// Whether this row has no inventory in samedis yet. Load-bearing: creating a device
+    /// model is a create-only step -- see the comment on that branch.
+    /// </param>
+    /// <returns>
+    /// The catalog id to write, or an empty string when none could be established. Empty is
+    /// not an error on an update -- the attribute is then simply left out and the inventory
+    /// keeps the device model it has.
+    /// </returns>
+    public static string ResolveCatalogIdForInventoryRow(
+      InventoryCatalogContext ctx,
+      string sourceCatalogId,
+      string title,
+      string manufacturer,
+      string deviceTypeTitle,
+      bool isCreateOperation,
+      bool isPlaceholder,
+      string rowId = "",
+      string inventoryNumber = "")
+    {
+      var catalogId = sourceCatalogId ?? string.Empty;
+
+      if (string.IsNullOrWhiteSpace(catalogId))
+      {
+        if (isPlaceholder)
+        {
+          ctx.Log.Debug($"Placeholder device model row detected. Skipping catalog/device-model lookup and local model/type/manufacturer creation (inventory_number='{inventoryNumber}', title='{title}').");
+        }
+        else
+        {
+          catalogId = DeviceModels.ResolveCatalogId(
+            ctx.DeviceModelLookup,
+            title,
+            manufacturer
+          ) ?? string.Empty;
+
+          if (!string.IsNullOrWhiteSpace(catalogId))
+          {
+            ctx.Log.Debug($"Resolved catalog_id '{catalogId}' via device model lookup (title='{title}', manufacturer='{manufacturer}').");
+          }
+          else if (ctx.MayCreateLocalDeviceModels && isCreateOperation)
+          {
+            catalogId = DeviceModels.ResolveOrCreateTenantCatalogIdForInventory(
+              ctx.Client,
+              ctx.TenantId,
+              title,
+              manufacturer,
+              deviceTypeTitle,
+              ctx.DeviceModelLookup,
+              ctx.DeviceTypeLookup,
+              ctx.ManufacturerLookup,
+              ctx.TenantModelBySourceKey,
+              ctx.Log,
+              rowId,
+              inventoryNumber
+            ) ?? string.Empty;
+
+            if (!string.IsNullOrWhiteSpace(catalogId))
+            {
+              ctx.Log.Debug($"Resolved catalog_id '{catalogId}' via local tenant device model lookup/create (title='{title}', manufacturer='{manufacturer}', device_type_title='{deviceTypeTitle}', inventory_number='{inventoryNumber}').");
+            }
+            else if (!string.IsNullOrWhiteSpace(title))
+            {
+              ctx.Log.Warn($"No device model match found and local tenant device model creation failed/skipped (title='{title}', manufacturer='{manufacturer}', device_type_title='{deviceTypeTitle}', inventory_number='{inventoryNumber}').");
+            }
+          }
+          else if (ctx.MayCreateLocalDeviceModels && !string.IsNullOrWhiteSpace(title))
+          {
+            // Creating a device model is a CREATE-only step, deliberately.
+            //
+            // An existing inventory always has one already -- catalog is a required
+            // belongs_to on the backend -- so there is nothing here to bootstrap, only
+            // something to overwrite. And the reason the title no longer resolves is
+            // usually that somebody merged the model away: the merge hard-destroys the
+            // source record and carries only its id to the survivor, so title,
+            // manufacturer and external_id all stop matching, while the merge job moves
+            // the inventories over to the survivor (samedis-care-issues#2347).
+            //
+            // Creating on that miss recreated the model an operator had just merged
+            // away and pulled the device back onto the duplicate -- the merge undone on
+            // the next run, every run, without an error anywhere.
+            //
+            // The cost of the rule is that a source system moving a device to a model
+            // that does not exist in samedis yet no longer creates it on an update.
+            // From here the two cases look the same, and this is the one that loses
+            // curated data rather than delaying it: the next run creating the device
+            // fresh, or an operator, resolves it.
+            ctx.Log.Warn($"No device model match found for an EXISTING inventory; keeping the device model it already has and creating nothing (title='{title}', manufacturer='{manufacturer}', device_type_title='{deviceTypeTitle}', inventory_number='{inventoryNumber}'). If the model was merged away, this is intended -- see samedis-care-issues#2347.");
+          }
+          else if (!string.IsNullOrWhiteSpace(title))
+          {
+            ctx.Log.Warn($"No device model match found for catalog lookup (title='{title}', manufacturer='{manufacturer}', inventory_number='{inventoryNumber}').");
+          }
+        }
+      }
+      else
+      {
+        // The source carries a samedis catalog id of its own. Asking the server about
+        // it costs one request per DISTINCT id per run -- ResourceLookup caches the
+        // answer under the id that was asked for -- and it is the only cheap way to
+        // notice a merge: the server resolves an id that was merged away to the record
+        // that absorbed it and answers with THAT id (samedis-care-issues#2347).
+        //
+        // Skipping this would still write correctly: the backend rewrites a merged-away
+        // catalog_id on its way in. But it does so silently, and because the source
+        // system never learns, every later run re-sends the historic id and pays for
+        // the rewrite again -- indefinitely, and invisibly in the log.
+        var resolvedCatalogId = ctx.DeviceModelLookup.ById(catalogId);
+
+        if (string.IsNullOrWhiteSpace(resolvedCatalogId))
+        {
+          ctx.Log.Warn($"catalog_id '{catalogId}' from the source resolves to no device model this facility can see (inventory_number='{inventoryNumber}', title='{title}'). Sending it unchanged -- the backend rejects the row unless the id was merged away.");
+        }
+        else if (!string.Equals(resolvedCatalogId, catalogId, StringComparison.Ordinal))
+        {
+          ctx.Log.Info($"Device model '{catalogId}' was merged into '{resolvedCatalogId}'; writing the current id (inventory_number='{inventoryNumber}', title='{title}'). Reported in device_model_merges.csv so the source system can update its own reference.");
+          RecordRemap(ctx, catalogId, resolvedCatalogId!, title);
+          catalogId = resolvedCatalogId;
+        }
+      }
+
+      return catalogId;
+    }
+
+    /// <summary>
+    /// Notes that <paramref name="oldCatalogId"/> resolved to a different record, for
+    /// <c>device_model_merges.csv</c>. Counts every row that carried the historic id, but
+    /// asks the API for the surviving model's name only the first time -- one extra request
+    /// per actual merge per run, and merges are rare by construction.
+    /// </summary>
+    private static void RecordRemap(InventoryCatalogContext ctx, string oldCatalogId,
+                                    string newCatalogId, string sourceTitle)
+    {
+      if (ctx.Remaps.TryGetValue(oldCatalogId, out var known))
+      {
+        known.AffectedInventories++;
+        return;
+      }
+
+      var title = string.Empty;
+      var maker = string.Empty;
+
+      // Best effort: the id pair is the part that matters, and it is already established.
+      // A failure to read the survivor's name must not cost us the mapping.
+      try
+      {
+        var body = ctx.Client.Get($"{ctx.DeviceModelLookup.Resource}/{Uri.EscapeDataString(newCatalogId)}");
+        if (JsonApi.IsSuccess(ctx.Client.StatusCode))
+        {
+          var attributes = JsonConvert.DeserializeObject<Root>(body)?.Data?.FirstOrDefault()?.Attributes;
+          title = attributes?.Title ?? string.Empty;
+          maker = attributes?.ManufacturerAccordingToTypePlate
+                  ?? attributes?.CurrentResponsibleManufacturer ?? string.Empty;
+        }
+        else
+        {
+          ctx.Log.Debug($"Could not read the surviving device model '{newCatalogId}' for the merge report (status={ctx.Client.StatusCode}); reporting the id pair without its name.");
+        }
+      }
+      catch (Exception ex)
+      {
+        ctx.Log.Debug($"Could not read the surviving device model '{newCatalogId}' for the merge report: {ex.Message}");
+      }
+
+      ctx.Remaps[oldCatalogId] = new MergedCatalogRemap
+      {
+        OldCatalogId = oldCatalogId,
+        CatalogId = newCatalogId,
+        SourceDeviceModelTitle = sourceTitle ?? string.Empty,
+        DeviceModelTitle = title,
+        Manufacturer = maker,
+        AffectedInventories = 1
+      };
+    }
+
     /// <summary>
     /// Resolves the facility's own device model for an inventory row, creating it -- together
     /// with its device type and manufacturer -- when it does not exist yet.
@@ -138,6 +395,14 @@ namespace SamedisExternalSync
 
       [JsonProperty("external_id")]
       public string? ExternalId { get; set; }
+
+      // Ids of device models that were merged INTO this one. Only the detail serializer
+      // carries it -- CatalogOverviewSerializer, which answers the paged list, does not --
+      // so it is populated for the per-model detail request the export already makes, and
+      // empty on anything read from a list. samedis-care-issues#2347.
+      [JsonProperty("merged_catalog_ids")]
+      [BackendReadOnly]
+      public List<string>? MergedCatalogIds { get; set; }
 
       [JsonProperty("created_at")]
       [BackendReadOnly]
@@ -437,6 +702,10 @@ namespace SamedisExternalSync
       dt.Columns.Add("id", typeof(string));                   // Id
       dt.Columns.Add("title", typeof(string));                // Typ
       dt.Columns.Add("external_id", typeof(string));          // externe id
+      // Alt-Ids, die in dieses Modell gemergt wurden -- kommagetrennt, damit das
+      // Quellsystem eine gespeicherte Id von vor einem Merge wiedererkennt und auf die
+      // heutige umschreiben kann. Komma, nicht Semikolon: das ist das CSV-Trennzeichen.
+      dt.Columns.Add("merged_catalog_ids", typeof(string));   // Alt-Ids nach Merge
       dt.Columns.Add("device_type_id", typeof(string));       // Art Id
       dt.Columns.Add("device_type_title", typeof(string));    // Art Bezeichnung (DE)
       dt.Columns.Add("emtec_code", typeof(string));           // Regulatory Emtec TypCode, wenn vorhanden
@@ -484,6 +753,7 @@ namespace SamedisExternalSync
         row["id"] = attr.Id;
         row["title"] = attr.Title;
         row["external_id"] = attr.ExternalId;
+        row["merged_catalog_ids"] = attr.MergedCatalogIds != null ? string.Join(",", attr.MergedCatalogIds) : "";
         row["device_type_id"] = attr.DeviceTypeId;
         row["device_type_title"] = attr.DeviceTypeTitle;
         row["emtec_code"] = attr.Regulatory != null && attr.Regulatory.TryGetValue("emtec_code", out string? emtec_value) ? emtec_value : "";

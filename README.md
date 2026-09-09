@@ -353,6 +353,23 @@ Recommission (re-activation):
 - Before doing so it reads `device_retired` and `operation_status`. A `recommission_device` issue only takes effect when `operation_status` is `retired` (the backend write is guarded by `inventory_operation_status_changed?`); on a device with `device_retired=true` and a different `operation_status` the recommission is a silent no-op with HTTP 2xx. Such a device is normalized with a `device_retired` issue first (`delete_currently_open_tasks=false`), then recommissioned. See [samedis-care-issues#2380](https://github.com/Samedis-care/samedis-care-issues/issues/2380).
 - A create rejected with `Device retired.` is logged as a WARN pointing at the identity mapping: the backend matched an existing retired device that `id`/`external_id`/`device_number` did not resolve.
 
+Device models and merges ([samedis-care-issues#2347](https://github.com/Samedis-care/samedis-care-issues/issues/2347)):
+- A `catalog_id` in the source CSV is checked against the API before it is written. An id
+  that was merged away resolves to the model that absorbed it, and that current id is what
+  gets written — logged as `Device model 'X' was merged into 'Y'`. The check costs one
+  request per *distinct* id per run, not one per row.
+- An id that resolves to nothing is sent unchanged, with a warning. Substituting a
+  title-based guess would attach the device to a different model than the source asked for.
+- Creating a facility-local device model (`sync.create_local_device_models_on_inventory_lookup`)
+  happens on **create only**. An existing inventory always has a device model already, and a
+  title that no longer resolves usually means somebody merged that model away: creating it
+  again recreated the model and pulled the device back off the survivor, undoing the merge on
+  every run without an error. On an update the row now keeps the device model it has and logs
+  a warning.
+- The cost of that rule: a source system moving a device to a model that does not exist in
+  samedis yet no longer creates it during an update. The two cases are indistinguishable from
+  here, and this is the one that loses curated data rather than delaying it.
+
 Create defaults:
 - For create operations, `do_maintenance` defaults to `true` when CSV value is empty.
 - For create operations, `no_medical_device` defaults to `false` when CSV value is empty.
@@ -368,6 +385,7 @@ Depending on enabled sync flags, these files are generated in `<paths.from_samed
 - `devicemodels.csv`
 - `devicemanufacturers.csv`
 - `inventories.csv`
+- `device_model_merges.csv` (only with the inventory upload enabled)
 - `task_documents/*` (task documents and protocol files)
 
 Requests download note:
@@ -385,6 +403,33 @@ Device model download note (`devicemodels.csv`):
   `III`. It used to be fed from `risk_level`, whose values overlap: a device that merely
   needed a user instruction was exported as MDR class I.
 - `according_to_annex` is unchanged and still comes from `operator_ordinance`.
+- `merged_catalog_ids` lists the ids of device models that were merged **into** this one,
+  comma separated (comma, not the file's own `;`, so the list needs no quote handling).
+  Almost every row leaves it empty. Use it to update a device model id that was cached
+  before a merge: the merge hard-destroys the model that was merged away, so its id stops
+  resolving on its own and only shows up here. The column is filled from the per-model
+  detail request the export already makes — the paged list does not carry the field.
+  Note that this column only travels on a **full** export: a merge does not bump the
+  surviving model's `updated_at`, so the incremental download filtered by
+  `updated_at > lastRun` skips it. For the actual merge notification see
+  `device_model_merges.csv` below.
+  See [samedis-care-issues#2347](https://github.com/Samedis-care/samedis-care-issues/issues/2347).
+
+Device model merge report (`device_model_merges.csv`):
+- One row per device model the source system references that samedis has since merged away,
+  with the id it sent, the id that is valid today, both titles and how many inventory rows of
+  this run carried the historic id.
+- **This is the only channel that reports a merge.** `devicemodels.csv` cannot: a merge
+  records `merged_catalog_ids` with an atomic `add_to_set` and never touches `updated_at`, so
+  the surviving model does not appear in the incremental device model download at all.
+- Written on every run of the inventory upload, header row and all, so "no merges" stays
+  distinguishable from "the sync did not get this far".
+- One row per **model**, not per device: the source system has to correct its stored
+  reference once. `affected_inventories` shows how much is behind it.
+- No state is kept between runs. While the source still sends a historic id, the next run
+  resolves it again and reports it again — a file nobody read loses nothing.
+- Only ids that actually appear in this run's rows are found. A stale reference on a device
+  type with no devices in the export stays unnoticed until one shows up.
 
 Inventory download note:
 - In tenant property mode (`use_extended_device_locations=true`), `inventories.csv` includes `source_location_id`.
