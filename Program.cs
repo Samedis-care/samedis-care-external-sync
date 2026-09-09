@@ -247,6 +247,16 @@ internal class Program
           // of them are resolved to ids, so an unresolvable row is not retried per row.
           var tenantDeviceModelBySourceKey = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
 
+          var inventoryCatalogContext = new DeviceModels.InventoryCatalogContext(
+            samedisClient,
+            samedisTenantId,
+            deviceModelLookup,
+            deviceTypeLookup,
+            manufacturerLookup,
+            tenantDeviceModelBySourceKey,
+            createLocalDeviceModelsOnInventoryLookup,
+            log);
+
           var sourceLocationCsvFiles = Directory.Exists(uploadRoot)
             ? Directory.GetFiles(uploadRoot, "*.csv")
             : Array.Empty<string>();
@@ -762,56 +772,17 @@ internal class Program
             // directly in retired state). After a successful create it is retired
             // properly via a device_retired issue -- see the create-success handling.
 
-            if (string.IsNullOrWhiteSpace(catalogId))
-            {
-              if (isPlaceholderDeviceModel)
-              {
-                log.Debug($"Placeholder device model row detected. Skipping catalog/device-model lookup and local model/type/manufacturer creation (inventory_number='{inventoryNumber}', title='{lookupTitle}').");
-              }
-              else
-              {
-                catalogId = DeviceModels.ResolveCatalogId(
-                  deviceModelLookup,
-                  lookupTitle,
-                  lookupManufacturer
-                ) ?? string.Empty;
-
-                if (!string.IsNullOrWhiteSpace(catalogId))
-                {
-                  log.Debug($"Resolved catalog_id '{catalogId}' via device model lookup (title='{lookupTitle}', manufacturer='{lookupManufacturer}').");
-                }
-                else if (createLocalDeviceModelsOnInventoryLookup)
-                {
-                  catalogId = DeviceModels.ResolveOrCreateTenantCatalogIdForInventory(
-                    samedisClient,
-                    samedisTenantId,
-                    lookupTitle,
-                    lookupManufacturer,
-                    lookupDeviceTypeTitle,
-                    deviceModelLookup,
-                    deviceTypeLookup,
-                    manufacturerLookup,
-                    tenantDeviceModelBySourceKey,
-                    log,
-                    rowId,
-                    inventoryNumber
-                  ) ?? string.Empty;
-
-                  if (!string.IsNullOrWhiteSpace(catalogId))
-                  {
-                    log.Debug($"Resolved catalog_id '{catalogId}' via local tenant device model lookup/create (title='{lookupTitle}', manufacturer='{lookupManufacturer}', device_type_title='{lookupDeviceTypeTitle}', inventory_number='{inventoryNumber}').");
-                  }
-                  else if (!string.IsNullOrWhiteSpace(lookupTitle))
-                  {
-                    log.Warn($"No device model match found and local tenant device model creation failed/skipped (title='{lookupTitle}', manufacturer='{lookupManufacturer}', device_type_title='{lookupDeviceTypeTitle}', inventory_number='{inventoryNumber}').");
-                  }
-                }
-                else if (!string.IsNullOrWhiteSpace(lookupTitle))
-                {
-                  log.Warn($"No device model match found for catalog lookup (title='{lookupTitle}', manufacturer='{lookupManufacturer}', inventory_number='{inventoryNumber}').");
-                }
-              }
-            }
+            catalogId = DeviceModels.ResolveCatalogIdForInventoryRow(
+              inventoryCatalogContext,
+              catalogId,
+              lookupTitle,
+              lookupManufacturer,
+              lookupDeviceTypeTitle,
+              isCreateOperation,
+              isPlaceholderDeviceModel,
+              rowId,
+              inventoryNumber
+            );
 
             if (!string.IsNullOrWhiteSpace(departmentProfitCenterTitle))
             {
@@ -1558,6 +1529,27 @@ internal class Program
           }
 
           log.Info($"Inventories Upload finished. Created: {createdCount}, Updated: {updatedCount} (incl. {recommissionedCount} recommissioned, {retiredCount} retired), Skipped: {skippedCount}, Errors: {errorCount}");
+
+          // Written on every run of the upload, header row and all, so that "no merges
+          // happened" stays distinguishable from "the sync did not get this far".
+          //
+          // The download cannot report this: a merge records merged_catalog_ids with an
+          // atomic add_to_set and never touches updated_at, so the surviving device model
+          // does not appear in the incremental devicemodels.csv at all. Only the rows the
+          // source actually sent reveal it.
+          //
+          // No state is kept between runs on purpose: while the source system still sends a
+          // historic id, the next run resolves it again and reports it again. A file that
+          // nobody read loses nothing.
+          var mergeReportPath = Path.Combine(downloadRoot, "device_model_merges.csv");
+          Csv.Write(mergeReportPath, DeviceModels.MergeReportHeaders,
+                    DeviceModels.MergeReportRows(inventoryCatalogContext.Remaps.Values));
+
+          if (inventoryCatalogContext.Remaps.Count > 0)
+          {
+            var affected = inventoryCatalogContext.Remaps.Values.Sum(r => r.AffectedInventories);
+            log.Warn($"{inventoryCatalogContext.Remaps.Count} device model(s) the source system references were merged in samedis and affected {affected} inventory row(s). The source still holds the historic id(s) -- see {mergeReportPath}.");
+          }
         }
       }
     }
