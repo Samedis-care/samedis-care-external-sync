@@ -130,6 +130,37 @@ public class MergedCatalogTests
         log.ToText().Should().Contain("was merged into");
     }
 
+    // The scenario in the issue, spelled out: "Perfusor-Space" (12345) is merged into
+    // "Perfusor Space" (45678); the external system still has 12345 on its local device type
+    // and now sends a device that does not exist in samedis yet. The historic id is resolved
+    // BEFORE the create, so the POST carries 45678 and there is no failed write to retry.
+    [Fact]
+    public void A_new_inventory_carrying_a_historic_id_is_created_with_the_current_one()
+    {
+        var log = new RecordingSyncLog();
+        var api = new FakeApiWithWrites(
+            get: url => url.Contains(Historic) ? Found(Survivor) : NotFound(),
+            post: _ => throw new NotSupportedException());
+
+        Resolve(Context(api, log), sourceCatalogId: Historic, isCreateOperation: true)
+            .Should().Be(Survivor);
+
+        log.ToText().Should().Contain(Historic).And.Contain(Survivor);
+    }
+
+    // Same for a device that is already in samedis: the update also writes the current id,
+    // which is what eventually stops the historic one from coming back every run.
+    [Fact]
+    public void An_update_carrying_a_historic_id_writes_the_current_one()
+    {
+        var api = new FakeApiWithWrites(
+            get: url => url.Contains(Historic) ? Found(Survivor) : NotFound(),
+            post: _ => throw new NotSupportedException());
+
+        Resolve(Context(api, new NullSyncLog()), sourceCatalogId: Historic, isCreateOperation: false)
+            .Should().Be(Survivor);
+    }
+
     [Fact]
     public void A_live_catalog_id_is_passed_through_untouched()
     {
