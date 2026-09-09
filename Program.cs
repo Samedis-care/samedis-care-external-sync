@@ -1529,6 +1529,27 @@ internal class Program
           }
 
           log.Info($"Inventories Upload finished. Created: {createdCount}, Updated: {updatedCount} (incl. {recommissionedCount} recommissioned, {retiredCount} retired), Skipped: {skippedCount}, Errors: {errorCount}");
+
+          // Written on every run of the upload, header row and all, so that "no merges
+          // happened" stays distinguishable from "the sync did not get this far".
+          //
+          // The download cannot report this: a merge records merged_catalog_ids with an
+          // atomic add_to_set and never touches updated_at, so the surviving device model
+          // does not appear in the incremental devicemodels.csv at all. Only the rows the
+          // source actually sent reveal it.
+          //
+          // No state is kept between runs on purpose: while the source system still sends a
+          // historic id, the next run resolves it again and reports it again. A file that
+          // nobody read loses nothing.
+          var mergeReportPath = Path.Combine(downloadRoot, "device_model_merges.csv");
+          Csv.Write(mergeReportPath, DeviceModels.MergeReportHeaders,
+                    DeviceModels.MergeReportRows(inventoryCatalogContext.Remaps.Values));
+
+          if (inventoryCatalogContext.Remaps.Count > 0)
+          {
+            var affected = inventoryCatalogContext.Remaps.Values.Sum(r => r.AffectedInventories);
+            log.Warn($"{inventoryCatalogContext.Remaps.Count} device model(s) the source system references were merged in samedis and affected {affected} inventory row(s). The source still holds the historic id(s) -- see {mergeReportPath}.");
+          }
         }
       }
     }
