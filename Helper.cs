@@ -52,7 +52,7 @@ namespace SamedisExternalSync
 
       Directory.CreateDirectory(archiveRoot);
 
-      var timestamp = DateTime.Now.ToString("yyyyMMdd_HHmmss");
+      var timestamp = DateTime.Now.ToString("yyyyMMdd_HHmmss", CultureInfo.InvariantCulture);
       var archivedCount = 0;
       var archiveErrors = 0;
 
@@ -182,11 +182,48 @@ namespace SamedisExternalSync
 
 
 
+    // The formats the source systems actually export, day-first because the exports are
+    // German. Formats and culture are passed explicitly: the free CurrentCulture parse this
+    // replaces read 03.04.2026 as 4 March on every host that is not German-localised, and
+    // wrote that onto the inventory record without any parse failure to notice.
+    private static readonly CultureInfo DeCulture = CultureInfo.GetCultureInfo("de-DE");
+
+    private static readonly string[] DateFormats =
+    {
+      "yyyy-MM-dd",
+      "dd.MM.yyyy",
+      "d.M.yyyy",
+      "dd/MM/yyyy",
+      "d/M/yyyy",
+      "yyyy/MM/dd",
+      "yyyy-MM-ddTHH:mm:ss",
+      "yyyy-MM-ddTHH:mm:ssZ",
+      "yyyy-MM-ddTHH:mm:ss.fffZ",
+      "dd.MM.yyyy HH:mm:ss",
+      "d.M.yyyy H:m:s",
+    };
+
+    /// <summary>
+    /// Turns a source date into an ISO day. The one date parser for this tool: task dates used
+    /// to have a second copy of this cascade in Tasks.NormalizeTaskDate.
+    /// </summary>
+    /// <remarks>
+    /// de-DE is tried before the invariant culture on purpose. Dates.TryParse runs its free
+    /// parse right after the exact pass of the same culture, so going invariant-first would put
+    /// a month-first free parse ahead of the German exact pass -- which is the bug this fixes,
+    /// for any dotted form not in <see cref="DateFormats"/> (e.g. "03.04.2026 08:30").
+    /// </remarks>
     public static string NormalizeDate(string value)
     {
       if (string.IsNullOrWhiteSpace(value))
         return string.Empty;
-      return DateTime.TryParse(value, out var date) ? date.ToString("yyyy-MM-dd") : value.Trim();
+
+      var trimmed = value.Trim();
+      if (Dates.TryParse(trimmed, out var date, DateFormats, DeCulture, DateTimeStyles.AssumeLocal)
+          || Dates.TryParse(trimmed, out date, DateFormats, CultureInfo.InvariantCulture, DateTimeStyles.AssumeLocal))
+        return date.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
+
+      return trimmed;
     }
 
 
