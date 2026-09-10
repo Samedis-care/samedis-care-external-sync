@@ -1,4 +1,5 @@
 using System.Data;
+using System.Globalization;
 using FluentAssertions;
 using SamedisCare.Helper.Text;
 using Xunit;
@@ -138,4 +139,77 @@ public class DateNormalisationTests
     [InlineData("   ")]
     public void An_empty_value_stays_empty(string input)
         => Helper.NormalizeDate(input).Should().BeEmpty();
+}
+
+/// <summary>
+/// The source exports are German CSVs with day-first dates. Parsing them must not depend on
+/// the locale the tool happens to run under: the customer hosts are German-localised, but a
+/// container without a locale, or an English Windows server, would otherwise read 03.04.2026
+/// as 4 March and write that onto the inventory record without any parse failure to notice.
+/// </summary>
+public class DateCultureTests
+{
+    private static readonly string[] HostCultures = { "de-DE", "en-US", "" };
+
+    private static string UnderCulture(string cultureName, Func<string> body)
+    {
+        var previous = CultureInfo.CurrentCulture;
+        try
+        {
+            CultureInfo.CurrentCulture = cultureName.Length == 0
+                ? CultureInfo.InvariantCulture
+                : CultureInfo.GetCultureInfo(cultureName);
+            return body();
+        }
+        finally
+        {
+            CultureInfo.CurrentCulture = previous;
+        }
+    }
+
+    [Fact]
+    public void A_day_first_date_keeps_its_day_on_every_host()
+    {
+        foreach (var culture in HostCultures)
+            UnderCulture(culture, () => Helper.NormalizeDate("03.04.2026"))
+                .Should().Be("2026-04-03", $"03.04.2026 is 3 April, also under '{culture}'");
+    }
+
+    // The shape the fixtures actually carry (tests/fixtures/to_samedis/inventories.csv).
+    [Fact]
+    public void A_day_first_date_with_a_time_keeps_its_day_on_every_host()
+    {
+        foreach (var culture in HostCultures)
+            UnderCulture(culture, () => Helper.NormalizeDate("01.02.2004 00:00:00"))
+                .Should().Be("2004-02-01", $"01.02.2004 is 1 February, also under '{culture}'");
+    }
+
+    // A dotted date with a time but no seconds is deliberately NOT in Helper.DateFormats, so it
+    // reaches the free-parse fallback -- the branch where the culture order actually decides the
+    // answer. Verified: an invariant-first cascade returns 2026-03-04 here. Do not reorder.
+    [Fact]
+    public void A_dotted_date_reaching_the_free_parse_is_still_day_first()
+    {
+        foreach (var culture in HostCultures)
+            UnderCulture(culture, () => Helper.NormalizeDate("03.04.2026 08:30"))
+                .Should().Be("2026-04-03", $"the free-parse fallback must stay day-first under '{culture}'");
+    }
+
+    [Fact]
+    public void An_iso_date_is_unaffected_by_the_host_culture()
+    {
+        foreach (var culture in HostCultures)
+            UnderCulture(culture, () => Helper.NormalizeDate("2026-04-03"))
+                .Should().Be("2026-04-03");
+    }
+
+    // Tasks.NormalizeTaskDate was a second copy of this logic; done_at goes through the same
+    // parser now, so its behaviour is pinned here rather than assumed.
+    [Fact]
+    public void A_task_done_at_in_german_form_becomes_an_iso_day()
+    {
+        foreach (var culture in HostCultures)
+            UnderCulture(culture, () => Helper.NormalizeDate("03.04.2026 14:30:00"))
+                .Should().Be("2026-04-03");
+    }
 }
