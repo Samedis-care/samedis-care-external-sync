@@ -2443,7 +2443,7 @@ internal class Program
 
           var inventoryDeviceNumber = attr?.InventoryDeviceNumber ?? "unknown";
           var issueNumber = attr?.IssueNumber?.ToString() ?? taskId;
-          var dateIso = Dates.ToIsoDate(attr?.Date, attr?.DoneAt, attr?.UpdatedAt, attr?.CreatedAt) ?? DateTime.Now.ToString("yyyy-MM-dd");
+          var dateIso = Dates.ToIsoDate(attr?.Date, attr?.DoneAt, attr?.UpdatedAt, attr?.CreatedAt) ?? DateTime.Now.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
 
           var docRequest = $"{urlResource}/{taskId}/uploads?page[number]=1&page[limit]={pageSize}&quickfilter=&gridfilter={{}}";
           var docResponse = samedisClient.Get(docRequest);
@@ -2586,7 +2586,7 @@ internal class Program
 
           var incidentNumber = rAttr?.IncidentNumber?.ToString() ?? requestId;
           var safeIncident = Strings.SanitizeFileName(incidentNumber);
-          var dateIso = Dates.ToIsoDate(rAttr?.UpdatedAt, rAttr?.CreatedAt) ?? DateTime.Now.ToString("yyyy-MM-dd");
+          var dateIso = Dates.ToIsoDate(rAttr?.UpdatedAt, rAttr?.CreatedAt) ?? DateTime.Now.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
 
           // Messages
           var msgRequest = $"{urlResource}/{requestId}/messages?page[number]=1&page[limit]={pageSize}&quickfilter=&gridfilter={{}}";
