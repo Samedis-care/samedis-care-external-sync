@@ -13,10 +13,13 @@ internal class Program
     // config that carries the real level and mode is only read below - and reading it can
     // already fail and needs to log.
     //
-    // The date is formatted invariantly, not with ToShortDateString(): that is
-    // culture-dependent and yields "8/28/2026" in several cultures, whose slash turns the
-    // file name into a directory path. yyyy-MM-dd also sorts.
-    var logFile = Path.Combine("log", $"Logfile_{DateTime.Now:yyyy-MM-dd}.log");
+    // The name comes from LogFormat, which owns the ISO format on both ends: log-monitor
+    // reads these files and its TryParseFileName accepts only Logfile_yyyy-MM-dd.log.
+    // Building the name here was culture-dependent -- an interpolated hole formats with
+    // CurrentCulture even with a fixed specifier, so it yielded Logfile_2569-09-10.log on
+    // th-TH, at which point the monitor falls back to the file's LastWriteTime and goes
+    // blind to a stale run. This is also what samedis-care-requests-to-mail already does.
+    var logFile = Path.Combine("log", LogFormat.FileName(DateTime.Now));
     ISyncLog log = new FileSyncLog(1, LogMode.Both, logFile);
 
     // read config
