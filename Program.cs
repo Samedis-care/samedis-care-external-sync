@@ -16,7 +16,15 @@ internal class Program
     // The date is formatted invariantly, not with ToShortDateString(): that is
     // culture-dependent and yields "8/28/2026" in several cultures, whose slash turns the
     // file name into a directory path. yyyy-MM-dd also sorts.
-    var logFile = Path.Combine("log", $"Logfile_{DateTime.Now:yyyy-MM-dd}.log");
+    //
+    // The culture has to be passed explicitly. An interpolated hole formats with
+    // CurrentCulture even when the format specifier is fixed, so this comment used to be
+    // wrong about its own line: measured, "$"{now:yyyy-MM-dd}"" yields 2569-09-10 on th-TH
+    // and 1448-03-28 on ar-SA. The name then stops being ISO, and LogFormat.TryParseFileName
+    // accepts only Logfile_yyyy-MM-dd.log -- so log-monitor falls back to the file's
+    // LastWriteTime and goes blind to a stale run, which is what ISO naming was for.
+    var logFile = Path.Combine("log",
+      $"Logfile_{DateTime.Now.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture)}.log");
     ISyncLog log = new FileSyncLog(1, LogMode.Both, logFile);
 
     // read config

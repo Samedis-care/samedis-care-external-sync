@@ -186,7 +186,25 @@ namespace SamedisExternalSync
     // German. Formats and culture are passed explicitly: the free CurrentCulture parse this
     // replaces read 03.04.2026 as 4 March on every host that is not German-localised, and
     // wrote that onto the inventory record without any parse failure to notice.
-    private static readonly CultureInfo DeCulture = CultureInfo.GetCultureInfo("de-DE");
+    private static readonly CultureInfo DeCulture = GetDeCultureOrInvariant();
+
+    // Under globalization-invariant mode (DOTNET_SYSTEM_GLOBALIZATION_INVARIANT=1, or an
+    // ICU-less base image) GetCultureInfo("de-DE") throws CultureNotFoundException, and in a
+    // static initializer that becomes a TypeInitializationException on the first date parsed
+    // -- i.e. the whole run. Verified on .NET 8. Falling back keeps the tool running; the
+    // explicit dd.MM.yyyy formats below still carry day-first, only the free German parse of
+    // a shape outside that list is lost.
+    private static CultureInfo GetDeCultureOrInvariant()
+    {
+      try
+      {
+        return CultureInfo.GetCultureInfo("de-DE");
+      }
+      catch (CultureNotFoundException)
+      {
+        return CultureInfo.InvariantCulture;
+      }
+    }
 
     private static readonly string[] DateFormats =
     {
@@ -201,6 +219,11 @@ namespace SamedisExternalSync
       "yyyy-MM-ddTHH:mm:ss.fffZ",
       "dd.MM.yyyy HH:mm:ss",
       "d.M.yyyy H:m:s",
+      // Dotted date with a time but no seconds. Listed explicitly because it is the shape
+      // that otherwise reaches the free parse, where the culture decides day-vs-month -- and
+      // under globalization-invariant mode there is no de-DE to decide it correctly.
+      "dd.MM.yyyy HH:mm",
+      "d.M.yyyy H:m",
     };
 
     /// <summary>
