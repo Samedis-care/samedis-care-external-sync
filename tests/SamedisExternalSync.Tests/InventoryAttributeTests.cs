@@ -184,15 +184,31 @@ public class DateCultureTests
                 .Should().Be("2004-02-01", $"01.02.2004 is 1 February, also under '{culture}'");
     }
 
-    // A dotted date with a time but no seconds is deliberately NOT in Helper.DateFormats, so it
-    // reaches the free-parse fallback -- the branch where the culture order actually decides the
-    // answer. Verified: an invariant-first cascade returns 2026-03-04 here. Do not reorder.
-    [Fact]
-    public void A_dotted_date_reaching_the_free_parse_is_still_day_first()
+    // A dotted date with a time but no seconds: covered by an explicit format, so the culture
+    // order never gets a say. It is listed for exactly that reason -- it is the shape a source
+    // export produces most often after the seconds-bearing one.
+    [Theory]
+    [InlineData("03.04.2026 08:30")]
+    [InlineData("3.4.2026 8:30")]
+    public void A_dotted_date_with_a_time_but_no_seconds_is_day_first(string input)
     {
         foreach (var culture in HostCultures)
-            UnderCulture(culture, () => Helper.NormalizeDate("03.04.2026 08:30"))
-                .Should().Be("2026-04-03", $"the free-parse fallback must stay day-first under '{culture}'");
+            UnderCulture(culture, () => Helper.NormalizeDate(input))
+                .Should().Be("2026-04-03", $"'{input}' is 3 April, also under '{culture}'");
+    }
+
+    // These shapes are NOT in Helper.DateFormats, so they reach the free-parse fallback -- the
+    // one branch where the de-DE-before-invariant culture order decides the answer. Measured
+    // with an invariant-first cascade: all three come back as 2026-03-04. Do not reorder.
+    [Theory]
+    [InlineData("03.04.2026 08:30:15.500")]
+    [InlineData("3.4.26")]
+    [InlineData("03-04-2026")]
+    public void A_shape_reaching_the_free_parse_is_still_day_first(string input)
+    {
+        foreach (var culture in HostCultures)
+            UnderCulture(culture, () => Helper.NormalizeDate(input))
+                .Should().Be("2026-04-03", $"the free-parse fallback must stay day-first for '{input}' under '{culture}'");
     }
 
     [Fact]
