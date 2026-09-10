@@ -1,5 +1,4 @@
 using System.Data;
-using System.Globalization;
 using System.Text;
 using Newtonsoft.Json;
 
@@ -7,7 +6,6 @@ namespace SamedisExternalSync
 {
   public class Tasks
   {
-    private static readonly CultureInfo DeCulture = CultureInfo.GetCultureInfo("de-DE");
     public static readonly string[] UploadRequiredColumns =
     [
       "issue_number",
@@ -508,7 +506,7 @@ namespace SamedisExternalSync
       attributes["services"] = ParseServicesArray(servicesRaw);
 
       JsonApi.AddStringAttribute(attributes, "title", Rows.Value(row, "title"));
-      var normalizedDoneAt = NormalizeTaskDate(Rows.Value(row, "done_at"));
+      var normalizedDoneAt = Helper.NormalizeDate(Rows.Value(row, "done_at"));
       if (string.IsNullOrWhiteSpace(normalizedDoneAt))
       {
         errorMessage = "done_at is required to set due_on and done_at.";
@@ -760,42 +758,6 @@ namespace SamedisExternalSync
       };
 
       return !string.IsNullOrWhiteSpace(normalizedTestResult);
-    }
-
-    private static string NormalizeTaskDate(string value)
-    {
-      if (string.IsNullOrWhiteSpace(value))
-        return string.Empty;
-
-      var trimmed = value.Trim();
-      var formats = new[]
-      {
-        "yyyy-MM-dd",
-        "dd.MM.yyyy",
-        "d.M.yyyy",
-        "dd/MM/yyyy",
-        "d/M/yyyy",
-        "yyyy/MM/dd",
-        "yyyy-MM-ddTHH:mm:ss",
-        "yyyy-MM-ddTHH:mm:ssZ",
-        "yyyy-MM-ddTHH:mm:ss.fffZ",
-        "dd.MM.yyyy HH:mm:ss",
-        "d.M.yyyy H:m:s"
-      };
-
-      if (DateTime.TryParseExact(trimmed, formats, CultureInfo.InvariantCulture, DateTimeStyles.AssumeLocal, out var parsedDate))
-        return parsedDate.ToString("yyyy-MM-dd");
-
-      if (DateTime.TryParseExact(trimmed, formats, DeCulture, DateTimeStyles.AssumeLocal, out parsedDate))
-        return parsedDate.ToString("yyyy-MM-dd");
-
-      if (DateTime.TryParse(trimmed, DeCulture, DateTimeStyles.AssumeLocal, out parsedDate))
-        return parsedDate.ToString("yyyy-MM-dd");
-
-      if (DateTime.TryParse(trimmed, CultureInfo.InvariantCulture, DateTimeStyles.AssumeLocal, out parsedDate))
-        return parsedDate.ToString("yyyy-MM-dd");
-
-      return trimmed;
     }
 
     private static bool ContainsMaintenanceKeywords(string value)
