@@ -8,14 +8,20 @@ using Xunit;
 namespace SamedisExternalSync.Tests;
 
 /// <summary>
-/// Device models can be merged in samedis: the merge hard-destroys the source record, moves
-/// its inventories to the survivor and carries only the source's <b>id</b> across, in
-/// <c>merged_catalog_ids</c> (samedis-care-issues#2347). Title, manufacturer and external_id
-/// die with it.
+/// Device models can be merged in samedis: <c>Briefing::MergeDeviceModelsJob</c> moves the
+/// source's inventories to the survivor and then hard-destroys it. On the API in production
+/// nothing records where it went, so a historic id is simply a 404.
 /// <para>
 /// Both directions of the sync have to survive that, and neither failure is loud: an import
-/// that recreates the merged-away model undoes the merge without an error, and an export that
-/// omits the historic ids leaves the source system sending one forever.
+/// that recreates the merged-away model undoes the merge without an error, and an import that
+/// writes a historic id gets "Device model can't be blank" -- the same message as sending no
+/// model at all.
+/// </para>
+/// <para>
+/// The tests below that expect a historic id to resolve to a survivor pin the behaviour for
+/// samedis-care-issues#2347, which is built but <b>not deployed</b>. They exercise a real
+/// property of the client either way: <c>ById</c> answers with the id the server returned,
+/// cached under the id that was asked for. Until that ships, the live path is the 404 one.
 /// </para>
 /// </summary>
 public class MergedCatalogTests

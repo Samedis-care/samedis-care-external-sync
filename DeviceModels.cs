@@ -75,10 +75,20 @@ namespace SamedisExternalSync
       /// <summary>
       /// Device model ids the source still uses that resolved to a different record, keyed by
       /// the historic id. Filled while inventory rows are processed and written out as
-      /// <c>device_model_merges.csv</c> -- the export cannot carry this: a merge writes
-      /// merged_catalog_ids with an atomic add_to_set and never touches updated_at, so the
-      /// surviving model does not turn up in the incremental device model download at all.
-      /// </summary>
+      /// <c>device_model_merges.csv</c>.
+      /// <para>
+      /// Stays empty against the API in production, where a merged-away id is a plain 404
+      /// and there is nothing to resolve it to. It fills once samedis-care-issues#2347 is
+      /// deployed. The file is written either way, so the channel exists the day the
+      /// backend side lands rather than having to be built then.
+      /// </para>
+      /// <para>
+      /// Why a file of its own and not a column on the model export: the device model
+      /// download is incremental (<c>updated_at &gt; lastRun</c>), and a merge records
+      /// itself on the survivor with an atomic update that does not touch
+      /// <c>updated_at</c> -- so the survivor would not appear in that download at all.
+      /// Only the ids the source itself sends reveal a merge.
+      /// </para>
       public IDictionary<string, MergedCatalogRemap> Remaps { get; }
         = new Dictionary<string, MergedCatalogRemap>(StringComparer.Ordinal);
     }
@@ -161,15 +171,19 @@ namespace SamedisExternalSync
             //
             // An existing inventory always has one already -- catalog is a required
             // belongs_to on the backend -- so there is nothing here to bootstrap, only
-            // something to overwrite. And the reason the title no longer resolves is
-            // usually that somebody merged the model away: the merge hard-destroys the
-            // source record and carries only its id to the survivor, so title,
-            // manufacturer and external_id all stop matching, while the merge job moves
-            // the inventories over to the survivor (samedis-care-issues#2347).
+            // something to overwrite.
             //
-            // Creating on that miss recreated the model an operator had just merged
-            // away and pulled the device back onto the duplicate -- the merge undone on
-            // the next run, every run, without an error anywhere.
+            // And a miss is exactly what a merge looks like. Briefing::MergeDeviceModelsJob
+            // moves the inventories to the survivor and then hard-destroys the source, so
+            // the keys that belonged to the destroyed record -- its external_id, and the
+            // pair (tenant_id, external_id) -- are certainly gone. The title and
+            // manufacturer this cascade sends come from the source ROW, not from the
+            // destroyed record, so those steps often still land on the survivor; when they
+            // do not, the model is gone for good.
+            //
+            // Creating on that miss recreated the model an operator had just merged away
+            // and pulled the device back onto the duplicate -- the merge undone on the next
+            // run, every run, without an error anywhere.
             //
             // The cost of the rule is that a source system moving a device to a model
             // that does not exist in samedis yet no longer creates it on an update.
@@ -186,21 +200,27 @@ namespace SamedisExternalSync
       }
       else
       {
-        // The source carries a samedis catalog id of its own. Asking the server about
-        // it costs one request per DISTINCT id per run -- ResourceLookup caches the
-        // answer under the id that was asked for -- and it is the only cheap way to
-        // notice a merge: the server resolves an id that was merged away to the record
-        // that absorbed it and answers with THAT id (samedis-care-issues#2347).
+        // The source carries a samedis catalog id of its own. Asking the server about it
+        // costs one request per DISTINCT id per run -- ResourceLookup caches the answer
+        // under the id that was asked for -- and it buys a diagnosis the write itself
+        // cannot give.
         //
-        // Skipping this would still write correctly: the backend rewrites a merged-away
-        // catalog_id on its way in. But it does so silently, and because the source
-        // system never learns, every later run re-sends the historic id and pays for
-        // the rewrite again -- indefinitely, and invisibly in the log.
+        // On the API in production a device model that was merged away is a plain 404:
+        // the merge hard-destroys the source record and nothing records where it went.
+        // The write then fails with "Device model can't be blank", which is exactly what
+        // sending no device model at all produces -- indistinguishable from the client
+        // side. Asking first turns that into a warning naming the id.
+        //
+        // The resolution work is built but not deployed (samedis-care-issues#2347:
+        // merged_catalog_ids on the survivor, a merge fallback on the id route). Once it
+        // ships this same call starts answering with the survivor's id instead of null,
+        // and the branches below pick it up without a change here -- ById returns the id
+        // the SERVER answered with, not the one that was asked for.
         var resolvedCatalogId = ctx.DeviceModelLookup.ById(catalogId);
 
         if (string.IsNullOrWhiteSpace(resolvedCatalogId))
         {
-          ctx.Log.Warn($"catalog_id '{catalogId}' from the source resolves to no device model this facility can see (inventory_number='{inventoryNumber}', title='{title}'). Sending it unchanged -- the backend rejects the row unless the id was merged away.");
+          ctx.Log.Warn($"catalog_id '{catalogId}' from the source resolves to no device model this facility can see (inventory_number='{inventoryNumber}', title='{title}'). Sending it unchanged; the backend will reject the row with 'Device model can't be blank'. Either the id never existed here, or the model was merged away -- a merge destroys the record and today leaves nothing to resolve it by (samedis-care-issues#2347).");
         }
         else if (!string.Equals(resolvedCatalogId, catalogId, StringComparison.Ordinal))
         {
@@ -396,10 +416,13 @@ namespace SamedisExternalSync
       [JsonProperty("external_id")]
       public string? ExternalId { get; set; }
 
-      // Ids of device models that were merged INTO this one. Only the detail serializer
-      // carries it -- CatalogOverviewSerializer, which answers the paged list, does not --
-      // so it is populated for the per-model detail request the export already makes, and
-      // empty on anything read from a list. samedis-care-issues#2347.
+      // Ids of device models that were merged INTO this one.
+      //
+      // Not served by the API in production yet -- the field arrives with
+      // samedis-care-issues#2347, and only on the detail serializer, never on the paged
+      // list. Deserialising it costs nothing while it is absent (null -> empty column),
+      // and the export already fetches each model's detail for the service intervals, so
+      // the column fills by itself the day the backend side ships.
       [JsonProperty("merged_catalog_ids")]
       [BackendReadOnly]
       public List<string>? MergedCatalogIds { get; set; }
