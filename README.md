@@ -354,10 +354,20 @@ Recommission (re-activation):
 - A create rejected with `Device retired.` is logged as a WARN pointing at the identity mapping: the backend matched an existing retired device that `id`/`external_id`/`device_number` did not resolve.
 
 Device models and merges ([samedis-care-issues#2347](https://github.com/Samedis-care/samedis-care-issues/issues/2347)):
-- A `catalog_id` in the source CSV is checked against the API before it is written. An id
-  that was merged away resolves to the model that absorbed it, and that current id is what
-  gets written — logged as `Device model 'X' was merged into 'Y'`. The check costs one
-  request per *distinct* id per run, not one per row.
+
+> **State of the API.** Device models really are merged today — the merge moves the
+> inventories to the survivor and hard-destroys the source — but nothing records where it
+> went. A historic `catalog_id` is therefore a plain **404**, and writing one fails with
+> `Device model can't be blank`, the same message as sending no device model at all. The
+> resolution work (`merged_catalog_ids`, a merge fallback on the id route) is built but not
+> deployed. The behaviour below is written for both: it diagnoses the 404 now and starts
+> resolving by itself once that ships.
+
+- A `catalog_id` in the source CSV is checked against the API before it is written. Today a
+  historic id answers 404 and is logged as a warning naming the id — which the write itself
+  cannot tell you. Once #2347 is live the same call answers with the model that absorbed
+  it, and that current id is written instead, logged as `Device model 'X' was merged into
+  'Y'`. The check costs one request per *distinct* id per run, not one per row.
 - An id that resolves to nothing is sent unchanged, with a warning. Substituting a
   title-based guess would attach the device to a different model than the source asked for.
 - Creating a facility-local device model (`sync.create_local_device_models_on_inventory_lookup`)
@@ -403,15 +413,15 @@ Device model download note (`devicemodels.csv`):
   `III`. It used to be fed from `risk_level`, whose values overlap: a device that merely
   needed a user instruction was exported as MDR class I.
 - `according_to_annex` is unchanged and still comes from `operator_ordinance`.
-- `merged_catalog_ids` lists the ids of device models that were merged **into** this one,
-  comma separated (comma, not the file's own `;`, so the list needs no quote handling).
-  Almost every row leaves it empty. Use it to update a device model id that was cached
-  before a merge: the merge hard-destroys the model that was merged away, so its id stops
-  resolving on its own and only shows up here. The column is filled from the per-model
-  detail request the export already makes — the paged list does not carry the field.
-  Note that this column only travels on a **full** export: a merge does not bump the
-  surviving model's `updated_at`, so the incremental download filtered by
-  `updated_at > lastRun` skips it. For the actual merge notification see
+- `merged_catalog_ids` will list the ids of device models that were merged **into** this
+  one, comma separated (comma, not the file's own `;`, so the list needs no quote
+  handling). **Empty today:** the API in production does not serve this field — it arrives
+  with [samedis-care-issues#2347](https://github.com/Samedis-care/samedis-care-issues/issues/2347),
+  and only on the detail serializer, never on the paged list. The column is written
+  regardless so the export shape does not change when that ships; it fills by itself from
+  the per-model detail request the export already makes. Even then it travels only on a
+  **full** export, because a merge does not bump the surviving model's `updated_at` and the
+  incremental download filters on it. For the merge notification see
   `device_model_merges.csv` below.
   See [samedis-care-issues#2347](https://github.com/Samedis-care/samedis-care-issues/issues/2347).
 
@@ -419,9 +429,13 @@ Device model merge report (`device_model_merges.csv`):
 - One row per device model the source system references that samedis has since merged away,
   with the id it sent, the id that is valid today, both titles and how many inventory rows of
   this run carried the historic id.
-- **This is the only channel that reports a merge.** `devicemodels.csv` cannot: a merge
-  records `merged_catalog_ids` with an atomic `add_to_set` and never touches `updated_at`, so
-  the surviving model does not appear in the incremental device model download at all.
+- **Header-only today.** A row needs a historic id to resolve to something, which the API in
+  production cannot do yet (see the box above). The file is written from the first run so the
+  channel exists the day #2347 ships, rather than having to be built then.
+- **`devicemodels.csv` could not carry this even then:** the device model download is
+  incremental (`updated_at > lastRun`), and a merge records itself on the survivor with an
+  atomic update that leaves `updated_at` alone — so the survivor never appears in it. Only
+  the ids the source itself sends reveal a merge.
 - Written on every run of the inventory upload, header row and all, so "no merges" stays
   distinguishable from "the sync did not get this far".
 - One row per **model**, not per device: the source system has to correct its stored
