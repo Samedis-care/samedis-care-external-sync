@@ -358,7 +358,7 @@ namespace SamedisExternalSync
     public class Root
     {
       [JsonProperty("data")]
-      [JsonConverter(typeof(Helper.SingleOrArrayConverter<Data>))]
+      [JsonConverter(typeof(JsonApi.SingleOrArrayConverter<Data>))]
       public List<Data>? Data { get; set; }
 
       [JsonProperty("meta")]
@@ -428,6 +428,7 @@ namespace SamedisExternalSync
     public static void FillInventoryDataSet(
       DataSet ds,
       string json,
+      NumberFormat numbers,
       Func<Attributes, SourceLocationExportInfo?>? sourceLocationResolver = null)
     {
       var root = JsonConvert.DeserializeObject<Inventories.Root>(json);
@@ -473,7 +474,7 @@ namespace SamedisExternalSync
         row["operation_status"] = attr.OperationStatus ?? "";
         row["last_maintenance"] = attr.LastMaintenance ?? "";
         row["next_maintenance"] = attr.NextMaintenance ?? "";
-        row["purchase_price"] = attr.PurchasePrice.HasValue ? Helper.FormatDecimal(attr.PurchasePrice.Value) : "";
+        row["purchase_price"] = attr.PurchasePrice.HasValue ? numbers.Format(attr.PurchasePrice.Value) : "";
         row["currency_code"] = attr.CurrencyCode ?? "";
         row["depreciation_in_years"] = attr.DepreciationInYears?.ToString() ?? "";
         row["retirement_date"] = attr.RetirementDate ?? "";
@@ -492,201 +493,96 @@ namespace SamedisExternalSync
         table.Rows.Add(row);
       }
     }
-
+    /// <summary>
+    /// Resolves the inventory a source row refers to: samedis id, then external_id, then
+    /// inventory number.
+    /// </summary>
+    /// <param name="lookup">
+    /// Bound to the inventories collection. It remembers hits and misses, which is what the
+    /// three dictionaries and three "already checked" sets this replaces did by hand.
+    /// </param>
+    /// <param name="inventoryId">A samedis inventory id, if the row carries one.</param>
+    /// <param name="inventoryExternalId">The source system's own key for the device.</param>
+    /// <param name="inventoryNumber">The facility's inventory number.</param>
+    /// <param name="fallbackByDeviceNumber">
+    /// Whether the inventory number may be used at all. Off for callers that must not match a
+    /// record they were not given a stable key for.
+    /// </param>
+    /// <remarks>
+    /// A samedis-id or external_id match is authoritative even when the row's inventory
+    /// number differs: external_id is the stable cross-system anchor and the source may
+    /// deliver a changed inventory number for the same device (the update reconciles the
+    /// number). Falling through to the device-number lookup instead would pick a DIFFERENT
+    /// record, and the update would then try to move the row's external_id onto it -- which
+    /// the collation-insensitive unique index on (tenant_id, external_id) rejects as a
+    /// duplicate key. Cascades.Inventory stops at the first hit for exactly that reason.
+    /// <para>
+    /// The version this replaces also fetched each resolved record's detail in order to seed
+    /// the device-number cache. That is dropped: it cost one extra request per resolved id to
+    /// save at most one per inventory number, and the lookup caches both kinds anyway.
+    /// </para>
+    /// </remarks>
     public static string? ResolveExistingInventoryId(
-      RequestData client,
-      string resource,
+      ResourceLookup lookup,
       string inventoryId,
       string inventoryExternalId,
       string inventoryNumber,
-      bool fallbackByDeviceNumber,
-      IDictionary<string, string> inventoryById,
-      IDictionary<string, string> inventoryByExternalId,
-      IDictionary<string, string> inventoryByDeviceNumber,
-      ISet<string> checkedInventoryIds,
-      ISet<string> checkedInventoryExternalIds,
-      ISet<string> checkedInventoryNumbers)
-    {
-      string? candidateId = null;
-      var normalizedExternalId = inventoryExternalId?.Trim() ?? string.Empty;
+      bool fallbackByDeviceNumber)
+      => Cascades.Inventory(lookup, inventoryId, inventoryExternalId, inventoryNumber,
+                            query: "variant=regular",
+                            deviceNumberFallback: fallbackByDeviceNumber);
 
-      if (!string.IsNullOrWhiteSpace(inventoryId))
-      {
-        if (inventoryById.TryGetValue(inventoryId, out var cachedId))
-        {
-          if (!string.IsNullOrWhiteSpace(cachedId))
-            candidateId = cachedId;
-        }
+    /// <summary>
+    /// Resolves an inventory by its inventory number (device_number).
+    /// </summary>
+    /// <remarks>
+    /// <c>variant=regular</c> asks for the smaller serializer variant; only the id is read.
+    /// The lookup caches hits and misses, which is what the dictionary this replaces did.
+    /// </remarks>
+    public static string ResolveInventoryIdByDeviceNumber(ResourceLookup lookup, string deviceNumber)
+      => lookup.ByField("device_number", deviceNumber,
+                        FilterBuilder.FilterType.Equals, "variant=regular") ?? string.Empty;
 
-        if (string.IsNullOrWhiteSpace(candidateId) && !checkedInventoryIds.Contains(inventoryId))
-        {
-          checkedInventoryIds.Add(inventoryId);
-
-          var detailResponse = client.Get(resource + "/" + Uri.EscapeDataString(inventoryId));
-          if (client.StatusCode == 200)
-          {
-            var resolvedId = Helper.ExtractDataId(detailResponse) ?? inventoryId;
-            inventoryById[inventoryId] = resolvedId;
-            inventoryById[resolvedId] = resolvedId;
-
-            var detailRoot = string.IsNullOrEmpty(detailResponse) ? null : JsonConvert.DeserializeObject<Inventories.Root>(detailResponse);
-            var resolvedDeviceNumber = detailRoot?.Data?.FirstOrDefault()?.Attributes?.DeviceNumber;
-            if (!string.IsNullOrWhiteSpace(resolvedDeviceNumber))
-              inventoryByDeviceNumber[resolvedDeviceNumber] = resolvedId;
-
-            candidateId = resolvedId;
-          }
-          else
-          {
-            // negative cache to prevent repeated requests for same unknown id
-            inventoryById[inventoryId] = string.Empty;
-          }
-        }
-      }
-
-      if (string.IsNullOrWhiteSpace(candidateId) && !string.IsNullOrWhiteSpace(normalizedExternalId))
-      {
-        if (inventoryByExternalId.TryGetValue(normalizedExternalId, out var cachedByExternalId))
-        {
-          if (!string.IsNullOrWhiteSpace(cachedByExternalId))
-            candidateId = cachedByExternalId;
-        }
-
-        if (string.IsNullOrWhiteSpace(candidateId) && !checkedInventoryExternalIds.Contains(normalizedExternalId))
-        {
-          checkedInventoryExternalIds.Add(normalizedExternalId);
-
-          var resolvedByExternalId = Helper.ExternalIdExists(client, resource, normalizedExternalId);
-          if (!string.IsNullOrWhiteSpace(resolvedByExternalId))
-          {
-            candidateId = resolvedByExternalId;
-            inventoryByExternalId[normalizedExternalId] = resolvedByExternalId;
-            inventoryById[resolvedByExternalId] = resolvedByExternalId;
-
-            var detailResponse = client.Get(resource + "/" + Uri.EscapeDataString(resolvedByExternalId));
-            if (client.StatusCode == 200)
-            {
-              var detailRoot = string.IsNullOrEmpty(detailResponse) ? null : JsonConvert.DeserializeObject<Inventories.Root>(detailResponse);
-              var resolvedDeviceNumber = detailRoot?.Data?.FirstOrDefault()?.Attributes?.DeviceNumber;
-              if (!string.IsNullOrWhiteSpace(resolvedDeviceNumber))
-                inventoryByDeviceNumber[resolvedDeviceNumber] = resolvedByExternalId;
-            }
-          }
-          else
-          {
-            inventoryByExternalId[normalizedExternalId] = string.Empty;
-          }
-        }
-      }
-
-      if (!string.IsNullOrWhiteSpace(candidateId) && !string.IsNullOrWhiteSpace(normalizedExternalId))
-        inventoryByExternalId[normalizedExternalId] = candidateId;
-
-      // A samedis-id or external_id match is authoritative even when the row's
-      // inventory number differs: external_id is the stable cross-system anchor
-      // and the source may deliver a changed inventory number for the same
-      // device (the update reconciles the number). Falling through to the
-      // device-number lookup instead would pick a DIFFERENT record and the
-      // update would try to move the row's external_id onto it -- rejected as a
-      // duplicate-key error by the collation-insensitive unique index on
-      // (tenant_id, external_id).
-      if (!string.IsNullOrWhiteSpace(candidateId))
-        return candidateId;
-
-      if (fallbackByDeviceNumber && !string.IsNullOrWhiteSpace(inventoryNumber))
-      {
-        if (inventoryByDeviceNumber.TryGetValue(inventoryNumber, out var cachedByDeviceNumber))
-          return string.IsNullOrWhiteSpace(cachedByDeviceNumber) ? candidateId : cachedByDeviceNumber;
-
-        if (!checkedInventoryNumbers.Contains(inventoryNumber))
-        {
-          checkedInventoryNumbers.Add(inventoryNumber);
-
-          var resolvedByDeviceNumberId = ResolveInventoryIdByDeviceNumber(client, resource, inventoryNumber, inventoryByDeviceNumber);
-          if (!string.IsNullOrWhiteSpace(resolvedByDeviceNumberId))
-          {
-            inventoryById[resolvedByDeviceNumberId] = resolvedByDeviceNumberId;
-            return resolvedByDeviceNumberId;
-          }
-        }
-      }
-      return candidateId;
-    }
-
-    // Canonical inventory lookup by device_number (a.k.a. inventory_number). Shared by the
-    // inventories import as well as the tasks and requests uploads so the lookup lives in one
-    // place. Caches both hits and misses (empty string) in inventoryByDeviceNumber.
-    public static string ResolveInventoryIdByDeviceNumber(
-      RequestData client,
-      string resource,
-      string deviceNumber,
-      IDictionary<string, string> inventoryByDeviceNumber)
-    {
-      if (string.IsNullOrWhiteSpace(deviceNumber))
-        return string.Empty;
-
-      var normalizedDeviceNumber = deviceNumber.Trim();
-      if (inventoryByDeviceNumber.TryGetValue(normalizedDeviceNumber, out var cachedInventoryId))
-        return cachedInventoryId;
-
-      var filterBuilder = new FilterBuilder();
-      filterBuilder.Clear();
-      filterBuilder.Add("device_number", FilterBuilder.FilterType.Equals, FilterBuilder.Type.Text, normalizedDeviceNumber);
-
-      var listResponse = client.Get(
-        resource +
-        $"?page[number]=1&page[limit]=1&variant=regular&gridfilter={filterBuilder.Get()}"
-      );
-
-      var resolvedInventoryId = string.Empty;
-      if (client.StatusCode >= 200 && client.StatusCode < 300 && !string.IsNullOrWhiteSpace(listResponse))
-      {
-        var listRoot = JsonConvert.DeserializeObject<Root>(listResponse);
-        var first = listRoot?.Data?.FirstOrDefault();
-        resolvedInventoryId = first?.Attributes?.Id ?? first?.Id ?? string.Empty;
-      }
-
-      inventoryByDeviceNumber[normalizedDeviceNumber] = resolvedInventoryId;
-      return resolvedInventoryId;
-    }
-
-    // Resolves an inventory id from a samedis inventory id when provided, otherwise falls back
-    // to a device_number lookup. Used by the requests upload.
-    public static string ResolveInventoryIdByIdOrDeviceNumber(
-      RequestData client,
-      string resource,
-      string inventoryId,
-      string deviceNumber,
-      IDictionary<string, string> inventoryByDeviceNumber)
-    {
-      if (!string.IsNullOrWhiteSpace(inventoryId))
-        return inventoryId.Trim();
-
-      return ResolveInventoryIdByDeviceNumber(client, resource, deviceNumber, inventoryByDeviceNumber);
-    }
+    /// <summary>
+    /// Resolves an inventory from a samedis id when the row carries one, otherwise from its
+    /// inventory number. Used by the requests upload.
+    /// </summary>
+    /// <remarks>
+    /// The version this replaces returned the source's id unchecked. That is the failure the
+    /// rest of this migration removes: a value that is not an id, or names a record this
+    /// tenant cannot read, was passed on as if it had been resolved, and only failed later on
+    /// the write. Going through the cascade verifies it and otherwise falls through to the
+    /// inventory number, which is what the caller wanted in the first place.
+    /// </remarks>
+    public static string ResolveInventoryIdByIdOrDeviceNumber(ResourceLookup lookup,
+                                                              string inventoryId,
+                                                              string deviceNumber)
+      => Cascades.Inventory(lookup, inventoryId, null, deviceNumber, query: "variant=regular")
+         ?? string.Empty;
 
     public static Dictionary<string, object> BuildInventoryAttributes(
       DataRow row,
       string? departmentId,
       string? locationId,
+      NumberFormat numbers,
       string? catalogIdOverride = null,
       bool applyCreateDefaults = false)
     {
       var attributes = new Dictionary<string, object>();
-      var modelTitle = Helper.GetRowValue(row, "device_model_title");
+      var modelTitle = Rows.Value(row, "device_model_title");
       if (string.IsNullOrWhiteSpace(modelTitle))
-        modelTitle = Helper.GetRowValue(row, "title");
+        modelTitle = Rows.Value(row, "title");
 
-      var manufacturer = Helper.GetRowValue(row, "manufacturer");
+      var manufacturer = Rows.Value(row, "manufacturer");
       if (string.IsNullOrWhiteSpace(manufacturer))
-        manufacturer = Helper.GetRowValue(row, "responsible_manufacturer");
+        manufacturer = Rows.Value(row, "responsible_manufacturer");
       if (string.IsNullOrWhiteSpace(manufacturer))
-        manufacturer = Helper.GetRowValue(row, "company");
+        manufacturer = Rows.Value(row, "company");
 
-      var deviceTypeTitle = Helper.GetRowValue(row, "device_type_title");
-      var placeholderManufacturer = Helper.GetRowValue(row, "placeholder_device_model_manufacturer");
-      var placeholderModelTitle = Helper.GetRowValue(row, "placeholder_device_model_title");
-      var placeholderDeviceTypeTitle = Helper.GetRowValue(row, "placeholder_device_type_title");
+      var deviceTypeTitle = Rows.Value(row, "device_type_title");
+      var placeholderManufacturer = Rows.Value(row, "placeholder_device_model_manufacturer");
+      var placeholderModelTitle = Rows.Value(row, "placeholder_device_model_title");
+      var placeholderDeviceTypeTitle = Rows.Value(row, "placeholder_device_type_title");
       var isPlaceholder = IsPlaceholderDeviceModel(row);
 
       if (isPlaceholder)
@@ -699,15 +595,15 @@ namespace SamedisExternalSync
           placeholderDeviceTypeTitle = deviceTypeTitle;
       }
 
-      Helper.AddStringAttribute(attributes, "external_id", Helper.GetRowValue(row, "external_id"));
-      Helper.AddStringAttribute(attributes, "device_number", Helper.GetRowValue(row, "inventory_number"));
-      Helper.AddStringAttribute(attributes, "serial_number", Helper.GetRowValue(row, "serial_number"));
-      var catalogId = string.IsNullOrWhiteSpace(catalogIdOverride) ? Helper.GetRowValue(row, "catalog_id") : catalogIdOverride;
-      Helper.AddStringAttribute(attributes, "catalog_id", catalogId);
-      Helper.AddStringAttribute(attributes, "commissioning_at", Helper.NormalizeDate(Helper.GetRowValue(row, "commissioning_at")));
-      Helper.AddStringAttribute(attributes, "service_partner", Helper.GetRowValue(row, "service_partner"));
-      Helper.AddStringAttribute(attributes, "comments_field", Helper.GetRowValue(row, "comments_field"));
-      Helper.AddStringAttribute(attributes, "operation_status", NormalizeOperationStatus(Helper.GetRowValue(row, "operation_status")));
+      JsonApi.AddStringAttribute(attributes, "external_id", Rows.Value(row, "external_id"));
+      JsonApi.AddStringAttribute(attributes, "device_number", Rows.Value(row, "inventory_number"));
+      JsonApi.AddStringAttribute(attributes, "serial_number", Rows.Value(row, "serial_number"));
+      var catalogId = string.IsNullOrWhiteSpace(catalogIdOverride) ? Rows.Value(row, "catalog_id") : catalogIdOverride;
+      JsonApi.AddStringAttribute(attributes, "catalog_id", catalogId);
+      JsonApi.AddStringAttribute(attributes, "commissioning_at", Helper.NormalizeDate(Rows.Value(row, "commissioning_at")));
+      JsonApi.AddStringAttribute(attributes, "service_partner", Rows.Value(row, "service_partner"));
+      JsonApi.AddStringAttribute(attributes, "comments_field", Rows.Value(row, "comments_field"));
+      JsonApi.AddStringAttribute(attributes, "operation_status", NormalizeOperationStatus(Rows.Value(row, "operation_status")));
       // retirement_date is deliberately NOT part of the payload. The backend derives the
       // retirement flag from it on every save (Inventory#update_reference_columns:
       // `self.device_retired = retirement_date.present?`, followed by
@@ -717,99 +613,99 @@ namespace SamedisExternalSync
       // active <-> retired oscillation on the UKT tenant. Retirement is expressed
       // exclusively through device_retired / recommission_device issues; the CSV value is
       // only used as the issue date (see PostDeviceRetiredIssue callers).
-      Helper.AddStringAttribute(attributes, "status", NormalizeStatus(Helper.GetRowValue(row, "status")));
-      Helper.AddStringAttribute(attributes, "ownership", NormalizeOwnership(Helper.GetRowValue(row, "ownership")));
-      Helper.AddStringAttribute(attributes, "currency_code", NormalizeCurrency(Helper.GetRowValue(row, "currency_code")));
-      Helper.AddStringAttribute(attributes, "date_of_acquisition", Helper.NormalizeDate(Helper.GetRowValue(row, "date_of_acquisition")));
-      Helper.AddStringAttribute(attributes, "delivered_at", Helper.NormalizeDate(Helper.GetRowValue(row, "delivered_at")));
-      Helper.AddStringAttribute(attributes, "installed_at", Helper.NormalizeDate(Helper.GetRowValue(row, "installed_at")));
-      Helper.AddStringAttribute(attributes, "warranty_period", Helper.NormalizeDate(Helper.GetRowValue(row, "warranty_period")));
-      Helper.AddStringAttribute(attributes, "asset_accounting_number", Helper.GetRowValue(row, "asset_accounting_number"));
-      Helper.AddStringAttribute(attributes, "device_condition", Helper.GetRowValue(row, "device_condition"));
-      Helper.AddStringAttribute(attributes, "device_nick_name", Helper.GetRowValue(row, "device_nick_name"));
-      Helper.AddStringAttribute(attributes, "manufacturer_system_number", Helper.GetRowValue(row, "manufacturer_system_number"));
-      Helper.AddStringAttribute(attributes, "network_connectivity", Helper.GetRowValue(row, "network_connectivity"));
-      Helper.AddStringAttribute(attributes, "operating_system", Helper.GetRowValue(row, "operating_system"));
-      Helper.AddStringAttribute(attributes, "software_version", Helper.GetRowValue(row, "software_version"));
-      Helper.AddStringAttribute(attributes, "ip_address", Helper.GetRowValue(row, "ip_address"));
-      Helper.AddStringAttribute(attributes, "mac_address", Helper.GetRowValue(row, "mac_address"));
-      var qrCodeToken = Helper.GetRowValue(row, "qr_code_token");
+      JsonApi.AddStringAttribute(attributes, "status", NormalizeStatus(Rows.Value(row, "status")));
+      JsonApi.AddStringAttribute(attributes, "ownership", NormalizeOwnership(Rows.Value(row, "ownership")));
+      JsonApi.AddStringAttribute(attributes, "currency_code", NormalizeCurrency(Rows.Value(row, "currency_code")));
+      JsonApi.AddStringAttribute(attributes, "date_of_acquisition", Helper.NormalizeDate(Rows.Value(row, "date_of_acquisition")));
+      JsonApi.AddStringAttribute(attributes, "delivered_at", Helper.NormalizeDate(Rows.Value(row, "delivered_at")));
+      JsonApi.AddStringAttribute(attributes, "installed_at", Helper.NormalizeDate(Rows.Value(row, "installed_at")));
+      JsonApi.AddStringAttribute(attributes, "warranty_period", Helper.NormalizeDate(Rows.Value(row, "warranty_period")));
+      JsonApi.AddStringAttribute(attributes, "asset_accounting_number", Rows.Value(row, "asset_accounting_number"));
+      JsonApi.AddStringAttribute(attributes, "device_condition", Rows.Value(row, "device_condition"));
+      JsonApi.AddStringAttribute(attributes, "device_nick_name", Rows.Value(row, "device_nick_name"));
+      JsonApi.AddStringAttribute(attributes, "manufacturer_system_number", Rows.Value(row, "manufacturer_system_number"));
+      JsonApi.AddStringAttribute(attributes, "network_connectivity", Rows.Value(row, "network_connectivity"));
+      JsonApi.AddStringAttribute(attributes, "operating_system", Rows.Value(row, "operating_system"));
+      JsonApi.AddStringAttribute(attributes, "software_version", Rows.Value(row, "software_version"));
+      JsonApi.AddStringAttribute(attributes, "ip_address", Rows.Value(row, "ip_address"));
+      JsonApi.AddStringAttribute(attributes, "mac_address", Rows.Value(row, "mac_address"));
+      var qrCodeToken = Rows.Value(row, "qr_code_token");
       if (string.IsNullOrWhiteSpace(qrCodeToken))
-        qrCodeToken = Helper.GetRowValue(row, "qr_code_resource_token");
-      Helper.AddStringAttribute(attributes, "qr_code_token", qrCodeToken);
-      Helper.AddStringAttribute(attributes, "commissioning_through", Helper.GetRowValue(row, "commissioning_through"));
-      Helper.AddStringAttribute(attributes, "linked_image_id", Helper.GetRowValue(row, "linked_image_id"));
-      Helper.AddStringAttribute(attributes, "main_inventory_id", Helper.GetRowValue(row, "main_inventory_id"));
-      Helper.AddStringAttribute(attributes, "main_inventory_number", Helper.GetRowValue(row, "main_inventory_number"));
-      Helper.AddStringAttribute(attributes, "supplier_company_contact_id", Helper.GetRowValue(row, "supplier_company_contact_id"));
-      Helper.AddStringAttribute(attributes, "supplier_company_name", Helper.GetRowValue(row, "supplier_company_name"));
-      Helper.AddStringAttribute(attributes, "placeholder_device_model_manufacturer", placeholderManufacturer);
-      Helper.AddStringAttribute(attributes, "placeholder_device_model_title", placeholderModelTitle);
-      Helper.AddStringAttribute(attributes, "placeholder_device_type_title", placeholderDeviceTypeTitle);
-      Helper.AddStringAttribute(attributes, "variant", Helper.GetRowValue(row, "variant"));
-      Helper.AddStringAttribute(attributes, "type_plate", Helper.GetRowValue(row, "type_plate"));
-      Helper.AddStringAttribute(attributes, "type_plate_data_uri", Helper.GetRowValue(row, "type_plate_data_uri"));
-      Helper.AddStringAttribute(attributes, "depreciation_date", Helper.NormalizeDate(Helper.GetRowValue(row, "depreciation_date")));
+        qrCodeToken = Rows.Value(row, "qr_code_resource_token");
+      JsonApi.AddStringAttribute(attributes, "qr_code_token", qrCodeToken);
+      JsonApi.AddStringAttribute(attributes, "commissioning_through", Rows.Value(row, "commissioning_through"));
+      JsonApi.AddStringAttribute(attributes, "linked_image_id", Rows.Value(row, "linked_image_id"));
+      JsonApi.AddStringAttribute(attributes, "main_inventory_id", Rows.Value(row, "main_inventory_id"));
+      JsonApi.AddStringAttribute(attributes, "main_inventory_number", Rows.Value(row, "main_inventory_number"));
+      JsonApi.AddStringAttribute(attributes, "supplier_company_contact_id", Rows.Value(row, "supplier_company_contact_id"));
+      JsonApi.AddStringAttribute(attributes, "supplier_company_name", Rows.Value(row, "supplier_company_name"));
+      JsonApi.AddStringAttribute(attributes, "placeholder_device_model_manufacturer", placeholderManufacturer);
+      JsonApi.AddStringAttribute(attributes, "placeholder_device_model_title", placeholderModelTitle);
+      JsonApi.AddStringAttribute(attributes, "placeholder_device_type_title", placeholderDeviceTypeTitle);
+      JsonApi.AddStringAttribute(attributes, "variant", Rows.Value(row, "variant"));
+      JsonApi.AddStringAttribute(attributes, "type_plate", Rows.Value(row, "type_plate"));
+      JsonApi.AddStringAttribute(attributes, "type_plate_data_uri", Rows.Value(row, "type_plate_data_uri"));
+      JsonApi.AddStringAttribute(attributes, "depreciation_date", Helper.NormalizeDate(Rows.Value(row, "depreciation_date")));
 
       // API docs define construction_year as string.
-      Helper.AddStringAttribute(attributes, "construction_year", Helper.GetRowValue(row, "construction_year"));
+      JsonApi.AddStringAttribute(attributes, "construction_year", Rows.Value(row, "construction_year"));
 
-      if (Helper.TryParseInt(Helper.GetRowValue(row, "depreciation_in_years"), out var depreciationInYears))
+      if (Strings.TryParseInt(Rows.Value(row, "depreciation_in_years"), out var depreciationInYears))
         attributes["depreciation_in_years"] = depreciationInYears;
 
-      if (Helper.TryParseInt(Helper.GetRowValue(row, "lifespan"), out var lifespan))
+      if (Strings.TryParseInt(Rows.Value(row, "lifespan"), out var lifespan))
         attributes["lifespan"] = lifespan;
 
-      if (Helper.TryParseDecimal(Helper.GetRowValue(row, "purchase_price"), out var purchasePrice))
+      if (numbers.TryParseDecimal(Rows.Value(row, "purchase_price"), out var purchasePrice))
         attributes["purchase_price"] = purchasePrice;
 
-      if (Helper.TryParseLong(Helper.GetRowValue(row, "purchase_price_in_cents"), out var purchasePriceInCents))
+      if (Strings.TryParseLong(Rows.Value(row, "purchase_price_in_cents"), out var purchasePriceInCents))
         attributes["purchase_price_in_cents"] = purchasePriceInCents;
 
-      if (Helper.TryParseBool(Helper.GetRowValue(row, "accessible_usb_ports"), out var accessibleUsbPorts))
+      if (Strings.TryParseBool(Rows.Value(row, "accessible_usb_ports"), out var accessibleUsbPorts))
         attributes["accessible_usb_ports"] = accessibleUsbPorts;
 
-      if (Helper.TryParseBool(Helper.GetRowValue(row, "contains_patient_data"), out var containsPatientData))
+      if (Strings.TryParseBool(Rows.Value(row, "contains_patient_data"), out var containsPatientData))
         attributes["contains_patient_data"] = containsPatientData;
 
       if (applyCreateDefaults)
         attributes["do_maintenance"] = true;
-      if (Helper.TryParseBool(Helper.GetRowValue(row, "do_maintenance"), out var doMaintenance))
+      if (Strings.TryParseBool(Rows.Value(row, "do_maintenance"), out var doMaintenance))
         attributes["do_maintenance"] = doMaintenance;
 
       if (applyCreateDefaults)
         attributes["no_medical_device"] = false;
-      if (Helper.TryParseBool(Helper.GetRowValue(row, "no_medical_device"), out var noMedicalDevice))
+      if (Strings.TryParseBool(Rows.Value(row, "no_medical_device"), out var noMedicalDevice))
         attributes["no_medical_device"] = noMedicalDevice;
 
       if (isPlaceholder)
       {
         attributes["device_model_is_placeholder"] = true;
       }
-      else if (Helper.TryParseBool(Helper.GetRowValue(row, "device_model_is_placeholder"), out var isPlaceholderValue))
+      else if (Strings.TryParseBool(Rows.Value(row, "device_model_is_placeholder"), out var isPlaceholderValue))
       {
         attributes["device_model_is_placeholder"] = isPlaceholderValue;
       }
 
-      if (Helper.TryParseBool(Helper.GetRowValue(row, "has_warranty"), out var hasWarranty))
+      if (Strings.TryParseBool(Rows.Value(row, "has_warranty"), out var hasWarranty))
         attributes["has_warranty"] = hasWarranty;
 
-      if (Helper.TryParseBool(Helper.GetRowValue(row, "is_device_system"), out var isDeviceSystem))
+      if (Strings.TryParseBool(Rows.Value(row, "is_device_system"), out var isDeviceSystem))
         attributes["is_device_system"] = isDeviceSystem;
 
-      var serviceCompanyIds = ParseStringList(Helper.GetRowValue(row, "service_company_ids"));
+      var serviceCompanyIds = ParseStringList(Rows.Value(row, "service_company_ids"));
       if (serviceCompanyIds.Count > 0)
         attributes["service_company_ids"] = serviceCompanyIds;
 
-      var teamIds = ParseStringList(Helper.GetRowValue(row, "team_ids"));
+      var teamIds = ParseStringList(Rows.Value(row, "team_ids"));
       if (teamIds.Count > 0)
         attributes["team_ids"] = teamIds;
 
-      var withServiceIntervals = ParseJsonValue(Helper.GetRowValue(row, "with_service_intervals"));
+      var withServiceIntervals = ParseJsonValue(Rows.Value(row, "with_service_intervals"));
       if (withServiceIntervals != null)
         attributes["with_service_intervals"] = withServiceIntervals;
 
-      var nics = ParseJsonValue(Helper.GetRowValue(row, "nics"));
+      var nics = ParseJsonValue(Rows.Value(row, "nics"));
       if (nics != null)
         attributes["nics"] = nics;
 
@@ -836,7 +732,7 @@ namespace SamedisExternalSync
 
     public static bool IsPlaceholderDeviceModel(DataRow row)
     {
-      return Helper.TryParseBool(Helper.GetRowValue(row, "device_model_is_placeholder"), out var isPlaceholder) && isPlaceholder;
+      return Strings.TryParseBool(Rows.Value(row, "device_model_is_placeholder"), out var isPlaceholder) && isPlaceholder;
     }
 
     private static List<string> ParseStringList(string value)
@@ -884,7 +780,7 @@ namespace SamedisExternalSync
           return true;
         }
 
-        return Helper.TryParseBool(token.ToString(), out value);
+        return Strings.TryParseBool(token.ToString(), out value);
       }
 
       static List<string> ParseProtectedFieldsToken(JToken token)
@@ -902,7 +798,7 @@ namespace SamedisExternalSync
         return ParseStringList(token.ToString());
       }
 
-      var rawAuthority = Helper.GetRowValue(row, "take_authority");
+      var rawAuthority = Rows.Value(row, "take_authority");
       if (!string.IsNullOrWhiteSpace(rawAuthority))
       {
         try
@@ -941,21 +837,21 @@ namespace SamedisExternalSync
         }
       }
 
-      var rawDrop = Helper.GetRowValue(row, "take_authority_drop");
-      if (Helper.TryParseBool(rawDrop, out var drop))
+      var rawDrop = Rows.Value(row, "take_authority_drop");
+      if (Strings.TryParseBool(rawDrop, out var drop))
       {
         authority["drop"] = drop;
         hasAuthorityValues = true;
       }
 
-      var rawLocked = Helper.GetRowValue(row, "take_authority_locked");
-      if (Helper.TryParseBool(rawLocked, out var locked))
+      var rawLocked = Rows.Value(row, "take_authority_locked");
+      if (Strings.TryParseBool(rawLocked, out var locked))
       {
         authority["locked"] = locked;
         hasAuthorityValues = true;
       }
 
-      var rawProtectedFields = Helper.GetRowValue(row, "take_authority_protected_fields");
+      var rawProtectedFields = Rows.Value(row, "take_authority_protected_fields");
       if (!string.IsNullOrWhiteSpace(rawProtectedFields))
       {
         List<string> protectedFields;
@@ -1071,7 +967,7 @@ namespace SamedisExternalSync
       string inventoryId,
       string inventoryNumber,
       string inventoryTitle,
-      Helper helper)
+      ISyncLog log)
     {
       if (string.IsNullOrWhiteSpace(inventoryId))
         return null;
@@ -1098,18 +994,11 @@ namespace SamedisExternalSync
       var response = client.Post(issuesResource, payload);
       if (client.StatusCode >= 200 && client.StatusCode < 300)
       {
-        helper.Message(
-          $"Recommission issue created for inventory (inventory_number='{inventoryNumber}', id='{inventoryId}').",
-          2
-        );
+        log.Debug($"Recommission issue created for inventory (inventory_number='{inventoryNumber}', id='{inventoryId}').");
         return response;
       }
 
-      helper.Message(
-        $"Recommission issue creation failed (inventory_number='{inventoryNumber}', id='{inventoryId}', status={client.StatusCode}). Response: {response}",
-        1,
-        "WARN"
-      );
+      log.Warn($"Recommission issue creation failed (inventory_number='{inventoryNumber}', id='{inventoryId}', status={client.StatusCode}). Response: {response}");
       return null;
     }
 
@@ -1131,7 +1020,7 @@ namespace SamedisExternalSync
       string inventoryNumber,
       string inventoryTitle,
       string? retirementDate,
-      Helper helper,
+      ISyncLog log,
       bool deleteOpenTasks = true)
     {
       if (string.IsNullOrWhiteSpace(inventoryId))
@@ -1167,10 +1056,7 @@ namespace SamedisExternalSync
       var response = client.Post(issuesResource, payload);
       if (client.StatusCode >= 200 && client.StatusCode < 300)
       {
-        helper.Message(
-          $"Device_retired issue created for inventory (inventory_number='{inventoryNumber}', id='{inventoryId}').",
-          2
-        );
+        log.Debug($"Device_retired issue created for inventory (inventory_number='{inventoryNumber}', id='{inventoryId}').");
       }
 
       return response;

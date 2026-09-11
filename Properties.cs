@@ -37,117 +37,61 @@ namespace SamedisExternalSync
     public class Root
     {
       [JsonProperty("data")]
-      [JsonConverter(typeof(Helper.SingleOrArrayConverter<Data>))]
+      [JsonConverter(typeof(JsonApi.SingleOrArrayConverter<Data>))]
       public List<Data>? Data { get; set; }
     }
-
+    /// <summary>
+    /// Resolves the property to place buildings under, creating it when asked to.
+    /// </summary>
+    /// <remarks>
+    /// The fallback to whichever property already exists is deliberate and specific to this
+    /// resource: a facility has one property in the overwhelming majority of installations,
+    /// and the source's name for it rarely matches what was set up in Samedis. Matching the
+    /// title first still lets a multi-property facility work.
+    /// </remarks>
     public static string? ResolvePropertyId(
-      RequestData client,
+      IApiClient client,
       string resource,
       string propertyTitle,
       bool createOnTheFly,
-      IDictionary<string, string> propertiesByTitle,
-      IDictionary<string, string> checkedProperties,
-      Helper helper)
+      ResourceLookup lookup,
+      ISyncLog log)
     {
       if (string.IsNullOrWhiteSpace(propertyTitle))
         return null;
 
       var normalizedTitle = propertyTitle.Trim();
-      var checkedByTitleKey = "title:" + normalizedTitle;
 
-      if (propertiesByTitle.TryGetValue(normalizedTitle, out var cachedPropertyId))
-      {
-        if (!string.IsNullOrWhiteSpace(cachedPropertyId))
-          return cachedPropertyId;
-
-        // Negative cache hit: property was already checked and not resolvable.
-        return null;
-      }
-
-      if (checkedProperties.TryGetValue(checkedByTitleKey, out var checkedByTitle))
-      {
-        if (!string.IsNullOrWhiteSpace(checkedByTitle))
-          return checkedByTitle;
-
-        // Negative cache hit: property was already checked and not resolvable.
-        return null;
-      }
-
-      var filterBuilder = new FilterBuilder();
-      filterBuilder.Clear();
-      filterBuilder.Add("title", FilterBuilder.FilterType.Equals, FilterBuilder.Type.Text, normalizedTitle);
-
-      var listResponse = client.Get(resource + $"?page[number]=1&page[limit]=1&gridfilter={filterBuilder.Get()}");
-      if (client.StatusCode == 200 && !string.IsNullOrWhiteSpace(listResponse))
-      {
-        var listRoot = JsonConvert.DeserializeObject<Root>(listResponse);
-        var foundProperty = listRoot?.Data?.FirstOrDefault();
-        var resolvedId = foundProperty?.Attributes?.Id ?? foundProperty?.Id;
-        if (!string.IsNullOrWhiteSpace(resolvedId))
-        {
-          propertiesByTitle[normalizedTitle] = resolvedId;
-          checkedProperties[checkedByTitleKey] = resolvedId;
-          return resolvedId;
-        }
-      }
-
-      // If no property with tenant-name title exists, use the first existing property if available.
-      var firstResponse = client.Get(resource + "?page[number]=1&page[limit]=1");
-      if (client.StatusCode == 200 && !string.IsNullOrWhiteSpace(firstResponse))
-      {
-        var firstRoot = JsonConvert.DeserializeObject<Root>(firstResponse);
-        var firstProperty = firstRoot?.Data?.FirstOrDefault();
-        var firstPropertyId = firstProperty?.Attributes?.Id ?? firstProperty?.Id;
-        if (!string.IsNullOrWhiteSpace(firstPropertyId))
-        {
-          propertiesByTitle[normalizedTitle] = firstPropertyId;
-          checkedProperties[checkedByTitleKey] = firstPropertyId;
-          helper.Message($"Using existing property '{firstProperty?.Attributes?.Title ?? normalizedTitle}' -> {firstPropertyId}", 2);
-          return firstPropertyId;
-        }
-      }
-
-      checkedProperties[checkedByTitleKey] = string.Empty;
-      propertiesByTitle[normalizedTitle] = string.Empty;
-
-      if (!createOnTheFly)
-        return null;
-
-      var payload = JsonConvert.SerializeObject(new
-      {
-        data = new Dictionary<string, object?>
-        {
-          ["title"] = normalizedTitle
-        }
-      });
-
-      var createResponse = client.Post(resource, payload);
-      if (client.StatusCode < 200 || client.StatusCode >= 300)
-      {
-        helper.Message(
-          $"Failed to create property '{normalizedTitle}' (status={client.StatusCode}). Response: {createResponse}",
-          1,
-          "ERROR"
-        );
-        return null;
-      }
-
-      var newPropertyId = Helper.ExtractDataId(createResponse);
-      if (string.IsNullOrWhiteSpace(newPropertyId))
-      {
-        helper.Message(
-          $"Failed to create property '{normalizedTitle}': API returned no property id.",
-          1,
-          "ERROR"
-        );
-        return null;
-      }
-
-      propertiesByTitle[normalizedTitle] = newPropertyId;
-      checkedProperties[checkedByTitleKey] = newPropertyId;
-      helper.Message($"Property created on the fly: '{normalizedTitle}' -> {newPropertyId}", 2);
-      return newPropertyId;
+      return Records.FindOrCreate(
+        client, resource,
+        find: () => lookup.First(
+          () => lookup.ByField("title", normalizedTitle),
+          () => FirstExistingProperty(client, resource, lookup, normalizedTitle, log)),
+        attributes: new Dictionary<string, object?> { ["title"] = normalizedTitle },
+        log, $"property '{normalizedTitle}'",
+        create: createOnTheFly,
+        remember: id => lookup.RememberField("title", normalizedTitle, id));
     }
+
+    /// <summary>
+    /// The first property the facility has, if any. Remembered under the requested title so
+    /// the next row asking for the same title does not repeat the round trip.
+    /// </summary>
+    private static string? FirstExistingProperty(IApiClient client, string resource,
+                                                 ResourceLookup lookup, string requestedTitle,
+                                                 ISyncLog log)
+    {
+      var response = client.Get(resource + "?page[number]=1&page[limit]=1");
+      if (!JsonApi.IsSuccess(client.StatusCode)) return null;
+
+      var id = JsonApi.FirstDataId(response);
+      if (string.IsNullOrWhiteSpace(id)) return null;
+
+      lookup.RememberField("title", requestedTitle, id);
+      log.Debug($"Using the facility's existing property for '{requestedTitle}' -> {id}");
+      return id;
+    }
+
+
   }
 }
