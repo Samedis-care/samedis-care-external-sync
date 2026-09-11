@@ -1319,7 +1319,15 @@ internal class Program
                 inventoryLookup.RememberId(resultingId);
                 inventoryLookup.RememberId(rowId, resultingId);
                 inventoryLookup.RememberUniqueField("external_id", inventoryExternalId, resultingId);
-                inventoryLookup.RememberField("device_number", inventoryNumber, resultingId);
+                // Mit variant=regular, weil Cascades.Inventory die Geraetenummer genau so
+                // nachschlaegt (Inventories.ResolveExistingInventoryId) und der Query-Teil im
+                // Cache-Schluessel steckt. Ohne ihn sass die Saat unter
+                // "fields:Equals::device_number=N", gefragt wurde nach
+                // "fields:Equals:variant=regular:device_number=N" -- der gecachte Fehltreffer
+                // der ersten Zeile blieb stehen und eine zweite Zeile mit derselben
+                // Inventarnummer legte ein Duplikat an.
+                inventoryLookup.RememberField("device_number", inventoryNumber, resultingId,
+                                              FilterBuilder.FilterType.Equals, "variant=regular");
               }
 
               if (string.IsNullOrWhiteSpace(targetInventoryId))
@@ -1706,8 +1714,23 @@ internal class Program
             if (samedisClient.StatusCode >= 200 && samedisClient.StatusCode < 300)
             {
               var resultingIssueId = JsonApi.ExtractDataId(response) ?? targetIssueId ?? string.Empty;
+
+              // external_id, nicht issue_number -- das ist der Schluessel, unter dem dieser Sync
+              // die Aufgabe anlegt (siehe die Aufloesung oben), und genau danach fragt die
+              // naechste Zeile mit derselben Quell-Nummer.
+              //
+              // Vorher stand hier RememberField("issue_number", ...). Das war doppelt falsch:
+              // der Schluessel traf nie, weil ResolveIssueIdByIssueNumber ueber ByConditions
+              // sucht und damit unter einem anderen Cache-Schluessel nachschlaegt -- und er war
+              // am falschen Feld, denn issue_number ist die laufende Nummer des SERVERS, nicht
+              // die der Quelle. Haette er getroffen, haette er behauptet, beide seien dasselbe.
+              //
+              // Folge des toten Seeds: der gecachte Fehltreffer der ersten Zeile blieb stehen,
+              // und eine zweite tasks.csv-Zeile zur selben issue_number -- die normale Form, in
+              // der das Format eine Aufgabe mit zwei Protokolldokumenten ausdrueckt -- legte
+              // erneut an und lief in den Unique-Index auf (tenant_id, external_id).
               if (!string.IsNullOrWhiteSpace(issueNumber))
-                issueLookup.RememberField("issue_number", issueNumber, resultingIssueId);
+                issueLookup.RememberUniqueField("external_id", issueNumber, resultingIssueId);
 
               if (isCreateOperation)
               {
