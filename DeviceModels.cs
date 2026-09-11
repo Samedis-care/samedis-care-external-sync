@@ -89,6 +89,7 @@ namespace SamedisExternalSync
       /// <c>updated_at</c> -- so the survivor would not appear in that download at all.
       /// Only the ids the source itself sends reveal a merge.
       /// </para>
+      /// </summary>
       public IDictionary<string, MergedCatalogRemap> Remaps { get; }
         = new Dictionary<string, MergedCatalogRemap>(StringComparer.Ordinal);
     }
