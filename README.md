@@ -159,6 +159,46 @@ Configuration keys are deserialized in snake_case (YAML) to C# classes.
 
 When logfile mode is active, logs are written to `log/Logfile_<date>.log`.
 
+### `inventories`
+
+| Key | Type | Default | Description |
+|---|---|---|---|
+| `inventories.catalog_lookup.enabled` | bool | `false` | Resolve `catalog_id` for **new** inventories from a key the source carries in a column of its own. |
+| `inventories.catalog_lookup.mappings[].column` | string | none | Column in `inventories.csv` the key is read from. |
+| `inventories.catalog_lookup.mappings[].field` | string | none | Device model field to match. Only `external_id`. Mutually exclusive with `regulatory`. |
+| `inventories.catalog_lookup.mappings[].regulatory` | string | none | Key inside the device model's `regulatory` hash. One of `udi_id`, `eudamed_id`, `eudamed_di`, `emtec_id`, `emtec_code`, `emdn_code`, `gmdn_code`. Mutually exclusive with `field`. |
+| `inventories.catalog_lookup.mappings[].upcase` | bool | `false` | Upper-case the CSV value before sending it. The server matches exactly and case-sensitively, and emtec codes are stored upper-cased. |
+
+Without this block an inventory row with no `catalog_id` is resolved by its title and
+manufacturer, and **skipped entirely** when that misses — the backend requires a device
+model on create. A source system that carries its own article number, or a regulatory code
+that travels with the device, can name the model instead of describing it.
+
+Resolution order for a row being created:
+
+1. `catalog_id` from the CSV, if it resolves.
+2. `external_id`, if a mapping names it — always before the regulatory keys, whatever its
+   position in the list.
+3. Each regulatory key, in the order the mappings list them. Every one is asked together
+   with the row's title first, then on its own: a regulatory identifier is not unique in
+   production (one `eudamed_id` covers both "Perfusor Space" and "Perfusor Space PCA").
+4. Title + type-plate manufacturer, then title + responsible manufacturer.
+
+Two limits worth knowing:
+
+- **Create only.** An inventory that already exists keeps the device model it has. Replacing
+  it from a key would undo curation and, where a model was merged away, re-attach the device
+  to the wrong record (samedis-care-issues#2347).
+- **`external_id` resolves through a gridfilter, not through `via/external_id`.** The via
+  route is mounted on the tenant `device_models` endpoint only on `develop`, not in
+  production; the gridfilter works on both and in enterprise scope. Regulatory keys have no
+  via route at all — they are a filtered search (`filter[regulatory][<key>]`) by design.
+
+A key is requested once per run per distinct value, hits and misses alike. A mapping naming
+a field the server does not treat as a key stops the run at startup: the server answers an
+unknown key with an empty result set, which is indistinguishable from "this device model
+does not exist" — the one answer that makes a sync create a duplicate.
+
 ### `http`
 
 | Key | Type | Default | Description |

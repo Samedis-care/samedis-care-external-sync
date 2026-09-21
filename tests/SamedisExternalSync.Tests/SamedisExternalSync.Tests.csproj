@@ -18,6 +18,11 @@
           Link="fixtures/to_samedis/%(Filename)%(Extension)" />
     <None Include="../fixtures/to_samedis/task_documents/*.pdf" CopyToOutputDirectory="PreserveNewest"
           Link="fixtures/to_samedis/task_documents/%(Filename)%(Extension)" />
+    <!-- The shipped example, so a test can prove it still parses: the loader rejects an
+         unknown key outright, and an example that has drifted from AppConfig stops any run
+         that starts from it. -->
+    <None Include="../../config.yml.example" CopyToOutputDirectory="PreserveNewest"
+          Link="config.yml.example" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="../../SamedisExternalSync.csproj" />
