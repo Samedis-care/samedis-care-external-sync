@@ -66,6 +66,10 @@ inventories:
     #               eudamed_di, emtec_id, emtec_code, emdn_code, gmdn_code
     #   upcase:     upper-case the CSV value first; the server matches exactly and
     #               case-sensitively, and emtec codes are stored upper-cased
+    # LICENSING: several of these identifier systems are licensed products of the
+    # organisations that issue them -- EMTEC, GMDN and ECRI/UMDNS among them. Using one as a
+    # lookup key means holding that data in your own export; make sure your licence covers
+    # it before switching this on. This tool neither checks for a licence nor provides one.
     # The order below is the order they are tried in, except that external_id always goes
     # first. See "inventories" in the README.
     mappings: []

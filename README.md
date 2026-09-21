@@ -199,6 +199,12 @@ a field the server does not treat as a key stops the run at startup: the server 
 unknown key with an empty result set, which is indistinguishable from "this device model
 does not exist" — the one answer that makes a sync create a duplicate.
 
+**Licensing.** Several of the identifier systems these keys refer to are licensed products of
+the organisations that issue them — EMTEC, GMDN and ECRI/UMDNS among them. Configuring a
+lookup on one of them means holding and using that data in your own export, so make sure the
+required licence covers it before switching the lookup on. This tool neither checks for a
+licence nor provides one.
+
 ### `http`
 
 | Key | Type | Default | Description |
