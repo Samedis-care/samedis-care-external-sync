@@ -104,6 +104,12 @@ namespace SamedisExternalSync
     /// Whether this row has no inventory in samedis yet. Load-bearing: creating a device
     /// model is a create-only step -- see the comment on that branch.
     /// </param>
+    /// <param name="keys">
+    /// The device-model keys <c>inventories.catalog_lookup</c> read from this row, if any.
+    /// Used only when the row is being created: on an update the inventory already has a
+    /// model, and replacing it from a key would undo curation -- the same reasoning that
+    /// keeps local model creation create-only.
+    /// </param>
     /// <returns>
     /// The catalog id to write, or an empty string when none could be established. Empty is
     /// not an error on an update -- the attribute is then simply left out and the inventory
@@ -118,8 +124,11 @@ namespace SamedisExternalSync
       bool isCreateOperation,
       bool isPlaceholder,
       string rowId = "",
-      string inventoryNumber = "")
+      string inventoryNumber = "",
+      CatalogLookup.Keys? keys = null)
     {
+      // Create-only, see the parameter doc.
+      var lookupKeys = isCreateOperation ? keys : null;
       var catalogId = sourceCatalogId ?? string.Empty;
 
       if (string.IsNullOrWhiteSpace(catalogId))
@@ -133,12 +142,19 @@ namespace SamedisExternalSync
           catalogId = DeviceModels.ResolveCatalogId(
             ctx.DeviceModelLookup,
             title,
-            manufacturer
+            manufacturer,
+            lookupKeys
           ) ?? string.Empty;
 
           if (!string.IsNullOrWhiteSpace(catalogId))
           {
-            ctx.Log.Debug($"Resolved catalog_id '{catalogId}' via device model lookup (title='{title}', manufacturer='{manufacturer}').");
+            // Logged at info rather than debug when a configured key was in play: that path
+            // is the reason the row is no longer skipped, and a run has to be able to show
+            // which key decided it without being switched to debug.
+            if (lookupKeys is { Any: true })
+              ctx.Log.Info($"Resolved catalog_id '{catalogId}' for a new inventory from the configured lookup keys ({lookupKeys.Describe()}, title='{title}', manufacturer='{manufacturer}', inventory_number='{inventoryNumber}').");
+            else
+              ctx.Log.Debug($"Resolved catalog_id '{catalogId}' via device model lookup (title='{title}', manufacturer='{manufacturer}').");
           }
           else if (ctx.MayCreateLocalDeviceModels && isCreateOperation)
           {
@@ -221,7 +237,23 @@ namespace SamedisExternalSync
 
         if (string.IsNullOrWhiteSpace(resolvedCatalogId))
         {
-          ctx.Log.Warn($"catalog_id '{catalogId}' from the source resolves to no device model this facility can see (inventory_number='{inventoryNumber}', title='{title}'). Sending it unchanged; the backend will reject the row with 'Device model can't be blank'. Either the id never existed here, or the model was merged away -- a merge destroys the record and today leaves nothing to resolve it by (samedis-care-issues#2347).");
+          // A configured key is a second chance, and only on a create. The alternative is a
+          // write the backend is certain to reject, so trying the key costs a request on a
+          // row that was going to fail anyway. Not done on an update: there the device keeps
+          // the model it has, and a key pointing somewhere else would move it silently.
+          var rescued = lookupKeys is { Any: true }
+            ? DeviceModels.ResolveCatalogId(ctx.DeviceModelLookup, title, manufacturer, lookupKeys)
+            : null;
+
+          if (!string.IsNullOrWhiteSpace(rescued))
+          {
+            ctx.Log.Warn($"catalog_id '{catalogId}' from the source resolves to no device model this facility can see; writing '{rescued}' found from the configured lookup keys instead ({lookupKeys!.Describe()}, inventory_number='{inventoryNumber}', title='{title}'). Not reported in device_model_merges.csv -- that file records merges the backend resolved, and this is a client-side substitution the source system cannot act on.");
+            catalogId = rescued!;
+          }
+          else
+          {
+            ctx.Log.Warn($"catalog_id '{catalogId}' from the source resolves to no device model this facility can see (inventory_number='{inventoryNumber}', title='{title}'). Sending it unchanged; the backend will reject the row with 'Device model can't be blank'. Either the id never existed here, or the model was merged away -- a merge destroys the record and today leaves nothing to resolve it by (samedis-care-issues#2347).");
+          }
         }
         else if (!string.Equals(resolvedCatalogId, catalogId, StringComparison.Ordinal))
         {
@@ -813,8 +845,13 @@ namespace SamedisExternalSync
       }
     }
     /// <summary>
-    /// Resolves a device model by title and manufacturer.
+    /// Resolves a device model by the keys the source row carries, then by title and
+    /// manufacturer.
     /// </summary>
+    /// <param name="keys">
+    /// What <c>inventories.catalog_lookup</c> read from the row. Empty unless configured, in
+    /// which case this is the title-and-manufacturer lookup it has always been.
+    /// </param>
     /// <remarks>
     /// The manufacturer is tried against two fields because source systems use them
     /// interchangeably: the type-plate manufacturer first, then the currently responsible
@@ -828,8 +865,11 @@ namespace SamedisExternalSync
     /// code.
     /// </para>
     /// </remarks>
-    public static string? ResolveCatalogId(ResourceLookup lookup, string title, string manufacturer)
-      => Cascades.DeviceModel(lookup, null, title, manufacturer, caseInsensitiveTitleMatch: false);
+    public static string? ResolveCatalogId(ResourceLookup lookup, string title, string manufacturer,
+                                           CatalogLookup.Keys? keys = null)
+      => Cascades.DeviceModel(lookup, null, title, manufacturer,
+                              keys?.Regulatory, keys?.ExternalId,
+                              caseInsensitiveTitleMatch: false);
   }
 
   public class WithServiceInterval

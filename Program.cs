@@ -48,6 +48,21 @@ internal class Program
       return;
     }
 
+    // Validated here rather than at first use: a mapping that names a field the server does
+    // not treat as a key fails by resolving nothing, which is indistinguishable from "this
+    // device model does not exist" -- so it has to stop the run, and stopping it after half
+    // an import would be worse than not starting.
+    IReadOnlyList<CatalogLookupMapping> catalogLookupMappings;
+    try
+    {
+      catalogLookupMappings = CatalogLookup.Validate(config.Inventories?.CatalogLookup);
+    }
+    catch (ArgumentException ex)
+    {
+      Abort(log, $"inventories.catalog_lookup in config.yml is invalid: {ex.Message}");
+      return;
+    }
+
     log.Info("Sync started.");
 
     // last run handler (supports legacy date formats and writes ISO datetime with timezone)
@@ -226,6 +241,15 @@ internal class Program
         }
         else
         {
+          // Said once, not per row: a column the CSV does not have reads as an empty cell
+          // everywhere, so a mapping pointing at a misspelled column would leave the lookup
+          // quietly doing nothing for the whole run.
+          var missingLookupColumns = CatalogLookup.Columns(catalogLookupMappings)
+                                                  .Where(c => !uploadTable.Columns.Contains(c))
+                                                  .ToList();
+          if (missingLookupColumns.Count > 0)
+            log.Warn($"inventories.catalog_lookup names {missingLookupColumns.Count} column(s) the CSV does not contain: {string.Join(", ", missingLookupColumns)}. Rows resolve without them.");
+
           // Remembers hits and misses per key kind, which is what the three dictionaries and
           // three "already checked" sets here used to do by hand.
           var inventoryLookup = new ResourceLookup(samedisClient, inventoryResource, scope.KeyLookup);
@@ -646,6 +670,7 @@ internal class Program
                 lookupManufacturer = Rows.Value(row, "company");
 
               var lookupDeviceTypeTitle = Rows.Value(row, "device_type_title");
+              var catalogLookupKeys = CatalogLookup.ValuesFrom(row, catalogLookupMappings);
               var isPlaceholderDeviceModel = Inventories.IsPlaceholderDeviceModel(row);
 
               if (!string.IsNullOrWhiteSpace(sourceLocationId))
@@ -789,7 +814,8 @@ internal class Program
                 isCreateOperation,
                 isPlaceholderDeviceModel,
                 rowId,
-                inventoryNumber
+                inventoryNumber,
+                catalogLookupKeys
               );
 
               if (!string.IsNullOrWhiteSpace(departmentProfitCenterTitle))
