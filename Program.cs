@@ -1583,6 +1583,19 @@ internal class Program
               log.Info($"Inventories Upload finished. {summary}");
             else
               log.Error($"Inventories Upload ABORTED at row {rowNumber} of {uploadTable.Rows.Count}. {summary}");
+
+            // Reported because nothing else can: ResourceLookup takes the first of several
+            // matching device models so the run can proceed, and only records the key it was
+            // ambiguous on. Silence here would be the wrong kind -- the safeguard against it,
+            // narrowing a regulatory identifier by the row's title, is an exact comparison,
+            // so it cannot match on precisely the rows the key lookup exists for: the ones
+            // whose title differs from the catalog's wording. eudamed_di, emdn_code and
+            // gmdn_code are all documented as covering several models.
+            //
+            // In the finally with the summary: an ambiguity seen before an abort is still
+            // worth naming, and after the abort nobody gets another chance to name it.
+            foreach (var ambiguous in deviceModelLookup.AmbiguousMatches)
+              log.Warn($"Device model lookup '{ambiguous}' matched more than one record; the first was used. If that is the wrong model, the key is not specific enough for this catalog -- narrow it or set catalog_id in the source.");
           }
 
 
