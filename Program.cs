@@ -48,6 +48,21 @@ internal class Program
       return;
     }
 
+    // Validated here rather than at first use: a mapping that names a field the server does
+    // not treat as a key fails by resolving nothing, which is indistinguishable from "this
+    // device model does not exist" -- so it has to stop the run, and stopping it after half
+    // an import would be worse than not starting.
+    IReadOnlyList<CatalogLookupMapping> catalogLookupMappings;
+    try
+    {
+      catalogLookupMappings = CatalogLookup.Validate(config.Inventories?.CatalogLookup);
+    }
+    catch (ArgumentException ex)
+    {
+      Abort(log, $"inventories.catalog_lookup in config.yml is invalid: {ex.Message}");
+      return;
+    }
+
     log.Info("Sync started.");
 
     // last run handler (supports legacy date formats and writes ISO datetime with timezone)
@@ -226,6 +241,15 @@ internal class Program
         }
         else
         {
+          // Said once, not per row: a column the CSV does not have reads as an empty cell
+          // everywhere, so a mapping pointing at a misspelled column would leave the lookup
+          // quietly doing nothing for the whole run.
+          var missingLookupColumns = CatalogLookup.Columns(catalogLookupMappings)
+                                                  .Where(c => !uploadTable.Columns.Contains(c))
+                                                  .ToList();
+          if (missingLookupColumns.Count > 0)
+            log.Warn($"inventories.catalog_lookup names {missingLookupColumns.Count} column(s) the CSV does not contain: {string.Join(", ", missingLookupColumns)}. Rows resolve without them.");
+
           // Remembers hits and misses per key kind, which is what the three dictionaries and
           // three "already checked" sets here used to do by hand.
           var inventoryLookup = new ResourceLookup(samedisClient, inventoryResource, scope.KeyLookup);
@@ -593,360 +617,315 @@ internal class Program
           var recommissionedCount = 0;
           var retiredCount = 0;
 
-          foreach (DataRow row in uploadTable.Rows)
+          var completed = false;
+          var rowNumber = 0;
+          try
           {
-            var rowId = Rows.Value(row, "id");
-            var inventoryTitle = Rows.Value(row, "title");
-            if (string.IsNullOrWhiteSpace(inventoryTitle))
-              inventoryTitle = Rows.Value(row, "device_model_title");
-
-            var inventoryNumber = Rows.Value(row, "inventory_number");
-            var inventoryExternalId = Rows.Value(row, "external_id");
-            var departmentCostCenterNumber = Rows.Value(row, "cost_center_number");
-            var departmentTitle = Rows.Value(row, "department");
-            if (string.IsNullOrWhiteSpace(departmentTitle))
-              departmentTitle = Rows.Value(row, "cost_center_description");
-            var departmentNotes = hasDepartmentNotesColumn ? Rows.Value(row, "notes") : string.Empty;
-            var departmentProfitCenterTitle = string.Empty;
-            if (useProfitCenters && hasDepartmentProfitCenterColumn)
+            foreach (DataRow row in uploadTable.Rows)
             {
-              departmentProfitCenterTitle = Rows.Value(row, "profit_center");
-              if (string.IsNullOrWhiteSpace(departmentProfitCenterTitle))
-                departmentProfitCenterTitle = Rows.Value(row, "wirtschaftende_einheit");
-            }
-            var departmentProfitCenterId = string.Empty;
+              rowNumber++;
+              var rowId = Rows.Value(row, "id");
+              var inventoryTitle = Rows.Value(row, "title");
+              if (string.IsNullOrWhiteSpace(inventoryTitle))
+                inventoryTitle = Rows.Value(row, "device_model_title");
 
-            var locationTitle = Rows.Value(row, "location");
-
-            var operationStatus = Rows.Value(row, "operation_status");
-            var sourceBuildingTitle = string.Empty;
-            var sourceFloorTitle = string.Empty;
-            var sourceRoomTitle = string.Empty;
-            var sourceLocationId = Rows.Value(row, "source_location_id");
-            var sourceLocationType = Rows.Value(row, "source_location_type");
-            var normalizedSourceLocationType = sourceLocationType.Trim().ToLowerInvariant();
-            Buildings.SourceBuilding? resolvedSourceBuilding = null;
-            Floors.SourceFloor? resolvedSourceFloor = null;
-            Locations.SourceRoom? resolvedSourceRoom = null;
-            var sourceLocationResolved = false;
-            var catalogId = Rows.Value(row, "catalog_id");
-            var lookupTitle = inventoryTitle;
-            if (string.IsNullOrWhiteSpace(lookupTitle))
-              lookupTitle = Rows.Value(row, "device_model_title");
-
-            var lookupManufacturer = Rows.Value(row, "manufacturer");
-            if (string.IsNullOrWhiteSpace(lookupManufacturer))
-              lookupManufacturer = Rows.Value(row, "responsible_manufacturer");
-            if (string.IsNullOrWhiteSpace(lookupManufacturer))
-              lookupManufacturer = Rows.Value(row, "company");
-
-            var lookupDeviceTypeTitle = Rows.Value(row, "device_type_title");
-            var isPlaceholderDeviceModel = Inventories.IsPlaceholderDeviceModel(row);
-
-            if (!string.IsNullOrWhiteSpace(sourceLocationId))
-            {
-              Buildings.SourceBuilding? resolvedBuilding;
-              Floors.SourceFloor? resolvedFloor;
-              Locations.SourceRoom? resolvedRoom;
-
-              if (normalizedSourceLocationType.Contains("raum") && sourceRooms.TryGetValue(sourceLocationId, out resolvedRoom))
+              var inventoryNumber = Rows.Value(row, "inventory_number");
+              var inventoryExternalId = Rows.Value(row, "external_id");
+              var departmentCostCenterNumber = Rows.Value(row, "cost_center_number");
+              var departmentTitle = Rows.Value(row, "department");
+              if (string.IsNullOrWhiteSpace(departmentTitle))
+                departmentTitle = Rows.Value(row, "cost_center_description");
+              var departmentNotes = hasDepartmentNotesColumn ? Rows.Value(row, "notes") : string.Empty;
+              var departmentProfitCenterTitle = string.Empty;
+              if (useProfitCenters && hasDepartmentProfitCenterColumn)
               {
-                resolvedSourceRoom = resolvedRoom;
-                sourceLocationResolved = true;
-                if (!string.IsNullOrWhiteSpace(resolvedSourceRoom.SourceFloorId))
-                {
-                  if (sourceFloors.TryGetValue(resolvedSourceRoom.SourceFloorId, out resolvedFloor))
-                    resolvedSourceFloor = resolvedFloor;
-                  if (resolvedSourceFloor != null && !string.IsNullOrWhiteSpace(resolvedSourceFloor.SourceBuildingId) && sourceBuildings.TryGetValue(resolvedSourceFloor.SourceBuildingId, out resolvedBuilding))
-                    resolvedSourceBuilding = resolvedBuilding;
-                }
+                departmentProfitCenterTitle = Rows.Value(row, "profit_center");
+                if (string.IsNullOrWhiteSpace(departmentProfitCenterTitle))
+                  departmentProfitCenterTitle = Rows.Value(row, "wirtschaftende_einheit");
               }
-              else if (normalizedSourceLocationType.Contains("ebene") && sourceFloors.TryGetValue(sourceLocationId, out resolvedFloor))
+              var departmentProfitCenterId = string.Empty;
+
+              var locationTitle = Rows.Value(row, "location");
+
+              var operationStatus = Rows.Value(row, "operation_status");
+              var sourceBuildingTitle = string.Empty;
+              var sourceFloorTitle = string.Empty;
+              var sourceRoomTitle = string.Empty;
+              var sourceLocationId = Rows.Value(row, "source_location_id");
+              var sourceLocationType = Rows.Value(row, "source_location_type");
+              var normalizedSourceLocationType = sourceLocationType.Trim().ToLowerInvariant();
+              Buildings.SourceBuilding? resolvedSourceBuilding = null;
+              Floors.SourceFloor? resolvedSourceFloor = null;
+              Locations.SourceRoom? resolvedSourceRoom = null;
+              var sourceLocationResolved = false;
+              var catalogId = Rows.Value(row, "catalog_id");
+              var lookupTitle = inventoryTitle;
+              if (string.IsNullOrWhiteSpace(lookupTitle))
+                lookupTitle = Rows.Value(row, "device_model_title");
+
+              var lookupManufacturer = Rows.Value(row, "manufacturer");
+              if (string.IsNullOrWhiteSpace(lookupManufacturer))
+                lookupManufacturer = Rows.Value(row, "responsible_manufacturer");
+              if (string.IsNullOrWhiteSpace(lookupManufacturer))
+                lookupManufacturer = Rows.Value(row, "company");
+
+              var lookupDeviceTypeTitle = Rows.Value(row, "device_type_title");
+              var catalogLookupKeys = CatalogLookup.ValuesFrom(row, catalogLookupMappings);
+              var isPlaceholderDeviceModel = Inventories.IsPlaceholderDeviceModel(row);
+
+              if (!string.IsNullOrWhiteSpace(sourceLocationId))
               {
-                resolvedSourceFloor = resolvedFloor;
-                sourceLocationResolved = true;
-                if (!string.IsNullOrWhiteSpace(resolvedSourceFloor.SourceBuildingId) && sourceBuildings.TryGetValue(resolvedSourceFloor.SourceBuildingId, out resolvedBuilding))
-                  resolvedSourceBuilding = resolvedBuilding;
-              }
-              else if (normalizedSourceLocationType.Contains("geb") && sourceBuildings.TryGetValue(sourceLocationId, out resolvedBuilding))
-              {
-                resolvedSourceBuilding = resolvedBuilding;
-                sourceLocationResolved = true;
-              }
-              else
-              {
-                if (sourceRooms.TryGetValue(sourceLocationId, out resolvedRoom))
+                Buildings.SourceBuilding? resolvedBuilding;
+                Floors.SourceFloor? resolvedFloor;
+                Locations.SourceRoom? resolvedRoom;
+
+                if (normalizedSourceLocationType.Contains("raum") && sourceRooms.TryGetValue(sourceLocationId, out resolvedRoom))
                 {
                   resolvedSourceRoom = resolvedRoom;
                   sourceLocationResolved = true;
-                  if (!string.IsNullOrWhiteSpace(resolvedSourceRoom.SourceFloorId) && sourceFloors.TryGetValue(resolvedSourceRoom.SourceFloorId, out resolvedFloor))
+                  if (!string.IsNullOrWhiteSpace(resolvedSourceRoom.SourceFloorId))
                   {
-                    resolvedSourceFloor = resolvedFloor;
-                    if (!string.IsNullOrWhiteSpace(resolvedSourceFloor.SourceBuildingId) && sourceBuildings.TryGetValue(resolvedSourceFloor.SourceBuildingId, out resolvedBuilding))
+                    if (sourceFloors.TryGetValue(resolvedSourceRoom.SourceFloorId, out resolvedFloor))
+                      resolvedSourceFloor = resolvedFloor;
+                    if (resolvedSourceFloor != null && !string.IsNullOrWhiteSpace(resolvedSourceFloor.SourceBuildingId) && sourceBuildings.TryGetValue(resolvedSourceFloor.SourceBuildingId, out resolvedBuilding))
                       resolvedSourceBuilding = resolvedBuilding;
                   }
                 }
-                else if (sourceFloors.TryGetValue(sourceLocationId, out resolvedFloor))
+                else if (normalizedSourceLocationType.Contains("ebene") && sourceFloors.TryGetValue(sourceLocationId, out resolvedFloor))
                 {
                   resolvedSourceFloor = resolvedFloor;
                   sourceLocationResolved = true;
                   if (!string.IsNullOrWhiteSpace(resolvedSourceFloor.SourceBuildingId) && sourceBuildings.TryGetValue(resolvedSourceFloor.SourceBuildingId, out resolvedBuilding))
                     resolvedSourceBuilding = resolvedBuilding;
                 }
-                else if (sourceBuildings.TryGetValue(sourceLocationId, out resolvedBuilding))
+                else if (normalizedSourceLocationType.Contains("geb") && sourceBuildings.TryGetValue(sourceLocationId, out resolvedBuilding))
                 {
                   resolvedSourceBuilding = resolvedBuilding;
                   sourceLocationResolved = true;
                 }
-              }
-
-              if (string.IsNullOrWhiteSpace(sourceBuildingTitle))
-                sourceBuildingTitle = resolvedSourceBuilding?.Title ?? string.Empty;
-              if (string.IsNullOrWhiteSpace(sourceFloorTitle))
-                sourceFloorTitle = resolvedSourceFloor?.Title ?? string.Empty;
-              if (string.IsNullOrWhiteSpace(sourceRoomTitle))
-                sourceRoomTitle = resolvedSourceRoom?.Title ?? string.Empty;
-            }
-
-            var isRetiredRow = Inventories.IsRetiredOperationStatus(operationStatus);
-            var targetInventoryId = Inventories.ResolveExistingInventoryId(
-              inventoryLookup,
-              rowId,
-              inventoryExternalId,
-              inventoryNumber,
-              config.Sync.InventoriesUploadFallbackByDeviceNumber
-            );
-            var isCreateOperation = string.IsNullOrWhiteSpace(targetInventoryId);
-
-            if (isRetiredRow && !string.IsNullOrWhiteSpace(targetInventoryId))
-            {
-              // Existing device that is retired ("Ausgemustert") in the source CSV.
-              // Retirement must go through a device_retired ISSUE -- retirement_date is
-              // read-only and a status-only PUT would leave the device non-recommissionable.
-              // The issue lets the backend set retirement_date and keeps the device
-              // reversible later via recommission_device. We do NOT run the normal
-              // update PUT for retired rows (it would be rejected with "Device retired."
-              // anyway), so we handle it here and move on to the next row.
-
-              // Idempotency: if the device is already retired in samedis, do nothing --
-              // posting another device_retired issue would just accumulate duplicate
-              // done issues without changing anything.
-              if (Inventories.IsInventoryDeviceRetired(samedisClient, inventoryResource, targetInventoryId))
-              {
-                skippedCount++;
-                log.Debug($"Inventory already retired in samedis, no device_retired issue needed (id='{targetInventoryId}', inventory_number='{inventoryNumber}').");
-                continue;
-              }
-
-              var retirementDateForIssue = Helper.NormalizeDate(Rows.Value(row, "retirement_date"));
-              var retiredResponse = Inventories.PostDeviceRetiredIssue(
-                samedisClient,
-                issuesResource,
-                targetInventoryId,
-                inventoryNumber,
-                inventoryTitle,
-                retirementDateForIssue,
-                log
-              );
-
-              if (samedisClient.StatusCode >= 200 && samedisClient.StatusCode < 300)
-              {
-                retiredCount++;
-                updatedCount++;
-                log.Debug($"Inventory retired via device_retired issue (id='{targetInventoryId}', inventory_number='{inventoryNumber}', title='{inventoryTitle}').");
-              }
-              else if (Inventories.IsAlreadyRetiredError(retiredResponse))
-              {
-                // Already retired in samedis -- nothing to do, no error.
-                skippedCount++;
-                log.Debug($"Inventory already retired in samedis, no device_retired issue needed (id='{targetInventoryId}', inventory_number='{inventoryNumber}').");
-              }
-              else
-              {
-                errorCount++;
-                log.Error($"Failed to retire inventory via device_retired issue (id='{targetInventoryId}', title='{inventoryTitle}', inventory_number='{inventoryNumber}', status={samedisClient.StatusCode}). Response: {retiredResponse}");
-              }
-
-              continue;
-            }
-
-            // Retired row whose device does NOT exist in samedis: it is created here
-            // like any other device, but ACTIVE (the backend rejects creating a device
-            // directly in retired state). After a successful create it is retired
-            // properly via a device_retired issue -- see the create-success handling.
-
-            catalogId = DeviceModels.ResolveCatalogIdForInventoryRow(
-              inventoryCatalogContext,
-              catalogId,
-              lookupTitle,
-              lookupManufacturer,
-              lookupDeviceTypeTitle,
-              isCreateOperation,
-              isPlaceholderDeviceModel,
-              rowId,
-              inventoryNumber
-            );
-
-            if (!string.IsNullOrWhiteSpace(departmentProfitCenterTitle))
-            {
-              departmentProfitCenterId = ProfitCenters.ResolveProfitCenterId(
-                samedisClient,
-                profitCentersResource,
-                departmentProfitCenterTitle,
-                config.Sync.InventoriesUploadCreateDepartmentsOnTheFly,
-                rowId,
-                inventoryTitle,
-                profitCenterLookup,
-                log
-              ) ?? string.Empty;
-
-              if (string.IsNullOrWhiteSpace(departmentProfitCenterId))
-              {
-                log.Warn($"Profit center '{departmentProfitCenterTitle}' could not be resolved/created for inventory row (id='{rowId}', inventory_number='{inventoryNumber}'). Department will be synced without profit center.");
-                departmentProfitCenterTitle = string.Empty;
-              }
-            }
-
-            var departmentId = Departments.ResolveDepartmentId(
-              samedisClient,
-              departmentsResource,
-              Rows.Value(row, "department_id"),
-              departmentCostCenterNumber,
-              departmentTitle,
-              departmentNotes,
-              config.Sync.InventoriesUploadCreateDepartmentsOnTheFly,
-              rowId,
-              inventoryTitle,
-              departmentLookup,
-              syncedDepartmentProfitCenters,
-              log,
-              departmentProfitCenterTitle
-            );
-
-            if ((!string.IsNullOrWhiteSpace(departmentTitle) || !string.IsNullOrWhiteSpace(departmentCostCenterNumber)) && string.IsNullOrWhiteSpace(departmentId))
-            {
-              log.Warn($"Department could not be resolved/created (title='{departmentTitle}', cost_center_number='{departmentCostCenterNumber}', id='{rowId}', inventory_number='{inventoryNumber}'). Proceeding without department reference.");
-            }
-            else if (!string.IsNullOrWhiteSpace(departmentId) && !string.IsNullOrWhiteSpace(departmentProfitCenterId))
-            {
-              ProfitCenters.EnsureDepartmentAssigned(
-                samedisClient,
-                profitCentersResource,
-                departmentProfitCenterId,
-                departmentId,
-                linkedProfitCenterDepartments,
-                log
-              );
-            }
-
-            string? locationId = null;
-            if (useExtendedDeviceLocations)
-            {
-              if (string.IsNullOrWhiteSpace(sourceLocationId))
-              {
-                // A completely empty source_location_id is an expected normal case
-                // (~35% of rows have no location at all), not a problem -- log it at
-                // debug level instead of flooding the WARN log.
-                log.Debug($"Property mode: source_location_id is missing for inventory row (id='{rowId}', inventory_number='{inventoryNumber}'). Proceeding without location reference.");
-              }
-              else if (!sourceLocationResolved)
-              {
-                var resolvedByExternalId = false;
-
-                var roomByExternalId = Locations.ResolveLocationId(
-                  samedisClient,
-                  locationsResource,
-                  string.Empty,
-                  string.Empty,
-                  false,
-                  rowId,
-                  inventoryTitle,
-                  locationLookup,
-                  log,
-                  null,
-                  null,
-                  null,
-                  null,
-                  sourceLocationId
-                );
-                if (!string.IsNullOrWhiteSpace(roomByExternalId))
+                else
                 {
-                  locationId = roomByExternalId;
-                  resolvedByExternalId = true;
-                }
-
-                string? floorByExternalId = null;
-                if (!resolvedByExternalId)
-                {
-                  floorByExternalId = Floors.ResolveFloorId(
-                    samedisClient,
-                    floorsResource,
-                    string.Empty,
-                    string.Empty,
-                    false,
-                    rowId,
-                    inventoryTitle,
-                    floorLookup,
-                    log,
-                    sourceLocationId
-                  );
-                  if (!string.IsNullOrWhiteSpace(floorByExternalId))
+                  if (sourceRooms.TryGetValue(sourceLocationId, out resolvedRoom))
                   {
-                    // createOnTheFly: when only the floor matches via external_id we still need
-                    // a room to attach the inventory to. Create the "Keine Raumzuordnung"
-                    // placeholder under that floor on demand (same flag as the hierarchy pre-sync).
-                    locationId = Locations.ResolveLocationId(
-                      samedisClient,
-                      locationsResource,
-                      string.Empty,
-                      roomPlaceholderTitle,
-                      createPropertyHierarchyOnImport,
-                      rowId,
-                      inventoryTitle,
-                      locationLookup,
-                      log,
-                      propertyIdForHierarchySync,
-                      null,
-                      floorByExternalId
-                    );
-                    resolvedByExternalId = !string.IsNullOrWhiteSpace(locationId);
+                    resolvedSourceRoom = resolvedRoom;
+                    sourceLocationResolved = true;
+                    if (!string.IsNullOrWhiteSpace(resolvedSourceRoom.SourceFloorId) && sourceFloors.TryGetValue(resolvedSourceRoom.SourceFloorId, out resolvedFloor))
+                    {
+                      resolvedSourceFloor = resolvedFloor;
+                      if (!string.IsNullOrWhiteSpace(resolvedSourceFloor.SourceBuildingId) && sourceBuildings.TryGetValue(resolvedSourceFloor.SourceBuildingId, out resolvedBuilding))
+                        resolvedSourceBuilding = resolvedBuilding;
+                    }
+                  }
+                  else if (sourceFloors.TryGetValue(sourceLocationId, out resolvedFloor))
+                  {
+                    resolvedSourceFloor = resolvedFloor;
+                    sourceLocationResolved = true;
+                    if (!string.IsNullOrWhiteSpace(resolvedSourceFloor.SourceBuildingId) && sourceBuildings.TryGetValue(resolvedSourceFloor.SourceBuildingId, out resolvedBuilding))
+                      resolvedSourceBuilding = resolvedBuilding;
+                  }
+                  else if (sourceBuildings.TryGetValue(sourceLocationId, out resolvedBuilding))
+                  {
+                    resolvedSourceBuilding = resolvedBuilding;
+                    sourceLocationResolved = true;
                   }
                 }
 
-                if (!resolvedByExternalId)
+                if (string.IsNullOrWhiteSpace(sourceBuildingTitle))
+                  sourceBuildingTitle = resolvedSourceBuilding?.Title ?? string.Empty;
+                if (string.IsNullOrWhiteSpace(sourceFloorTitle))
+                  sourceFloorTitle = resolvedSourceFloor?.Title ?? string.Empty;
+                if (string.IsNullOrWhiteSpace(sourceRoomTitle))
+                  sourceRoomTitle = resolvedSourceRoom?.Title ?? string.Empty;
+              }
+
+              var isRetiredRow = Inventories.IsRetiredOperationStatus(operationStatus);
+              var targetInventoryId = Inventories.ResolveExistingInventoryId(
+                inventoryLookup,
+                rowId,
+                inventoryExternalId,
+                inventoryNumber,
+                config.Sync.InventoriesUploadFallbackByDeviceNumber
+              );
+              var isCreateOperation = string.IsNullOrWhiteSpace(targetInventoryId);
+
+              if (isRetiredRow && !string.IsNullOrWhiteSpace(targetInventoryId))
+              {
+                // Existing device that is retired ("Ausgemustert") in the source CSV.
+                // Retirement must go through a device_retired ISSUE -- retirement_date is
+                // read-only and a status-only PUT would leave the device non-recommissionable.
+                // The issue lets the backend set retirement_date and keeps the device
+                // reversible later via recommission_device. We do NOT run the normal
+                // update PUT for retired rows (it would be rejected with "Device retired."
+                // anyway), so we handle it here and move on to the next row.
+
+                // Idempotency: if the device is already retired in samedis, do nothing --
+                // posting another device_retired issue would just accumulate duplicate
+                // done issues without changing anything.
+                if (Inventories.IsInventoryDeviceRetired(samedisClient, inventoryResource, targetInventoryId))
                 {
-                  var buildingByExternalId = Buildings.ResolveBuildingId(
+                  skippedCount++;
+                  log.Debug($"Inventory already retired in samedis, no device_retired issue needed (id='{targetInventoryId}', inventory_number='{inventoryNumber}').");
+                  continue;
+                }
+
+                var retirementDateForIssue = Helper.NormalizeDate(Rows.Value(row, "retirement_date"));
+                var retiredResponse = Inventories.PostDeviceRetiredIssue(
+                  samedisClient,
+                  issuesResource,
+                  targetInventoryId,
+                  inventoryNumber,
+                  inventoryTitle,
+                  retirementDateForIssue,
+                  log
+                );
+
+                if (samedisClient.StatusCode >= 200 && samedisClient.StatusCode < 300)
+                {
+                  retiredCount++;
+                  updatedCount++;
+                  log.Debug($"Inventory retired via device_retired issue (id='{targetInventoryId}', inventory_number='{inventoryNumber}', title='{inventoryTitle}').");
+                }
+                else if (Inventories.IsAlreadyRetiredError(retiredResponse))
+                {
+                  // Already retired in samedis -- nothing to do, no error.
+                  skippedCount++;
+                  log.Debug($"Inventory already retired in samedis, no device_retired issue needed (id='{targetInventoryId}', inventory_number='{inventoryNumber}').");
+                }
+                else
+                {
+                  errorCount++;
+                  log.Error($"Failed to retire inventory via device_retired issue (id='{targetInventoryId}', title='{inventoryTitle}', inventory_number='{inventoryNumber}', status={samedisClient.StatusCode}). Response: {retiredResponse}");
+                }
+
+                continue;
+              }
+
+              // Retired row whose device does NOT exist in samedis: it is created here
+              // like any other device, but ACTIVE (the backend rejects creating a device
+              // directly in retired state). After a successful create it is retired
+              // properly via a device_retired issue -- see the create-success handling.
+
+              catalogId = DeviceModels.ResolveCatalogIdForInventoryRow(
+                inventoryCatalogContext,
+                catalogId,
+                lookupTitle,
+                lookupManufacturer,
+                lookupDeviceTypeTitle,
+                isCreateOperation,
+                isPlaceholderDeviceModel,
+                rowId,
+                inventoryNumber,
+                catalogLookupKeys
+              );
+
+              if (!string.IsNullOrWhiteSpace(departmentProfitCenterTitle))
+              {
+                departmentProfitCenterId = ProfitCenters.ResolveProfitCenterId(
+                  samedisClient,
+                  profitCentersResource,
+                  departmentProfitCenterTitle,
+                  config.Sync.InventoriesUploadCreateDepartmentsOnTheFly,
+                  rowId,
+                  inventoryTitle,
+                  profitCenterLookup,
+                  log
+                ) ?? string.Empty;
+
+                if (string.IsNullOrWhiteSpace(departmentProfitCenterId))
+                {
+                  log.Warn($"Profit center '{departmentProfitCenterTitle}' could not be resolved/created for inventory row (id='{rowId}', inventory_number='{inventoryNumber}'). Department will be synced without profit center.");
+                  departmentProfitCenterTitle = string.Empty;
+                }
+              }
+
+              var departmentId = Departments.ResolveDepartmentId(
+                samedisClient,
+                departmentsResource,
+                Rows.Value(row, "department_id"),
+                departmentCostCenterNumber,
+                departmentTitle,
+                departmentNotes,
+                config.Sync.InventoriesUploadCreateDepartmentsOnTheFly,
+                rowId,
+                inventoryTitle,
+                departmentLookup,
+                syncedDepartmentProfitCenters,
+                log,
+                departmentProfitCenterTitle
+              );
+
+              if ((!string.IsNullOrWhiteSpace(departmentTitle) || !string.IsNullOrWhiteSpace(departmentCostCenterNumber)) && string.IsNullOrWhiteSpace(departmentId))
+              {
+                log.Warn($"Department could not be resolved/created (title='{departmentTitle}', cost_center_number='{departmentCostCenterNumber}', id='{rowId}', inventory_number='{inventoryNumber}'). Proceeding without department reference.");
+              }
+              else if (!string.IsNullOrWhiteSpace(departmentId) && !string.IsNullOrWhiteSpace(departmentProfitCenterId))
+              {
+                ProfitCenters.EnsureDepartmentAssigned(
+                  samedisClient,
+                  profitCentersResource,
+                  departmentProfitCenterId,
+                  departmentId,
+                  linkedProfitCenterDepartments,
+                  log
+                );
+              }
+
+              string? locationId = null;
+              if (useExtendedDeviceLocations)
+              {
+                if (string.IsNullOrWhiteSpace(sourceLocationId))
+                {
+                  // A completely empty source_location_id is an expected normal case
+                  // (~35% of rows have no location at all), not a problem -- log it at
+                  // debug level instead of flooding the WARN log.
+                  log.Debug($"Property mode: source_location_id is missing for inventory row (id='{rowId}', inventory_number='{inventoryNumber}'). Proceeding without location reference.");
+                }
+                else if (!sourceLocationResolved)
+                {
+                  var resolvedByExternalId = false;
+
+                  var roomByExternalId = Locations.ResolveLocationId(
                     samedisClient,
-                    buildingsResource,
-                    propertyIdForHierarchySync ?? string.Empty,
+                    locationsResource,
+                    string.Empty,
                     string.Empty,
                     false,
                     rowId,
                     inventoryTitle,
-                    buildingLookup,
+                    locationLookup,
                     log,
+                    null,
+                    null,
+                    null,
+                    null,
                     sourceLocationId
                   );
-                  if (!string.IsNullOrWhiteSpace(buildingByExternalId))
+                  if (!string.IsNullOrWhiteSpace(roomByExternalId))
                   {
-                    // createOnTheFly: when only the building matches via external_id we have
-                    // neither a floor nor a room to attach the inventory to. Rooms live below
-                    // floors, so create the "Keine Ebenenzuordnung" placeholder floor under that
-                    // building first, then the "Keine Raumzuordnung" placeholder room under that
-                    // floor on demand and assign the inventory to it.
-                    var buildingFloorPlaceholderId = Floors.ResolveFloorId(
+                    locationId = roomByExternalId;
+                    resolvedByExternalId = true;
+                  }
+
+                  string? floorByExternalId = null;
+                  if (!resolvedByExternalId)
+                  {
+                    floorByExternalId = Floors.ResolveFloorId(
                       samedisClient,
                       floorsResource,
-                      buildingByExternalId,
-                      floorPlaceholderTitle,
-                      createPropertyHierarchyOnImport,
+                      string.Empty,
+                      string.Empty,
+                      false,
                       rowId,
                       inventoryTitle,
                       floorLookup,
-                      log
+                      log,
+                      sourceLocationId
                     );
-                    if (!string.IsNullOrWhiteSpace(buildingFloorPlaceholderId))
+                    if (!string.IsNullOrWhiteSpace(floorByExternalId))
                     {
+                      // createOnTheFly: when only the floor matches via external_id we still need
+                      // a room to attach the inventory to. Create the "Keine Raumzuordnung"
+                      // placeholder under that floor on demand (same flag as the hierarchy pre-sync).
                       locationId = Locations.ResolveLocationId(
                         samedisClient,
                         locationsResource,
@@ -958,588 +937,667 @@ internal class Program
                         locationLookup,
                         log,
                         propertyIdForHierarchySync,
-                        buildingByExternalId,
-                        buildingFloorPlaceholderId
+                        null,
+                        floorByExternalId
                       );
                       resolvedByExternalId = !string.IsNullOrWhiteSpace(locationId);
                     }
-                    else
+                  }
+
+                  if (!resolvedByExternalId)
+                  {
+                    var buildingByExternalId = Buildings.ResolveBuildingId(
+                      samedisClient,
+                      buildingsResource,
+                      propertyIdForHierarchySync ?? string.Empty,
+                      string.Empty,
+                      false,
+                      rowId,
+                      inventoryTitle,
+                      buildingLookup,
+                      log,
+                      sourceLocationId
+                    );
+                    if (!string.IsNullOrWhiteSpace(buildingByExternalId))
                     {
-                      log.Warn($"Property mode: building matched via external_id '{sourceLocationId}' but the placeholder floor '{floorPlaceholderTitle}' could not be created/resolved (id='{rowId}', inventory_number='{inventoryNumber}'). Proceeding without location reference.");
+                      // createOnTheFly: when only the building matches via external_id we have
+                      // neither a floor nor a room to attach the inventory to. Rooms live below
+                      // floors, so create the "Keine Ebenenzuordnung" placeholder floor under that
+                      // building first, then the "Keine Raumzuordnung" placeholder room under that
+                      // floor on demand and assign the inventory to it.
+                      var buildingFloorPlaceholderId = Floors.ResolveFloorId(
+                        samedisClient,
+                        floorsResource,
+                        buildingByExternalId,
+                        floorPlaceholderTitle,
+                        createPropertyHierarchyOnImport,
+                        rowId,
+                        inventoryTitle,
+                        floorLookup,
+                        log
+                      );
+                      if (!string.IsNullOrWhiteSpace(buildingFloorPlaceholderId))
+                      {
+                        locationId = Locations.ResolveLocationId(
+                          samedisClient,
+                          locationsResource,
+                          string.Empty,
+                          roomPlaceholderTitle,
+                          createPropertyHierarchyOnImport,
+                          rowId,
+                          inventoryTitle,
+                          locationLookup,
+                          log,
+                          propertyIdForHierarchySync,
+                          buildingByExternalId,
+                          buildingFloorPlaceholderId
+                        );
+                        resolvedByExternalId = !string.IsNullOrWhiteSpace(locationId);
+                      }
+                      else
+                      {
+                        log.Warn($"Property mode: building matched via external_id '{sourceLocationId}' but the placeholder floor '{floorPlaceholderTitle}' could not be created/resolved (id='{rowId}', inventory_number='{inventoryNumber}'). Proceeding without location reference.");
+                      }
                     }
                   }
-                }
 
-                if (resolvedByExternalId)
-                {
-                  log.Debug($"Property mode: resolved source_location_id '{sourceLocationId}' via API external_id lookup (id='{rowId}', inventory_number='{inventoryNumber}').");
-                  goto SkipPropertyLocationAssignment;
-                }
-
-                log.Warn($"Property mode: source_location_id '{sourceLocationId}' could not be mapped from CSV or resolved by API external_id (id='{rowId}', inventory_number='{inventoryNumber}'). Proceeding without location reference.");
-              }
-              else
-              {
-                var roomTitle = string.IsNullOrWhiteSpace(sourceRoomTitle) ? locationTitle : sourceRoomTitle;
-                var roomIdFromCsv = string.Empty;
-                var roomNotes = string.Empty;
-                var isBuildingSourceReference =
-                  normalizedSourceLocationType.Contains("geb") ||
-                  (!string.IsNullOrWhiteSpace(sourceBuildingTitle) &&
-                   string.IsNullOrWhiteSpace(sourceFloorTitle) &&
-                   string.IsNullOrWhiteSpace(sourceRoomTitle));
-                var isFloorSourceReference =
-                  normalizedSourceLocationType.Contains("ebene") ||
-                  (!string.IsNullOrWhiteSpace(sourceFloorTitle) &&
-                   string.IsNullOrWhiteSpace(sourceRoomTitle));
-                var isRoomSourceReference =
-                  normalizedSourceLocationType.Contains("raum") ||
-                  !string.IsNullOrWhiteSpace(sourceRoomTitle);
-
-                if (isRoomSourceReference && resolvedSourceRoom == null && (resolvedSourceFloor != null || resolvedSourceBuilding != null))
-                {
-                  var resolvedAs = resolvedSourceFloor != null ? "floor" : "building";
-                  log.Warn($"Property mode: source_location_type '{sourceLocationType}' indicates room, but source_location_id '{sourceLocationId}' maps to a {resolvedAs} in CSV hierarchy. Falling back to placeholder room handling.");
-                  isRoomSourceReference = false;
-                  if (resolvedSourceFloor != null)
-                    isFloorSourceReference = true;
-                  else
-                    isBuildingSourceReference = true;
-                }
-
-                if (isRoomSourceReference && !string.IsNullOrWhiteSpace(sourceLocationId))
-                  roomIdFromCsv = sourceLocationId;
-
-                // A floor/building source location still needs a room target.
-                if (!isRoomSourceReference && (isFloorSourceReference || isBuildingSourceReference))
-                {
-                  roomTitle = roomPlaceholderTitle;
-                  roomIdFromCsv = string.Empty;
-                }
-                else if (resolvedSourceRoom != null && !string.IsNullOrWhiteSpace(resolvedSourceRoom.PlisCode))
-                {
-                  roomNotes = $"PLIS Code: {resolvedSourceRoom.PlisCode.Trim()}";
-                }
-
-                if (string.IsNullOrWhiteSpace(roomTitle) && string.IsNullOrWhiteSpace(roomIdFromCsv))
-                {
-                  log.Warn($"Property mode: final room title could not be determined from source_location_id '{sourceLocationId}' (id='{rowId}', inventory_number='{inventoryNumber}'). Proceeding without location reference.");
-                  goto SkipPropertyLocationAssignment;
-                }
-                else if (string.IsNullOrWhiteSpace(roomTitle) && !string.IsNullOrWhiteSpace(roomIdFromCsv))
-                {
-                  log.Debug($"Property mode: room title missing for source_location_id '{sourceLocationId}' (id='{rowId}', inventory_number='{inventoryNumber}'). Attempting room resolution by external_id only.");
-                }
-
-                if (string.IsNullOrWhiteSpace(propertyIdForHierarchySync))
-                {
-                  log.Warn($"Property mode: hierarchy property reference is missing (id='{rowId}', inventory_number='{inventoryNumber}'). Proceeding without location reference.");
-                  goto SkipPropertyLocationAssignment;
-                }
-
-                string? buildingId = null;
-                if (!string.IsNullOrWhiteSpace(sourceBuildingTitle))
-                {
-                  var sourceBuildingExternalId = resolvedSourceBuilding?.SourceId ?? (isBuildingSourceReference ? sourceLocationId : string.Empty);
-                  buildingId = Buildings.ResolveBuildingId(
-                    samedisClient,
-                    buildingsResource,
-                    propertyIdForHierarchySync,
-                    sourceBuildingTitle,
-                    false,
-                    rowId,
-                    inventoryTitle,
-                    buildingLookup,
-                    log,
-                    sourceBuildingExternalId
-                  );
-                  if (string.IsNullOrWhiteSpace(buildingId))
+                  if (resolvedByExternalId)
                   {
-                    log.Warn($"Property mode: building '{sourceBuildingTitle}' could not be resolved in imported hierarchy (id='{rowId}', inventory_number='{inventoryNumber}'). Proceeding without location reference.");
+                    log.Debug($"Property mode: resolved source_location_id '{sourceLocationId}' via API external_id lookup (id='{rowId}', inventory_number='{inventoryNumber}').");
                     goto SkipPropertyLocationAssignment;
                   }
-                }
 
-                string? floorId = null;
-                if (!string.IsNullOrWhiteSpace(sourceFloorTitle))
+                  log.Warn($"Property mode: source_location_id '{sourceLocationId}' could not be mapped from CSV or resolved by API external_id (id='{rowId}', inventory_number='{inventoryNumber}'). Proceeding without location reference.");
+                }
+                else
                 {
-                  var sourceFloorExternalId = resolvedSourceFloor?.SourceId ?? (isFloorSourceReference ? sourceLocationId : string.Empty);
-                  if (string.IsNullOrWhiteSpace(buildingId))
+                  var roomTitle = string.IsNullOrWhiteSpace(sourceRoomTitle) ? locationTitle : sourceRoomTitle;
+                  var roomIdFromCsv = string.Empty;
+                  var roomNotes = string.Empty;
+                  var isBuildingSourceReference =
+                    normalizedSourceLocationType.Contains("geb") ||
+                    (!string.IsNullOrWhiteSpace(sourceBuildingTitle) &&
+                     string.IsNullOrWhiteSpace(sourceFloorTitle) &&
+                     string.IsNullOrWhiteSpace(sourceRoomTitle));
+                  var isFloorSourceReference =
+                    normalizedSourceLocationType.Contains("ebene") ||
+                    (!string.IsNullOrWhiteSpace(sourceFloorTitle) &&
+                     string.IsNullOrWhiteSpace(sourceRoomTitle));
+                  var isRoomSourceReference =
+                    normalizedSourceLocationType.Contains("raum") ||
+                    !string.IsNullOrWhiteSpace(sourceRoomTitle);
+
+                  if (isRoomSourceReference && resolvedSourceRoom == null && (resolvedSourceFloor != null || resolvedSourceBuilding != null))
                   {
-                    log.Warn($"Property mode: floor '{sourceFloorTitle}' requires a resolved building from source hierarchy (id='{rowId}', inventory_number='{inventoryNumber}'). Proceeding without location reference.");
+                    var resolvedAs = resolvedSourceFloor != null ? "floor" : "building";
+                    log.Warn($"Property mode: source_location_type '{sourceLocationType}' indicates room, but source_location_id '{sourceLocationId}' maps to a {resolvedAs} in CSV hierarchy. Falling back to placeholder room handling.");
+                    isRoomSourceReference = false;
+                    if (resolvedSourceFloor != null)
+                      isFloorSourceReference = true;
+                    else
+                      isBuildingSourceReference = true;
+                  }
+
+                  if (isRoomSourceReference && !string.IsNullOrWhiteSpace(sourceLocationId))
+                    roomIdFromCsv = sourceLocationId;
+
+                  // A floor/building source location still needs a room target.
+                  if (!isRoomSourceReference && (isFloorSourceReference || isBuildingSourceReference))
+                  {
+                    roomTitle = roomPlaceholderTitle;
+                    roomIdFromCsv = string.Empty;
+                  }
+                  else if (resolvedSourceRoom != null && !string.IsNullOrWhiteSpace(resolvedSourceRoom.PlisCode))
+                  {
+                    roomNotes = $"PLIS Code: {resolvedSourceRoom.PlisCode.Trim()}";
+                  }
+
+                  if (string.IsNullOrWhiteSpace(roomTitle) && string.IsNullOrWhiteSpace(roomIdFromCsv))
+                  {
+                    log.Warn($"Property mode: final room title could not be determined from source_location_id '{sourceLocationId}' (id='{rowId}', inventory_number='{inventoryNumber}'). Proceeding without location reference.");
                     goto SkipPropertyLocationAssignment;
                   }
-                  else
+                  else if (string.IsNullOrWhiteSpace(roomTitle) && !string.IsNullOrWhiteSpace(roomIdFromCsv))
+                  {
+                    log.Debug($"Property mode: room title missing for source_location_id '{sourceLocationId}' (id='{rowId}', inventory_number='{inventoryNumber}'). Attempting room resolution by external_id only.");
+                  }
+
+                  if (string.IsNullOrWhiteSpace(propertyIdForHierarchySync))
+                  {
+                    log.Warn($"Property mode: hierarchy property reference is missing (id='{rowId}', inventory_number='{inventoryNumber}'). Proceeding without location reference.");
+                    goto SkipPropertyLocationAssignment;
+                  }
+
+                  string? buildingId = null;
+                  if (!string.IsNullOrWhiteSpace(sourceBuildingTitle))
+                  {
+                    var sourceBuildingExternalId = resolvedSourceBuilding?.SourceId ?? (isBuildingSourceReference ? sourceLocationId : string.Empty);
+                    buildingId = Buildings.ResolveBuildingId(
+                      samedisClient,
+                      buildingsResource,
+                      propertyIdForHierarchySync,
+                      sourceBuildingTitle,
+                      false,
+                      rowId,
+                      inventoryTitle,
+                      buildingLookup,
+                      log,
+                      sourceBuildingExternalId
+                    );
+                    if (string.IsNullOrWhiteSpace(buildingId))
+                    {
+                      log.Warn($"Property mode: building '{sourceBuildingTitle}' could not be resolved in imported hierarchy (id='{rowId}', inventory_number='{inventoryNumber}'). Proceeding without location reference.");
+                      goto SkipPropertyLocationAssignment;
+                    }
+                  }
+
+                  string? floorId = null;
+                  if (!string.IsNullOrWhiteSpace(sourceFloorTitle))
+                  {
+                    var sourceFloorExternalId = resolvedSourceFloor?.SourceId ?? (isFloorSourceReference ? sourceLocationId : string.Empty);
+                    if (string.IsNullOrWhiteSpace(buildingId))
+                    {
+                      log.Warn($"Property mode: floor '{sourceFloorTitle}' requires a resolved building from source hierarchy (id='{rowId}', inventory_number='{inventoryNumber}'). Proceeding without location reference.");
+                      goto SkipPropertyLocationAssignment;
+                    }
+                    else
+                    {
+                      floorId = Floors.ResolveFloorId(
+                        samedisClient,
+                        floorsResource,
+                        buildingId,
+                        sourceFloorTitle,
+                        false,
+                        rowId,
+                        inventoryTitle,
+                        floorLookup,
+                        log,
+                        sourceFloorExternalId
+                      );
+                      if (string.IsNullOrWhiteSpace(floorId))
+                      {
+                        log.Warn($"Property mode: floor '{sourceFloorTitle}' could not be resolved in imported hierarchy (id='{rowId}', inventory_number='{inventoryNumber}'). Proceeding without location reference.");
+                        goto SkipPropertyLocationAssignment;
+                      }
+                    }
+                  }
+
+                  // A building reference brings no floor with it, and a room needs one. The
+                  // same placeholder is created in the external_id path further up; without it
+                  // here, every inventory whose source location is a building ends up with no
+                  // location at all.
+                  if (string.IsNullOrWhiteSpace(floorId) && isBuildingSourceReference
+                      && !string.IsNullOrWhiteSpace(buildingId))
                   {
                     floorId = Floors.ResolveFloorId(
                       samedisClient,
                       floorsResource,
                       buildingId,
-                      sourceFloorTitle,
-                      false,
+                      floorPlaceholderTitle,
+                      createPropertyHierarchyOnImport,
                       rowId,
                       inventoryTitle,
                       floorLookup,
-                      log,
-                      sourceFloorExternalId
+                      log
                     );
+
                     if (string.IsNullOrWhiteSpace(floorId))
                     {
-                      log.Warn($"Property mode: floor '{sourceFloorTitle}' could not be resolved in imported hierarchy (id='{rowId}', inventory_number='{inventoryNumber}'). Proceeding without location reference.");
+                      log.Warn($"Property mode: the placeholder floor '{floorPlaceholderTitle}' could not be created below building '{buildingId}' (id='{rowId}', inventory_number='{inventoryNumber}'). Proceeding without location reference.");
                       goto SkipPropertyLocationAssignment;
                     }
+
+                    log.Debug($"Property mode: created/resolved placeholder floor '{floorPlaceholderTitle}' below building '{buildingId}' (id='{rowId}', inventory_number='{inventoryNumber}').");
                   }
-                }
 
-                // A building reference brings no floor with it, and a room needs one. The
-                // same placeholder is created in the external_id path further up; without it
-                // here, every inventory whose source location is a building ends up with no
-                // location at all.
-                if (string.IsNullOrWhiteSpace(floorId) && isBuildingSourceReference
-                    && !string.IsNullOrWhiteSpace(buildingId))
-                {
-                  floorId = Floors.ResolveFloorId(
-                    samedisClient,
-                    floorsResource,
-                    buildingId,
-                    floorPlaceholderTitle,
-                    createPropertyHierarchyOnImport,
-                    rowId,
-                    inventoryTitle,
-                    floorLookup,
-                    log
-                  );
-
-                  if (string.IsNullOrWhiteSpace(floorId))
+                  if (!string.IsNullOrWhiteSpace(roomTitle) &&
+                      isFloorSourceReference &&
+                      string.IsNullOrWhiteSpace(floorId) &&
+                      string.IsNullOrWhiteSpace(roomIdFromCsv))
                   {
-                    log.Warn($"Property mode: the placeholder floor '{floorPlaceholderTitle}' could not be created below building '{buildingId}' (id='{rowId}', inventory_number='{inventoryNumber}'). Proceeding without location reference.");
+                    log.Warn($"Property mode: room '{roomTitle}' needs a resolved floor from source hierarchy (id='{rowId}', inventory_number='{inventoryNumber}'). Proceeding without location reference.");
                     goto SkipPropertyLocationAssignment;
                   }
-
-                  log.Debug($"Property mode: created/resolved placeholder floor '{floorPlaceholderTitle}' below building '{buildingId}' (id='{rowId}', inventory_number='{inventoryNumber}').");
-                }
-
-                if (!string.IsNullOrWhiteSpace(roomTitle) &&
-                    isFloorSourceReference &&
-                    string.IsNullOrWhiteSpace(floorId) &&
-                    string.IsNullOrWhiteSpace(roomIdFromCsv))
-                {
-                  log.Warn($"Property mode: room '{roomTitle}' needs a resolved floor from source hierarchy (id='{rowId}', inventory_number='{inventoryNumber}'). Proceeding without location reference.");
-                  goto SkipPropertyLocationAssignment;
-                }
-                else if (!string.IsNullOrWhiteSpace(roomTitle) &&
-                         isBuildingSourceReference &&
-                         string.IsNullOrWhiteSpace(buildingId) &&
-                         string.IsNullOrWhiteSpace(roomIdFromCsv))
-                {
-                  log.Warn($"Property mode: room '{roomTitle}' needs a resolved building from source hierarchy (id='{rowId}', inventory_number='{inventoryNumber}'). Proceeding without location reference.");
-                  goto SkipPropertyLocationAssignment;
-                }
-                else
-                {
-                  var resolveRoomByExternalOnly = !string.IsNullOrWhiteSpace(roomIdFromCsv);
-                  if (resolveRoomByExternalOnly)
+                  else if (!string.IsNullOrWhiteSpace(roomTitle) &&
+                           isBuildingSourceReference &&
+                           string.IsNullOrWhiteSpace(buildingId) &&
+                           string.IsNullOrWhiteSpace(roomIdFromCsv))
                   {
-                    if (roomIdBySourceId.TryGetValue(roomIdFromCsv, out var mappedLocationId) && !string.IsNullOrWhiteSpace(mappedLocationId))
+                    log.Warn($"Property mode: room '{roomTitle}' needs a resolved building from source hierarchy (id='{rowId}', inventory_number='{inventoryNumber}'). Proceeding without location reference.");
+                    goto SkipPropertyLocationAssignment;
+                  }
+                  else
+                  {
+                    var resolveRoomByExternalOnly = !string.IsNullOrWhiteSpace(roomIdFromCsv);
+                    if (resolveRoomByExternalOnly)
                     {
-                      locationId = mappedLocationId;
-                      log.Debug($"Property mode: resolved room from CSV/pre-sync cache by source_location_id '{roomIdFromCsv}' -> '{locationId}' (id='{rowId}', inventory_number='{inventoryNumber}').");
+                      if (roomIdBySourceId.TryGetValue(roomIdFromCsv, out var mappedLocationId) && !string.IsNullOrWhiteSpace(mappedLocationId))
+                      {
+                        locationId = mappedLocationId;
+                        log.Debug($"Property mode: resolved room from CSV/pre-sync cache by source_location_id '{roomIdFromCsv}' -> '{locationId}' (id='{rowId}', inventory_number='{inventoryNumber}').");
+                      }
+                      else
+                      {
+                        log.Debug($"Property mode: source_location_id '{roomIdFromCsv}' not found in CSV/pre-sync cache. Resolving via API external_id only (type='{sourceLocationType}', id='{rowId}', inventory_number='{inventoryNumber}').");
+
+                        locationId = Locations.ResolveLocationId(
+                          samedisClient,
+                          locationsResource,
+                          string.Empty,
+                          string.Empty,
+                          false,
+                          rowId,
+                          inventoryTitle,
+                          locationLookup,
+                          log,
+                          null,
+                          null,
+                          null,
+                          null,
+                          roomIdFromCsv
+                        );
+                      }
+
+                      if (string.IsNullOrWhiteSpace(locationId))
+                      {
+                        log.Warn($"Property mode: room lookup via source_location_id '{roomIdFromCsv}' failed (source_location_type='{sourceLocationType}', id='{rowId}', inventory_number='{inventoryNumber}'). Proceeding without location reference.");
+                        goto SkipPropertyLocationAssignment;
+                      }
                     }
                     else
                     {
-                      log.Debug($"Property mode: source_location_id '{roomIdFromCsv}' not found in CSV/pre-sync cache. Resolving via API external_id only (type='{sourceLocationType}', id='{rowId}', inventory_number='{inventoryNumber}').");
-
+                      // createPropertyHierarchyOnImport, not false: where the source location
+                      // is a floor or a building, roomTitle is the placeholder room, and a
+                      // lookup that may not create it can never succeed on a first import.
+                      // The external_id path above already creates the same placeholder.
                       locationId = Locations.ResolveLocationId(
                         samedisClient,
                         locationsResource,
                         string.Empty,
-                        string.Empty,
-                        false,
+                        roomTitle,
+                        createPropertyHierarchyOnImport,
                         rowId,
                         inventoryTitle,
                         locationLookup,
                         log,
-                        null,
-                        null,
-                        null,
-                        null,
+                        propertyIdForHierarchySync,
+                        buildingId,
+                        floorId,
+                        roomNotes,
                         roomIdFromCsv
                       );
                     }
 
-                    if (string.IsNullOrWhiteSpace(locationId))
+                    if (!string.IsNullOrWhiteSpace(roomTitle) && string.IsNullOrWhiteSpace(locationId))
                     {
-                      log.Warn($"Property mode: room lookup via source_location_id '{roomIdFromCsv}' failed (source_location_type='{sourceLocationType}', id='{rowId}', inventory_number='{inventoryNumber}'). Proceeding without location reference.");
+                      log.Warn($"Property mode: room '{roomTitle}' could not be resolved in imported hierarchy (source_location_id='{sourceLocationId}', source_location_type='{sourceLocationType}', building_id='{buildingId}', floor_id='{floorId}', id='{rowId}', inventory_number='{inventoryNumber}'). Proceeding without location reference.");
                       goto SkipPropertyLocationAssignment;
                     }
                   }
-                  else
-                  {
-                    // createPropertyHierarchyOnImport, not false: where the source location
-                    // is a floor or a building, roomTitle is the placeholder room, and a
-                    // lookup that may not create it can never succeed on a first import.
-                    // The external_id path above already creates the same placeholder.
-                    locationId = Locations.ResolveLocationId(
-                      samedisClient,
-                      locationsResource,
-                      string.Empty,
-                      roomTitle,
-                      createPropertyHierarchyOnImport,
-                      rowId,
-                      inventoryTitle,
-                      locationLookup,
-                      log,
-                      propertyIdForHierarchySync,
-                      buildingId,
-                      floorId,
-                      roomNotes,
-                      roomIdFromCsv
-                    );
-                  }
-
-                  if (!string.IsNullOrWhiteSpace(roomTitle) && string.IsNullOrWhiteSpace(locationId))
-                  {
-                    log.Warn($"Property mode: room '{roomTitle}' could not be resolved in imported hierarchy (source_location_id='{sourceLocationId}', source_location_type='{sourceLocationType}', building_id='{buildingId}', floor_id='{floorId}', id='{rowId}', inventory_number='{inventoryNumber}'). Proceeding without location reference.");
-                    goto SkipPropertyLocationAssignment;
-                  }
                 }
-              }
 
-            SkipPropertyLocationAssignment:
-              ;
-            }
-            else
-            {
-              var standardLocationId = Rows.Value(row, "location_id");
-
-              locationId = Locations.ResolveLocationId(
-                samedisClient,
-                locationsResource,
-                standardLocationId,
-                locationTitle,
-                createStandardLocationsOnTheFly,
-                rowId,
-                inventoryTitle,
-                locationLookup,
-                log
-              );
-
-              if (!string.IsNullOrWhiteSpace(locationTitle) && string.IsNullOrWhiteSpace(locationId))
-              {
-                skippedCount++;
-                log.Warn($"Skipped inventory row because location '{locationTitle}' could not be resolved/created (id='{rowId}', inventory_number='{inventoryNumber}').");
-                continue;
-              }
-            }
-
-            var attributes = Inventories.BuildInventoryAttributes(row, departmentId, locationId, numberFormat, catalogId, isCreateOperation);
-            if (!isCreateOperation)
-              attributes.Remove("comments_field");
-
-            if (resolveServicePartnerCompany)
-            {
-              var servicePartnerName = Rows.Value(row, "service_partner");
-              if (!string.IsNullOrWhiteSpace(servicePartnerName))
-              {
-                var servicePartnerCompanyId = Contacts.ResolveCompanyContactId(
-                  samedisClient,
-                  contactsResource,
-                  servicePartnerName,
-                  false,
-                  manufacturerLookup,
-                  log,
-                  rowId,
-                  inventoryTitle
-                );
-
-                if (!string.IsNullOrWhiteSpace(servicePartnerCompanyId))
-                {
-                  var serviceCompanyIds = attributes.TryGetValue("service_company_ids", out var existingIds) && existingIds is List<string> ids
-                    ? ids
-                    : new List<string>();
-                  if (!serviceCompanyIds.Contains(servicePartnerCompanyId))
-                    serviceCompanyIds.Add(servicePartnerCompanyId);
-                  attributes["service_company_ids"] = serviceCompanyIds;
-                }
-                else
-                {
-                  log.Warn($"service_partner company '{servicePartnerName}' konnte nicht aufgelöst werden (id='{rowId}', inventory_number='{inventoryNumber}') – wird ohne Service-Company hochgeladen.");
-                }
-              }
-            }
-
-            if (attributes.Count == 0)
-            {
-              skippedCount++;
-              log.Warn($"Skipped inventory row because no writable fields were provided (id='{rowId}', inventory_number='{inventoryNumber}').");
-              continue;
-            }
-
-            if (isCreateOperation && string.IsNullOrWhiteSpace(catalogId) && !isPlaceholderDeviceModel)
-            {
-              skippedCount++;
-              log.Warn($"Skipped inventory row because no existing inventory was found and catalog_id is missing (id='{rowId}', inventory_number='{inventoryNumber}').");
-              continue;
-            }
-
-            string? response;
-            var operation = isCreateOperation ? "create" : "update";
-            if (operation == "create")
-              attributes["status"] = "created";
-
-            // A retired device cannot be created directly in retired state (backend
-            // rejects it). Create it ACTIVE; it is retired afterwards via a
-            // device_retired issue in the create-success handler below.
-            // (retirement_date is never part of the payload -- see BuildInventoryAttributes.)
-            if (operation == "create" && isRetiredRow)
-              attributes["operation_status"] = "active";
-
-            var requestPayload = JsonConvert.SerializeObject(new
-            {
-              data = attributes
-            });
-
-            if (string.IsNullOrWhiteSpace(targetInventoryId))
-            {
-              response = samedisClient.Post(inventoryWriteResource, requestPayload);
-            }
-            else
-            {
-              response = samedisClient.Put(inventoryWriteResource, targetInventoryId, requestPayload);
-            }
-
-            void HandleInventorySuccess(string? successResponse)
-            {
-              var resultingId = JsonApi.ExtractDataId(successResponse) ?? targetInventoryId ?? rowId;
-              if (!string.IsNullOrWhiteSpace(resultingId))
-              {
-                // Seed every key this row was identified by, so a later row referring to the
-                // same device is answered from memory instead of asking for what this run
-                // just wrote.
-                inventoryLookup.RememberId(resultingId);
-                inventoryLookup.RememberId(rowId, resultingId);
-                inventoryLookup.RememberUniqueField("external_id", inventoryExternalId, resultingId);
-                // Mit variant=regular, weil Cascades.Inventory die Geraetenummer genau so
-                // nachschlaegt (Inventories.ResolveExistingInventoryId) und der Query-Teil im
-                // Cache-Schluessel steckt. Ohne ihn sass die Saat unter
-                // "fields:Equals::device_number=N", gefragt wurde nach
-                // "fields:Equals:variant=regular:device_number=N" -- der gecachte Fehltreffer
-                // der ersten Zeile blieb stehen und eine zweite Zeile mit derselben
-                // Inventarnummer legte ein Duplikat an.
-                inventoryLookup.RememberField("device_number", inventoryNumber, resultingId,
-                                              FilterBuilder.FilterType.Equals, "variant=regular");
-              }
-
-              if (string.IsNullOrWhiteSpace(targetInventoryId))
-              {
-                createdCount++;
-                log.Debug($"Inventory created (inventory_number='{inventoryNumber}', id='{resultingId}').");
-
-                // Source row is retired: the device was just created ACTIVE -- retire
-                // it now via a device_retired issue so it ends up consistently retired.
-                if (isRetiredRow && !string.IsNullOrWhiteSpace(resultingId))
-                {
-                  var retDate = Helper.NormalizeDate(Rows.Value(row, "retirement_date"));
-                  var retResp = Inventories.PostDeviceRetiredIssue(
-                    samedisClient, issuesResource, resultingId, inventoryNumber, inventoryTitle, retDate, log);
-                  if (samedisClient.StatusCode >= 200 && samedisClient.StatusCode < 300)
-                  {
-                    retiredCount++;
-                    log.Debug($"Newly created inventory retired via device_retired issue (inventory_number='{inventoryNumber}', id='{resultingId}').");
-                  }
-                  else
-                  {
-                    log.Warn($"Inventory created but device_retired issue failed (inventory_number='{inventoryNumber}', id='{resultingId}', status={samedisClient.StatusCode}). Response: {retResp}");
-                  }
-                }
+              SkipPropertyLocationAssignment:
+                ;
               }
               else
               {
-                updatedCount++;
-                log.Debug($"Inventory updated (inventory_number='{inventoryNumber}', id='{targetInventoryId}').");
-              }
-            }
+                var standardLocationId = Rows.Value(row, "location_id");
 
-            if (samedisClient.StatusCode >= 200 && samedisClient.StatusCode < 300)
-            {
-              HandleInventorySuccess(response);
-            }
-            else
-            {
-              // Special handling: device is retired in samedis but the source CSV
-              // delivers it as no longer retired. The samedis API rejects the update
-              // with HTTP 400 "Device retired." (Inventory#check_retired, which looks at
-              // the persisted device_retired flag only). In that case we create a closed
-              // "recommission_device" issue to flip the device back to active, then retry
-              // the update once.
-              var recommissionRetrySucceeded = false;
-              // Status/body of the request that ultimately failed. Set explicitly whenever
-              // a later diagnostic request (state re-read) would otherwise overwrite the
-              // client's StatusCode before it is logged.
-              var failedStatus = samedisClient.StatusCode;
-              var failedResponse = response;
-
-              // A create cannot be recommissioned: we have no id the row maps to, yet the
-              // backend matched an existing retired record. Make that visible instead of
-              // logging it as a generic failure -- it means the identity mapping
-              // (id -> external_id -> device_number) missed a device that does exist.
-              if (isCreateOperation
-                  && failedStatus == 400
-                  && Inventories.IsDeviceRetiredError(failedResponse))
-              {
-                log.Warn($"Create was rejected with \"Device retired.\" -- an existing retired device was not resolvable by id/external_id/device_number "
-                  + $"(external_id='{inventoryExternalId}', inventory_number='{inventoryNumber}', title='{inventoryTitle}'). Check the identity mapping; no recommission attempted.");
-              }
-
-              if (!isCreateOperation
-                  && !isRetiredRow
-                  && !string.IsNullOrWhiteSpace(targetInventoryId)
-                  && samedisClient.StatusCode == 400
-                  && Inventories.IsDeviceRetiredError(response))
-              {
-                // Resolve the canonical samedis inventory id via the full lookup
-                // priority (samedis id -> external_id -> inventory_number) before
-                // recommissioning. The source CSV may deliver a CHANGED inventory
-                // number for the same physical device, so external_id is the stable
-                // anchor; we must recommission and retry-update the exact device this
-                // row maps to, not whatever a (possibly changed) number points at.
-                var recommissionInventoryId = Inventories.ResolveExistingInventoryId(
-                  inventoryLookup,
-                  rowId,
-                  inventoryExternalId,
-                  inventoryNumber,
-                  config.Sync.InventoriesUploadFallbackByDeviceNumber
-                );
-                if (string.IsNullOrWhiteSpace(recommissionInventoryId))
-                  recommissionInventoryId = targetInventoryId;
-
-                // A recommission_device issue only takes effect when the device's
-                // operation_status is 'retired'. Issue#propagate_recommission_device just
-                // assigns inventory_operation_status='active', and the write in
-                // Issue#update_operation_status! starts with
-                // `return unless inventory_operation_status_changed?`. So on a device with
-                // device_retired=true but operation_status='active'/'decommissioned' the
-                // recommission is a SILENT no-op: the issue is created with 2xx, the device
-                // stays retired, the retry below fails again, and the next run adds another
-                // useless issue. That inconsistent state is the one behind
-                // samedis-care-issues#2380.
-                //
-                // Normalize it first with a device_retired issue (WITHOUT deleting the
-                // device's open tasks -- we are about to reactivate it): that sets
-                // device_retired=true AND operation_status='retired', which makes the
-                // recommission below a real state change.
-                var retirementStateKnown = Inventories.TryGetRetirementState(
+                locationId = Locations.ResolveLocationId(
                   samedisClient,
-                  inventoryResource,
-                  recommissionInventoryId,
-                  out var persistedDeviceRetired,
-                  out var persistedOperationStatus
+                  locationsResource,
+                  standardLocationId,
+                  locationTitle,
+                  createStandardLocationsOnTheFly,
+                  rowId,
+                  inventoryTitle,
+                  locationLookup,
+                  log
                 );
 
-                var skipRecommission = false;
-
-                if (retirementStateKnown && !persistedDeviceRetired)
+                if (!string.IsNullOrWhiteSpace(locationTitle) && string.IsNullOrWhiteSpace(locationId))
                 {
-                  // "Device retired." is raised by Inventory#check_retired, which only ever
-                  // looks at device_retired -- so this combination should be impossible.
-                  // Don't post a recommission issue: the backend would reject it with
-                  // "The inventory is not retired and therefore cannot be recommissioned."
-                  skipRecommission = true;
-                  log.Warn($"Update was rejected with \"Device retired.\" although the device reports device_retired=false "
-                    + $"(operation_status='{persistedOperationStatus}', id='{recommissionInventoryId}', inventory_number='{inventoryNumber}'). "
-                    + "Skipping recommission -- needs backend investigation.");
+                  skippedCount++;
+                  log.Warn($"Skipped inventory row because location '{locationTitle}' could not be resolved/created (id='{rowId}', inventory_number='{inventoryNumber}').");
+                  continue;
                 }
-                else if (retirementStateKnown
-                         && !Inventories.IsRetiredOperationStatus(persistedOperationStatus))
+              }
+
+              var attributes = Inventories.BuildInventoryAttributes(row, departmentId, locationId, numberFormat, catalogId, isCreateOperation);
+              if (!isCreateOperation)
+                attributes.Remove("comments_field");
+
+              if (resolveServicePartnerCompany)
+              {
+                var servicePartnerName = Rows.Value(row, "service_partner");
+                if (!string.IsNullOrWhiteSpace(servicePartnerName))
                 {
-                  log.Warn($"Inconsistent retirement state (device_retired=true but operation_status='{persistedOperationStatus}'): a recommission alone would be a silent no-op. "
-                    + $"Creating a device_retired issue to normalize first (id='{recommissionInventoryId}', inventory_number='{inventoryNumber}').");
-                  var normalizeResponse = Inventories.PostDeviceRetiredIssue(
+                  var servicePartnerCompanyId = Contacts.ResolveCompanyContactId(
                     samedisClient,
-                    issuesResource,
-                    recommissionInventoryId,
-                    inventoryNumber,
-                    inventoryTitle,
-                    null,
+                    contactsResource,
+                    servicePartnerName,
+                    false,
+                    manufacturerLookup,
                     log,
-                    deleteOpenTasks: false
-                  );
-                  if (samedisClient.StatusCode < 200 || samedisClient.StatusCode >= 300)
-                  {
-                    log.Warn($"Normalizing device_retired issue was rejected (id='{recommissionInventoryId}', inventory_number='{inventoryNumber}', status={samedisClient.StatusCode}). "
-                      + $"The recommission below will most likely stay without effect. Response: {normalizeResponse}");
-                  }
-                }
-
-                // Stay silent at log level 1 when the recommission+retry succeeds --
-                // the resulting inventory update will already be counted via
-                // HandleInventorySuccess (which logs at level 2). Only escalate to
-                // WARN/ERROR if the recommission or the retry itself fails.
-                log.Debug($"Inventory is retired in samedis but CSV row is not (id='{recommissionInventoryId}', external_id='{inventoryExternalId}', inventory_number='{inventoryNumber}'). Attempting recommission and update retry.");
-
-                var recommissionResponse = skipRecommission
-                  ? null
-                  : Inventories.PostRecommissionIssue(
-                    samedisClient,
-                    issuesResource,
-                    recommissionInventoryId,
-                    inventoryNumber,
-                    inventoryTitle,
-                    log
+                    rowId,
+                    inventoryTitle
                   );
 
-                if (recommissionResponse != null)
-                {
-                  response = samedisClient.Put(inventoryWriteResource, recommissionInventoryId, requestPayload);
-                  if (samedisClient.StatusCode >= 200 && samedisClient.StatusCode < 300)
+                  if (!string.IsNullOrWhiteSpace(servicePartnerCompanyId))
                   {
-                    log.Debug($"Inventory recommissioned and updated after retry (inventory_number='{inventoryNumber}', id='{recommissionInventoryId}').");
-                    HandleInventorySuccess(response);
-                    recommissionedCount++;
-                    recommissionRetrySucceeded = true;
+                    var serviceCompanyIds = attributes.TryGetValue("service_company_ids", out var existingIds) && existingIds is List<string> ids
+                      ? ids
+                      : new List<string>();
+                    if (!serviceCompanyIds.Contains(servicePartnerCompanyId))
+                      serviceCompanyIds.Add(servicePartnerCompanyId);
+                    attributes["service_company_ids"] = serviceCompanyIds;
                   }
                   else
                   {
-                    // Level 1 on purpose: without this line a failed retry is
-                    // indistinguishable in the default log from the recommission
-                    // path never having engaged (all other recommission messages
-                    // are level 2).
-                    // Keep the retry's outcome: the state re-read below issues another
-                    // request and would otherwise overwrite StatusCode for this message
-                    // and for the ERROR line at the end of this block.
-                    failedStatus = samedisClient.StatusCode;
-                    failedResponse = response;
-
-                    // Re-read the state so the log carries the evidence instead of a guess:
-                    // device_retired=true here means the recommission_device issue was
-                    // created (2xx) without clearing the retirement.
-                    var stateAfterKnown = Inventories.TryGetRetirementState(
-                      samedisClient,
-                      inventoryResource,
-                      recommissionInventoryId,
-                      out var deviceRetiredAfter,
-                      out var operationStatusAfter
-                    );
-                    var stateAfter = stateAfterKnown
-                      ? $"device_retired={deviceRetiredAfter.ToString().ToLowerInvariant()}, operation_status='{operationStatusAfter}'"
-                      : "state could not be re-read";
-
-                    log.Warn($"Recommission issue was created but the update retry was still rejected (id='{recommissionInventoryId}', inventory_number='{inventoryNumber}', status={failedStatus}, {stateAfter}). "
-                      + "The recommission_device issue did not clear the retirement -- needs backend investigation (samedis-care-issues#2380).");
+                    log.Warn($"service_partner company '{servicePartnerName}' konnte nicht aufgelöst werden (id='{rowId}', inventory_number='{inventoryNumber}') – wird ohne Service-Company hochgeladen.");
                   }
                 }
               }
 
-              if (!recommissionRetrySucceeded)
+              if (attributes.Count == 0)
               {
-                errorCount++;
-                var failedInventoryId = string.IsNullOrWhiteSpace(targetInventoryId) ? rowId : targetInventoryId;
-                log.Error($"Failed to {operation} inventory (id='{failedInventoryId}', title='{inventoryTitle}', inventory_number='{inventoryNumber}', status={failedStatus}). Response: {failedResponse}");
+                skippedCount++;
+                log.Warn($"Skipped inventory row because no writable fields were provided (id='{rowId}', inventory_number='{inventoryNumber}').");
+                continue;
+              }
+
+              if (isCreateOperation && string.IsNullOrWhiteSpace(catalogId) && !isPlaceholderDeviceModel)
+              {
+                skippedCount++;
+                log.Warn($"Skipped inventory row because no existing inventory was found and catalog_id is missing (id='{rowId}', inventory_number='{inventoryNumber}').");
+                continue;
+              }
+
+              string? response;
+              var operation = isCreateOperation ? "create" : "update";
+              if (operation == "create")
+                attributes["status"] = "created";
+
+              // A retired device cannot be created directly in retired state (backend
+              // rejects it). Create it ACTIVE; it is retired afterwards via a
+              // device_retired issue in the create-success handler below.
+              // (retirement_date is never part of the payload -- see BuildInventoryAttributes.)
+              if (operation == "create" && isRetiredRow)
+                attributes["operation_status"] = "active";
+
+              var requestPayload = JsonConvert.SerializeObject(new
+              {
+                data = attributes
+              });
+
+              if (string.IsNullOrWhiteSpace(targetInventoryId))
+              {
+                response = samedisClient.Post(inventoryWriteResource, requestPayload);
+              }
+              else
+              {
+                response = samedisClient.Put(inventoryWriteResource, targetInventoryId, requestPayload);
+              }
+
+              void HandleInventorySuccess(string? successResponse)
+              {
+                var resultingId = JsonApi.ExtractDataId(successResponse) ?? targetInventoryId ?? rowId;
+                if (!string.IsNullOrWhiteSpace(resultingId))
+                {
+                  // Seed every key this row was identified by, so a later row referring to the
+                  // same device is answered from memory instead of asking for what this run
+                  // just wrote.
+                  inventoryLookup.RememberId(resultingId);
+                  inventoryLookup.RememberId(rowId, resultingId);
+                  inventoryLookup.RememberUniqueField("external_id", inventoryExternalId, resultingId);
+                  // Mit variant=regular, weil Cascades.Inventory die Geraetenummer genau so
+                  // nachschlaegt (Inventories.ResolveExistingInventoryId) und der Query-Teil im
+                  // Cache-Schluessel steckt. Ohne ihn sass die Saat unter
+                  // "fields:Equals::device_number=N", gefragt wurde nach
+                  // "fields:Equals:variant=regular:device_number=N" -- der gecachte Fehltreffer
+                  // der ersten Zeile blieb stehen und eine zweite Zeile mit derselben
+                  // Inventarnummer legte ein Duplikat an.
+                  inventoryLookup.RememberField("device_number", inventoryNumber, resultingId,
+                                                FilterBuilder.FilterType.Equals, "variant=regular");
+                }
+
+                if (string.IsNullOrWhiteSpace(targetInventoryId))
+                {
+                  createdCount++;
+                  log.Debug($"Inventory created (inventory_number='{inventoryNumber}', id='{resultingId}').");
+
+                  // Source row is retired: the device was just created ACTIVE -- retire
+                  // it now via a device_retired issue so it ends up consistently retired.
+                  if (isRetiredRow && !string.IsNullOrWhiteSpace(resultingId))
+                  {
+                    var retDate = Helper.NormalizeDate(Rows.Value(row, "retirement_date"));
+                    var retResp = Inventories.PostDeviceRetiredIssue(
+                      samedisClient, issuesResource, resultingId, inventoryNumber, inventoryTitle, retDate, log);
+                    if (samedisClient.StatusCode >= 200 && samedisClient.StatusCode < 300)
+                    {
+                      retiredCount++;
+                      log.Debug($"Newly created inventory retired via device_retired issue (inventory_number='{inventoryNumber}', id='{resultingId}').");
+                    }
+                    else
+                    {
+                      log.Warn($"Inventory created but device_retired issue failed (inventory_number='{inventoryNumber}', id='{resultingId}', status={samedisClient.StatusCode}). Response: {retResp}");
+                    }
+                  }
+                }
+                else
+                {
+                  updatedCount++;
+                  log.Debug($"Inventory updated (inventory_number='{inventoryNumber}', id='{targetInventoryId}').");
+                }
+              }
+
+              if (samedisClient.StatusCode >= 200 && samedisClient.StatusCode < 300)
+              {
+                HandleInventorySuccess(response);
+              }
+              else
+              {
+                // Special handling: device is retired in samedis but the source CSV
+                // delivers it as no longer retired. The samedis API rejects the update
+                // with HTTP 400 "Device retired." (Inventory#check_retired, which looks at
+                // the persisted device_retired flag only). In that case we create a closed
+                // "recommission_device" issue to flip the device back to active, then retry
+                // the update once.
+                var recommissionRetrySucceeded = false;
+                // Status/body of the request that ultimately failed. Set explicitly whenever
+                // a later diagnostic request (state re-read) would otherwise overwrite the
+                // client's StatusCode before it is logged.
+                var failedStatus = samedisClient.StatusCode;
+                var failedResponse = response;
+
+                // A create cannot be recommissioned: we have no id the row maps to, yet the
+                // backend matched an existing retired record. Make that visible instead of
+                // logging it as a generic failure -- it means the identity mapping
+                // (id -> external_id -> device_number) missed a device that does exist.
+                if (isCreateOperation
+                    && failedStatus == 400
+                    && Inventories.IsDeviceRetiredError(failedResponse))
+                {
+                  log.Warn($"Create was rejected with \"Device retired.\" -- an existing retired device was not resolvable by id/external_id/device_number "
+                    + $"(external_id='{inventoryExternalId}', inventory_number='{inventoryNumber}', title='{inventoryTitle}'). Check the identity mapping; no recommission attempted.");
+                }
+
+                if (!isCreateOperation
+                    && !isRetiredRow
+                    && !string.IsNullOrWhiteSpace(targetInventoryId)
+                    && samedisClient.StatusCode == 400
+                    && Inventories.IsDeviceRetiredError(response))
+                {
+                  // Resolve the canonical samedis inventory id via the full lookup
+                  // priority (samedis id -> external_id -> inventory_number) before
+                  // recommissioning. The source CSV may deliver a CHANGED inventory
+                  // number for the same physical device, so external_id is the stable
+                  // anchor; we must recommission and retry-update the exact device this
+                  // row maps to, not whatever a (possibly changed) number points at.
+                  var recommissionInventoryId = Inventories.ResolveExistingInventoryId(
+                    inventoryLookup,
+                    rowId,
+                    inventoryExternalId,
+                    inventoryNumber,
+                    config.Sync.InventoriesUploadFallbackByDeviceNumber
+                  );
+                  if (string.IsNullOrWhiteSpace(recommissionInventoryId))
+                    recommissionInventoryId = targetInventoryId;
+
+                  // A recommission_device issue only takes effect when the device's
+                  // operation_status is 'retired'. Issue#propagate_recommission_device just
+                  // assigns inventory_operation_status='active', and the write in
+                  // Issue#update_operation_status! starts with
+                  // `return unless inventory_operation_status_changed?`. So on a device with
+                  // device_retired=true but operation_status='active'/'decommissioned' the
+                  // recommission is a SILENT no-op: the issue is created with 2xx, the device
+                  // stays retired, the retry below fails again, and the next run adds another
+                  // useless issue. That inconsistent state is the one behind
+                  // samedis-care-issues#2380.
+                  //
+                  // Normalize it first with a device_retired issue (WITHOUT deleting the
+                  // device's open tasks -- we are about to reactivate it): that sets
+                  // device_retired=true AND operation_status='retired', which makes the
+                  // recommission below a real state change.
+                  var retirementStateKnown = Inventories.TryGetRetirementState(
+                    samedisClient,
+                    inventoryResource,
+                    recommissionInventoryId,
+                    out var persistedDeviceRetired,
+                    out var persistedOperationStatus
+                  );
+
+                  var skipRecommission = false;
+
+                  if (retirementStateKnown && !persistedDeviceRetired)
+                  {
+                    // "Device retired." is raised by Inventory#check_retired, which only ever
+                    // looks at device_retired -- so this combination should be impossible.
+                    // Don't post a recommission issue: the backend would reject it with
+                    // "The inventory is not retired and therefore cannot be recommissioned."
+                    skipRecommission = true;
+                    log.Warn($"Update was rejected with \"Device retired.\" although the device reports device_retired=false "
+                      + $"(operation_status='{persistedOperationStatus}', id='{recommissionInventoryId}', inventory_number='{inventoryNumber}'). "
+                      + "Skipping recommission -- needs backend investigation.");
+                  }
+                  else if (retirementStateKnown
+                           && !Inventories.IsRetiredOperationStatus(persistedOperationStatus))
+                  {
+                    log.Warn($"Inconsistent retirement state (device_retired=true but operation_status='{persistedOperationStatus}'): a recommission alone would be a silent no-op. "
+                      + $"Creating a device_retired issue to normalize first (id='{recommissionInventoryId}', inventory_number='{inventoryNumber}').");
+                    var normalizeResponse = Inventories.PostDeviceRetiredIssue(
+                      samedisClient,
+                      issuesResource,
+                      recommissionInventoryId,
+                      inventoryNumber,
+                      inventoryTitle,
+                      null,
+                      log,
+                      deleteOpenTasks: false
+                    );
+                    if (samedisClient.StatusCode < 200 || samedisClient.StatusCode >= 300)
+                    {
+                      log.Warn($"Normalizing device_retired issue was rejected (id='{recommissionInventoryId}', inventory_number='{inventoryNumber}', status={samedisClient.StatusCode}). "
+                        + $"The recommission below will most likely stay without effect. Response: {normalizeResponse}");
+                    }
+                  }
+
+                  // Stay silent at log level 1 when the recommission+retry succeeds --
+                  // the resulting inventory update will already be counted via
+                  // HandleInventorySuccess (which logs at level 2). Only escalate to
+                  // WARN/ERROR if the recommission or the retry itself fails.
+                  log.Debug($"Inventory is retired in samedis but CSV row is not (id='{recommissionInventoryId}', external_id='{inventoryExternalId}', inventory_number='{inventoryNumber}'). Attempting recommission and update retry.");
+
+                  var recommissionResponse = skipRecommission
+                    ? null
+                    : Inventories.PostRecommissionIssue(
+                      samedisClient,
+                      issuesResource,
+                      recommissionInventoryId,
+                      inventoryNumber,
+                      inventoryTitle,
+                      log
+                    );
+
+                  if (recommissionResponse != null)
+                  {
+                    response = samedisClient.Put(inventoryWriteResource, recommissionInventoryId, requestPayload);
+                    if (samedisClient.StatusCode >= 200 && samedisClient.StatusCode < 300)
+                    {
+                      log.Debug($"Inventory recommissioned and updated after retry (inventory_number='{inventoryNumber}', id='{recommissionInventoryId}').");
+                      HandleInventorySuccess(response);
+                      recommissionedCount++;
+                      recommissionRetrySucceeded = true;
+                    }
+                    else
+                    {
+                      // Level 1 on purpose: without this line a failed retry is
+                      // indistinguishable in the default log from the recommission
+                      // path never having engaged (all other recommission messages
+                      // are level 2).
+                      // Keep the retry's outcome: the state re-read below issues another
+                      // request and would otherwise overwrite StatusCode for this message
+                      // and for the ERROR line at the end of this block.
+                      failedStatus = samedisClient.StatusCode;
+                      failedResponse = response;
+
+                      // Re-read the state so the log carries the evidence instead of a guess:
+                      // device_retired=true here means the recommission_device issue was
+                      // created (2xx) without clearing the retirement.
+                      var stateAfterKnown = Inventories.TryGetRetirementState(
+                        samedisClient,
+                        inventoryResource,
+                        recommissionInventoryId,
+                        out var deviceRetiredAfter,
+                        out var operationStatusAfter
+                      );
+                      var stateAfter = stateAfterKnown
+                        ? $"device_retired={deviceRetiredAfter.ToString().ToLowerInvariant()}, operation_status='{operationStatusAfter}'"
+                        : "state could not be re-read";
+
+                      log.Warn($"Recommission issue was created but the update retry was still rejected (id='{recommissionInventoryId}', inventory_number='{inventoryNumber}', status={failedStatus}, {stateAfter}). "
+                        + "The recommission_device issue did not clear the retirement -- needs backend investigation (samedis-care-issues#2380).");
+                    }
+                  }
+                }
+
+                if (!recommissionRetrySucceeded)
+                {
+                  errorCount++;
+                  var failedInventoryId = string.IsNullOrWhiteSpace(targetInventoryId) ? rowId : targetInventoryId;
+                  log.Error($"Failed to {operation} inventory (id='{failedInventoryId}', title='{inventoryTitle}', inventory_number='{inventoryNumber}', status={failedStatus}). Response: {failedResponse}");
+                }
               }
             }
+            completed = true;
+          }
+          finally
+          {
+            // In a finally so the counts survive an abnormal exit. A lookup that cannot be answered
+            // throws LookupUnavailableException straight out of Main (samedis-care-issues#3013); before
+            // this the log simply stopped at the last row it had written, with no summary and -- stderr
+            // is not captured where this runs -- no reason either. The exception still propagates, so
+            // the exit code stays non-zero and lastrun.txt is still not advanced.
+            var summary = $"Created: {createdCount}, Updated: {updatedCount} (incl. {recommissionedCount} recommissioned, {retiredCount} retired), Skipped: {skippedCount}, Errors: {errorCount}";
+            if (completed)
+              log.Info($"Inventories Upload finished. {summary}");
+            else
+              log.Error($"Inventories Upload ABORTED at row {rowNumber} of {uploadTable.Rows.Count}. {summary}");
+
+            // Reported because nothing else can: ResourceLookup takes the first of several
+            // matching device models so the run can proceed, and only records the key it was
+            // ambiguous on. Silence here would be the wrong kind -- the safeguard against it,
+            // narrowing a regulatory identifier by the row's title, is an exact comparison,
+            // so it cannot match on precisely the rows the key lookup exists for: the ones
+            // whose title differs from the catalog's wording. eudamed_di, emdn_code and
+            // gmdn_code are all documented as covering several models.
+            //
+            // In the finally with the summary: an ambiguity seen before an abort is still
+            // worth naming, and after the abort nobody gets another chance to name it.
+            foreach (var ambiguous in deviceModelLookup.AmbiguousMatches)
+              log.Warn($"Device model lookup '{ambiguous}' matched more than one record; the first was used. If that is the wrong model, the key is not specific enough for this catalog -- narrow it or set catalog_id in the source.");
           }
 
-          log.Info($"Inventories Upload finished. Created: {createdCount}, Updated: {updatedCount} (incl. {recommissionedCount} recommissioned, {retiredCount} retired), Skipped: {skippedCount}, Errors: {errorCount}");
 
           // Written on every run of the upload, header row and all, so that "no merges
           // happened" stays distinguishable from "the sync did not get this far".
@@ -1622,169 +1680,186 @@ internal class Program
           var documentsErrorCount = 0;
 
           var rowNumber = 0;
-          foreach (DataRow row in uploadTable.Rows)
+          var completed = false;
+          try
           {
-            rowNumber++;
-            var issueNumber = Rows.Value(row, "issue_number");
-            var inventoryDeviceNumber = Rows.Value(row, "inventory_device_number");
-            var documentFileName = Tasks.GetTaskDocumentFileName(row);
-            if (string.IsNullOrWhiteSpace(documentFileName))
+            foreach (DataRow row in uploadTable.Rows)
             {
-              skippedCount++;
-              documentsSkippedCount++;
-              log.Warn($"Skipped task row {rowNumber} because document filename is empty (issue_number='{issueNumber}', inventory_device_number='{inventoryDeviceNumber}').");
-              continue;
-            }
-
-            var documentPath = Tasks.ResolveTaskDocumentPath(uploadRoot, documentFileName);
-            if (string.IsNullOrWhiteSpace(documentPath))
-            {
-              skippedCount++;
-              documentsSkippedCount++;
-              log.Warn($"Skipped task row {rowNumber} because document file '{documentFileName}' was not found (issue_number='{issueNumber}', inventory_device_number='{inventoryDeviceNumber}').");
-              continue;
-            }
-
-            if (string.IsNullOrWhiteSpace(inventoryDeviceNumber))
-            {
-              skippedCount++;
-              log.Warn($"Skipped task row {rowNumber} because inventory_device_number is empty.");
-              continue;
-            }
-
-            var inventoryId = Inventories.ResolveInventoryIdByDeviceNumber(
-              taskInventoryLookup,
-              inventoryDeviceNumber
-            );
-            if (string.IsNullOrWhiteSpace(inventoryId))
-            {
-              skippedCount++;
-              log.Warn($"Skipped task row {rowNumber} because inventory_device_number '{inventoryDeviceNumber}' could not be resolved to an inventory id.");
-              continue;
-            }
-
-            var targetIssueId = Rows.Value(row, "id");
-            if (string.IsNullOrWhiteSpace(targetIssueId) && !string.IsNullOrWhiteSpace(issueNumber))
-            {
-              // external_id first, because that is the key this sync writes: the task is created
-              // with external_id set to the source's issue_number, and the unique index is on
-              // (tenant_id, external_id).
-              //
-              // issue_number is the SERVER's own running number, assigned on create and unrelated
-              // to the source's. Looking up by it alone therefore never found a task this sync had
-              // created, so every re-run tried to create it again and was rejected with a
-              // duplicate-key error -- which also meant the document could never be re-attached.
-              targetIssueId = issueLookup.First(
-                () => issueLookup.ByUniqueField("external_id", issueNumber),
-                () => Tasks.ResolveIssueIdByIssueNumber(issueLookup, issueNumber) is { Length: > 0 } byNumber
-                        ? byNumber
-                        : null);
-            }
-
-            var taskAttributes = Tasks.BuildTaskAttributes(
-              row,
-              inventoryId,
-              setInventoryOperationStatusOnFailedMaintenance,
-              out var buildError,
-              out var buildWarning
-            );
-            if (taskAttributes == null)
-            {
-              errorCount++;
-              log.Error($"Failed to process task row {rowNumber} (issue_number='{issueNumber}', inventory_device_number='{inventoryDeviceNumber}'): {buildError}");
-              continue;
-            }
-
-            if (!string.IsNullOrWhiteSpace(buildWarning))
-            {
-              log.Warn($"Task row {rowNumber} warning (issue_number='{issueNumber}', inventory_device_number='{inventoryDeviceNumber}'): {buildWarning}");
-            }
-
-            var requestPayload = JsonConvert.SerializeObject(new
-            {
-              data = taskAttributes
-            });
-
-            var existingIssueId = string.IsNullOrWhiteSpace(targetIssueId) ? null : targetIssueId;
-            var isCreateOperation = existingIssueId is null;
-            var response = existingIssueId is null
-              ? samedisClient.Post(tasksWriteResource, requestPayload)
-              : samedisClient.Put(tasksWriteResource, existingIssueId, requestPayload);
-
-            if (samedisClient.StatusCode >= 200 && samedisClient.StatusCode < 300)
-            {
-              var resultingIssueId = JsonApi.ExtractDataId(response) ?? targetIssueId ?? string.Empty;
-
-              // external_id, nicht issue_number -- das ist der Schluessel, unter dem dieser Sync
-              // die Aufgabe anlegt (siehe die Aufloesung oben), und genau danach fragt die
-              // naechste Zeile mit derselben Quell-Nummer.
-              //
-              // Vorher stand hier RememberField("issue_number", ...). Das war doppelt falsch:
-              // der Schluessel traf nie, weil ResolveIssueIdByIssueNumber ueber ByConditions
-              // sucht und damit unter einem anderen Cache-Schluessel nachschlaegt -- und er war
-              // am falschen Feld, denn issue_number ist die laufende Nummer des SERVERS, nicht
-              // die der Quelle. Haette er getroffen, haette er behauptet, beide seien dasselbe.
-              //
-              // Folge des toten Seeds: der gecachte Fehltreffer der ersten Zeile blieb stehen,
-              // und eine zweite tasks.csv-Zeile zur selben issue_number -- die normale Form, in
-              // der das Format eine Aufgabe mit zwei Protokolldokumenten ausdrueckt -- legte
-              // erneut an und lief in den Unique-Index auf (tenant_id, external_id).
-              if (!string.IsNullOrWhiteSpace(issueNumber))
-                issueLookup.RememberUniqueField("external_id", issueNumber, resultingIssueId);
-
-              if (isCreateOperation)
+              rowNumber++;
+              var issueNumber = Rows.Value(row, "issue_number");
+              var inventoryDeviceNumber = Rows.Value(row, "inventory_device_number");
+              var documentFileName = Tasks.GetTaskDocumentFileName(row);
+              if (string.IsNullOrWhiteSpace(documentFileName))
               {
-                createdCount++;
-                log.Debug($"Task created (issue_number='{issueNumber}', inventory_device_number='{inventoryDeviceNumber}', id='{resultingIssueId}').");
-              }
-              else
-              {
-                updatedCount++;
-                log.Debug($"Task updated (issue_number='{issueNumber}', inventory_device_number='{inventoryDeviceNumber}', id='{targetIssueId}').");
-              }
-
-              if (!File.Exists(documentPath))
-              {
-                documentsErrorCount++;
-                log.Error($"Task document upload failed because file vanished before upload (issue_number='{issueNumber}', task_id='{resultingIssueId}', file='{documentFileName}').");
-              }
-              else if (string.IsNullOrWhiteSpace(resultingIssueId))
-              {
-                documentsErrorCount++;
-                log.Error($"Task document upload failed because issue id is empty (issue_number='{issueNumber}', file='{documentFileName}').");
-              }
-              else if (Tasks.IsDocumentAlreadyAttached(samedisClient, tasksResource, resultingIssueId,
-                                                       Path.GetFileName(documentPath), log))
-              {
+                skippedCount++;
                 documentsSkippedCount++;
-                log.Debug($"Task document already attached, not uploading again (issue_number='{issueNumber}', task_id='{resultingIssueId}', file='{Path.GetFileName(documentPath)}').");
+                log.Warn($"Skipped task row {rowNumber} because document filename is empty (issue_number='{issueNumber}', inventory_device_number='{inventoryDeviceNumber}').");
+                continue;
               }
-              else
+
+              var documentPath = Tasks.ResolveTaskDocumentPath(uploadRoot, documentFileName);
+              if (string.IsNullOrWhiteSpace(documentPath))
               {
-                var uploadResource = $"{tasksResource}/{resultingIssueId}/uploads";
-                var uploadResponse = samedisClient.PostDocument(uploadResource, documentPath, Path.GetFileName(documentPath));
-                if (samedisClient.StatusCode >= 200 && samedisClient.StatusCode < 300)
+                skippedCount++;
+                documentsSkippedCount++;
+                log.Warn($"Skipped task row {rowNumber} because document file '{documentFileName}' was not found (issue_number='{issueNumber}', inventory_device_number='{inventoryDeviceNumber}').");
+                continue;
+              }
+
+              if (string.IsNullOrWhiteSpace(inventoryDeviceNumber))
+              {
+                skippedCount++;
+                log.Warn($"Skipped task row {rowNumber} because inventory_device_number is empty.");
+                continue;
+              }
+
+              var inventoryId = Inventories.ResolveInventoryIdByDeviceNumber(
+                taskInventoryLookup,
+                inventoryDeviceNumber
+              );
+              if (string.IsNullOrWhiteSpace(inventoryId))
+              {
+                skippedCount++;
+                log.Warn($"Skipped task row {rowNumber} because inventory_device_number '{inventoryDeviceNumber}' could not be resolved to an inventory id.");
+                continue;
+              }
+
+              var targetIssueId = Rows.Value(row, "id");
+              if (string.IsNullOrWhiteSpace(targetIssueId) && !string.IsNullOrWhiteSpace(issueNumber))
+              {
+                // external_id first, because that is the key this sync writes: the task is created
+                // with external_id set to the source's issue_number, and the unique index is on
+                // (tenant_id, external_id).
+                //
+                // issue_number is the SERVER's own running number, assigned on create and unrelated
+                // to the source's. Looking up by it alone therefore never found a task this sync had
+                // created, so every re-run tried to create it again and was rejected with a
+                // duplicate-key error -- which also meant the document could never be re-attached.
+                targetIssueId = issueLookup.First(
+                  () => issueLookup.ByUniqueField("external_id", issueNumber),
+                  () => Tasks.ResolveIssueIdByIssueNumber(issueLookup, issueNumber) is { Length: > 0 } byNumber
+                          ? byNumber
+                          : null);
+              }
+
+              var taskAttributes = Tasks.BuildTaskAttributes(
+                row,
+                inventoryId,
+                setInventoryOperationStatusOnFailedMaintenance,
+                out var buildError,
+                out var buildWarning
+              );
+              if (taskAttributes == null)
+              {
+                errorCount++;
+                log.Error($"Failed to process task row {rowNumber} (issue_number='{issueNumber}', inventory_device_number='{inventoryDeviceNumber}'): {buildError}");
+                continue;
+              }
+
+              if (!string.IsNullOrWhiteSpace(buildWarning))
+              {
+                log.Warn($"Task row {rowNumber} warning (issue_number='{issueNumber}', inventory_device_number='{inventoryDeviceNumber}'): {buildWarning}");
+              }
+
+              var requestPayload = JsonConvert.SerializeObject(new
+              {
+                data = taskAttributes
+              });
+
+              var existingIssueId = string.IsNullOrWhiteSpace(targetIssueId) ? null : targetIssueId;
+              var isCreateOperation = existingIssueId is null;
+              var response = existingIssueId is null
+                ? samedisClient.Post(tasksWriteResource, requestPayload)
+                : samedisClient.Put(tasksWriteResource, existingIssueId, requestPayload);
+
+              if (samedisClient.StatusCode >= 200 && samedisClient.StatusCode < 300)
+              {
+                var resultingIssueId = JsonApi.ExtractDataId(response) ?? targetIssueId ?? string.Empty;
+
+                // external_id, nicht issue_number -- das ist der Schluessel, unter dem dieser Sync
+                // die Aufgabe anlegt (siehe die Aufloesung oben), und genau danach fragt die
+                // naechste Zeile mit derselben Quell-Nummer.
+                //
+                // Vorher stand hier RememberField("issue_number", ...). Das war doppelt falsch:
+                // der Schluessel traf nie, weil ResolveIssueIdByIssueNumber ueber ByConditions
+                // sucht und damit unter einem anderen Cache-Schluessel nachschlaegt -- und er war
+                // am falschen Feld, denn issue_number ist die laufende Nummer des SERVERS, nicht
+                // die der Quelle. Haette er getroffen, haette er behauptet, beide seien dasselbe.
+                //
+                // Folge des toten Seeds: der gecachte Fehltreffer der ersten Zeile blieb stehen,
+                // und eine zweite tasks.csv-Zeile zur selben issue_number -- die normale Form, in
+                // der das Format eine Aufgabe mit zwei Protokolldokumenten ausdrueckt -- legte
+                // erneut an und lief in den Unique-Index auf (tenant_id, external_id).
+                if (!string.IsNullOrWhiteSpace(issueNumber))
+                  issueLookup.RememberUniqueField("external_id", issueNumber, resultingIssueId);
+
+                if (isCreateOperation)
                 {
-                  documentsUploadedCount++;
-                  log.Debug($"Task document uploaded (issue_number='{issueNumber}', task_id='{resultingIssueId}', file='{Path.GetFileName(documentPath)}').");
+                  createdCount++;
+                  log.Debug($"Task created (issue_number='{issueNumber}', inventory_device_number='{inventoryDeviceNumber}', id='{resultingIssueId}').");
                 }
                 else
                 {
+                  updatedCount++;
+                  log.Debug($"Task updated (issue_number='{issueNumber}', inventory_device_number='{inventoryDeviceNumber}', id='{targetIssueId}').");
+                }
+
+                if (!File.Exists(documentPath))
+                {
                   documentsErrorCount++;
-                  log.Error($"Failed to upload task document (issue_number='{issueNumber}', task_id='{resultingIssueId}', file='{Path.GetFileName(documentPath)}', status={samedisClient.StatusCode}). Response: {uploadResponse}");
+                  log.Error($"Task document upload failed because file vanished before upload (issue_number='{issueNumber}', task_id='{resultingIssueId}', file='{documentFileName}').");
+                }
+                else if (string.IsNullOrWhiteSpace(resultingIssueId))
+                {
+                  documentsErrorCount++;
+                  log.Error($"Task document upload failed because issue id is empty (issue_number='{issueNumber}', file='{documentFileName}').");
+                }
+                else if (Tasks.IsDocumentAlreadyAttached(samedisClient, tasksResource, resultingIssueId,
+                                                         Path.GetFileName(documentPath), log))
+                {
+                  documentsSkippedCount++;
+                  log.Debug($"Task document already attached, not uploading again (issue_number='{issueNumber}', task_id='{resultingIssueId}', file='{Path.GetFileName(documentPath)}').");
+                }
+                else
+                {
+                  var uploadResource = $"{tasksResource}/{resultingIssueId}/uploads";
+                  var uploadResponse = samedisClient.PostDocument(uploadResource, documentPath, Path.GetFileName(documentPath));
+                  if (samedisClient.StatusCode >= 200 && samedisClient.StatusCode < 300)
+                  {
+                    documentsUploadedCount++;
+                    log.Debug($"Task document uploaded (issue_number='{issueNumber}', task_id='{resultingIssueId}', file='{Path.GetFileName(documentPath)}').");
+                  }
+                  else
+                  {
+                    documentsErrorCount++;
+                    log.Error($"Failed to upload task document (issue_number='{issueNumber}', task_id='{resultingIssueId}', file='{Path.GetFileName(documentPath)}', status={samedisClient.StatusCode}). Response: {uploadResponse}");
+                  }
                 }
               }
+              else
+              {
+                errorCount++;
+                var failedIssueId = string.IsNullOrWhiteSpace(targetIssueId) ? issueNumber : targetIssueId;
+                var operation = isCreateOperation ? "create" : "update";
+                log.Error($"Failed to {operation} task (id='{failedIssueId}', issue_number='{issueNumber}', inventory_device_number='{inventoryDeviceNumber}', status={samedisClient.StatusCode}). Response: {response}");
+              }
             }
+            completed = true;
+          }
+          finally
+          {
+            // In a finally so the counts survive an abnormal exit. A lookup that cannot be answered
+            // throws LookupUnavailableException straight out of Main (samedis-care-issues#3013); before
+            // this the log simply stopped at the last row it had written, with no summary and -- stderr
+            // is not captured where this runs -- no reason either. The exception still propagates, so
+            // the exit code stays non-zero and lastrun.txt is still not advanced.
+            var summary = $"Created: {createdCount}, Updated: {updatedCount}, Skipped: {skippedCount}, Errors: {errorCount}, Documents Uploaded: {documentsUploadedCount}, Documents Skipped: {documentsSkippedCount}, Document Errors: {documentsErrorCount}";
+            if (completed)
+              log.Info($"Tasks Upload finished. {summary}");
             else
-            {
-              errorCount++;
-              var failedIssueId = string.IsNullOrWhiteSpace(targetIssueId) ? issueNumber : targetIssueId;
-              var operation = isCreateOperation ? "create" : "update";
-              log.Error($"Failed to {operation} task (id='{failedIssueId}', issue_number='{issueNumber}', inventory_device_number='{inventoryDeviceNumber}', status={samedisClient.StatusCode}). Response: {response}");
-            }
+              log.Error($"Tasks Upload ABORTED at row {rowNumber} of {uploadTable.Rows.Count}. {summary}");
           }
 
-          log.Info($"Tasks Upload finished. Created: {createdCount}, Updated: {updatedCount}, Skipped: {skippedCount}, Errors: {errorCount}, Documents Uploaded: {documentsUploadedCount}, Documents Skipped: {documentsSkippedCount}, Document Errors: {documentsErrorCount}");
         }
       }
     }
@@ -1845,104 +1920,121 @@ internal class Program
           var errorCount = 0;
           var rowNumber = 0;
 
-          foreach (DataRow row in uploadTable.Rows)
+          var completed = false;
+          try
           {
-            rowNumber++;
-            var rowId = Rows.Value(row, "id");
-            var incidentNumber = Rows.Value(row, "incident_number");
-
-            var targetIncidentId = rowId;
-            if (string.IsNullOrWhiteSpace(targetIncidentId) && !string.IsNullOrWhiteSpace(incidentNumber))
+            foreach (DataRow row in uploadTable.Rows)
             {
-              targetIncidentId = Requests.ResolveIncidentIdByIncidentNumber(
-                incidentLookup,
-                incidentNumber
+              rowNumber++;
+              var rowId = Rows.Value(row, "id");
+              var incidentNumber = Rows.Value(row, "incident_number");
+
+              var targetIncidentId = rowId;
+              if (string.IsNullOrWhiteSpace(targetIncidentId) && !string.IsNullOrWhiteSpace(incidentNumber))
+              {
+                targetIncidentId = Requests.ResolveIncidentIdByIncidentNumber(
+                  incidentLookup,
+                  incidentNumber
+                );
+              }
+
+              if (string.IsNullOrWhiteSpace(targetIncidentId))
+              {
+                skippedCount++;
+                log.Warn($"Skipped request row {rowNumber} because no existing request could be resolved (id='{rowId}', incident_number='{incidentNumber}').");
+                continue;
+              }
+
+              // Resolve inventory first (prefer samedis inventory_id, otherwise look up by device_number).
+              // The responsible lookup below depends on a resolved inventory.
+              var csvInventoryDeviceNumber = Rows.Value(row, "inventory_device_number");
+              if (string.IsNullOrWhiteSpace(csvInventoryDeviceNumber))
+                csvInventoryDeviceNumber = Rows.Value(row, "inventory_number");
+
+              var resolvedInventoryId = Inventories.ResolveInventoryIdByIdOrDeviceNumber(
+                requestInventoryLookup,
+                Rows.Value(row, "inventory_id"),
+                csvInventoryDeviceNumber
               );
+              if (string.IsNullOrWhiteSpace(resolvedInventoryId) && !string.IsNullOrWhiteSpace(csvInventoryDeviceNumber))
+              {
+                log.Warn($"Request row {rowNumber} (id='{targetIncidentId}', incident_number='{incidentNumber}'): inventory_device_number '{csvInventoryDeviceNumber}' could not be resolved to an inventory.");
+              }
+
+              // Resolve "verantwortlich" by email against the inventory's incident supporters
+              // (internal contact, staff member, or external enterprise contact).
+              var responsible = Helper.ResolveResponsibleByEmail(
+                samedisClient,
+                scope,
+                resolvedInventoryId,
+                Rows.Value(row, "responsible_email"),
+                supporterByInventoryAndEmail,
+                log
+              );
+              var resolvedResponsibleId = responsible?.Id ?? string.Empty;
+              var resolvedResponsibleType = responsible?.Type ?? string.Empty;
+
+              var attributes = Requests.BuildRequestUpdateAttributes(
+                row,
+                out var buildError,
+                out var buildWarning,
+                resolvedResponsibleId,
+                resolvedResponsibleType,
+                resolvedInventoryId
+              );
+              if (attributes == null)
+              {
+                errorCount++;
+                log.Error($"Failed to process request row {rowNumber} (id='{targetIncidentId}', incident_number='{incidentNumber}'): {buildError}");
+                continue;
+              }
+
+              if (attributes.Count == 0)
+              {
+                skippedCount++;
+                log.Debug($"Skipped request row {rowNumber} (id='{targetIncidentId}', incident_number='{incidentNumber}'): {buildWarning}");
+                continue;
+              }
+
+              if (!string.IsNullOrWhiteSpace(buildWarning))
+              {
+                log.Warn($"Request row {rowNumber} warning (id='{targetIncidentId}', incident_number='{incidentNumber}'): {buildWarning}");
+              }
+
+              var requestPayload = JsonConvert.SerializeObject(new
+              {
+                data = attributes
+              });
+
+              var response = samedisClient.Put(requestsWriteResource, targetIncidentId, requestPayload);
+
+              if (samedisClient.StatusCode >= 200 && samedisClient.StatusCode < 300)
+              {
+                updatedCount++;
+                log.Debug($"Request updated (id='{targetIncidentId}', incident_number='{incidentNumber}', fields=[{string.Join(",", attributes.Keys)}]).");
+              }
+              else
+              {
+                errorCount++;
+                log.Error($"Failed to update request (id='{targetIncidentId}', incident_number='{incidentNumber}', status={samedisClient.StatusCode}). Response: {response}");
+              }
             }
-
-            if (string.IsNullOrWhiteSpace(targetIncidentId))
-            {
-              skippedCount++;
-              log.Warn($"Skipped request row {rowNumber} because no existing request could be resolved (id='{rowId}', incident_number='{incidentNumber}').");
-              continue;
-            }
-
-            // Resolve inventory first (prefer samedis inventory_id, otherwise look up by device_number).
-            // The responsible lookup below depends on a resolved inventory.
-            var csvInventoryDeviceNumber = Rows.Value(row, "inventory_device_number");
-            if (string.IsNullOrWhiteSpace(csvInventoryDeviceNumber))
-              csvInventoryDeviceNumber = Rows.Value(row, "inventory_number");
-
-            var resolvedInventoryId = Inventories.ResolveInventoryIdByIdOrDeviceNumber(
-              requestInventoryLookup,
-              Rows.Value(row, "inventory_id"),
-              csvInventoryDeviceNumber
-            );
-            if (string.IsNullOrWhiteSpace(resolvedInventoryId) && !string.IsNullOrWhiteSpace(csvInventoryDeviceNumber))
-            {
-              log.Warn($"Request row {rowNumber} (id='{targetIncidentId}', incident_number='{incidentNumber}'): inventory_device_number '{csvInventoryDeviceNumber}' could not be resolved to an inventory.");
-            }
-
-            // Resolve "verantwortlich" by email against the inventory's incident supporters
-            // (internal contact, staff member, or external enterprise contact).
-            var responsible = Helper.ResolveResponsibleByEmail(
-              samedisClient,
-              scope,
-              resolvedInventoryId,
-              Rows.Value(row, "responsible_email"),
-              supporterByInventoryAndEmail,
-              log
-            );
-            var resolvedResponsibleId = responsible?.Id ?? string.Empty;
-            var resolvedResponsibleType = responsible?.Type ?? string.Empty;
-
-            var attributes = Requests.BuildRequestUpdateAttributes(
-              row,
-              out var buildError,
-              out var buildWarning,
-              resolvedResponsibleId,
-              resolvedResponsibleType,
-              resolvedInventoryId
-            );
-            if (attributes == null)
-            {
-              errorCount++;
-              log.Error($"Failed to process request row {rowNumber} (id='{targetIncidentId}', incident_number='{incidentNumber}'): {buildError}");
-              continue;
-            }
-
-            if (attributes.Count == 0)
-            {
-              skippedCount++;
-              log.Debug($"Skipped request row {rowNumber} (id='{targetIncidentId}', incident_number='{incidentNumber}'): {buildWarning}");
-              continue;
-            }
-
-            if (!string.IsNullOrWhiteSpace(buildWarning))
-            {
-              log.Warn($"Request row {rowNumber} warning (id='{targetIncidentId}', incident_number='{incidentNumber}'): {buildWarning}");
-            }
-
-            var requestPayload = JsonConvert.SerializeObject(new
-            {
-              data = attributes
-            });
-
-            var response = samedisClient.Put(requestsWriteResource, targetIncidentId, requestPayload);
-
-            if (samedisClient.StatusCode >= 200 && samedisClient.StatusCode < 300)
-            {
-              updatedCount++;
-              log.Debug($"Request updated (id='{targetIncidentId}', incident_number='{incidentNumber}', fields=[{string.Join(",", attributes.Keys)}]).");
-            }
+            completed = true;
+          }
+          finally
+          {
+            // In a finally so the counts survive an abnormal exit. A lookup that cannot be answered
+            // throws LookupUnavailableException straight out of Main (samedis-care-issues#3013); before
+            // this the log simply stopped at the last row it had written, with no summary and -- stderr
+            // is not captured where this runs -- no reason either. The exception still propagates, so
+            // the exit code stays non-zero and lastrun.txt is still not advanced.
+            var summary = $"Updated: {updatedCount}, Skipped: {skippedCount}, Errors: {errorCount}";
+            if (completed)
+              log.Info($"Requests Upload (status updates) finished. {summary}");
             else
-            {
-              errorCount++;
-              log.Error($"Failed to update request (id='{targetIncidentId}', incident_number='{incidentNumber}', status={samedisClient.StatusCode}). Response: {response}");
-            }
+              log.Error($"Requests Upload (status updates) ABORTED at row {rowNumber} of {uploadTable.Rows.Count}. {summary}");
           }
 
-          log.Info($"Requests Upload finished (status updates). Updated: {updatedCount}, Skipped: {skippedCount}, Errors: {errorCount}");
         }
       }
 
@@ -1983,101 +2075,118 @@ internal class Program
           var documentsErrorCount = 0;
           var rowNumber = 0;
 
-          foreach (DataRow row in messagesTable.Rows)
+          var completed = false;
+          try
           {
-            rowNumber++;
-            var existingMessageId = Rows.Value(row, "id");
-            if (!string.IsNullOrWhiteSpace(existingMessageId))
+            foreach (DataRow row in messagesTable.Rows)
             {
-              skippedCount++;
-              log.Debug($"Skipped message row {rowNumber} because id is non-empty (only new messages with empty id are uploaded). id='{existingMessageId}'.");
-              continue;
+              rowNumber++;
+              var existingMessageId = Rows.Value(row, "id");
+              if (!string.IsNullOrWhiteSpace(existingMessageId))
+              {
+                skippedCount++;
+                log.Debug($"Skipped message row {rowNumber} because id is non-empty (only new messages with empty id are uploaded). id='{existingMessageId}'.");
+                continue;
+              }
+
+              var incidentIdRaw = Rows.Value(row, "incident_id");
+              var incidentNumberRaw = Rows.Value(row, "incident_number");
+
+              var targetIncidentId = incidentIdRaw;
+              if (string.IsNullOrWhiteSpace(targetIncidentId) && !string.IsNullOrWhiteSpace(incidentNumberRaw))
+              {
+                targetIncidentId = Requests.ResolveIncidentIdByIncidentNumber(
+                  incidentLookup,
+                  incidentNumberRaw
+                );
+              }
+
+              if (string.IsNullOrWhiteSpace(targetIncidentId))
+              {
+                skippedCount++;
+                log.Warn($"Skipped message row {rowNumber} because parent request could not be resolved (incident_id='{incidentIdRaw}', incident_number='{incidentNumberRaw}').");
+                continue;
+              }
+
+              var messageAttributes = Requests.BuildMessageCreateAttributes(row, out var buildError);
+              if (messageAttributes == null)
+              {
+                errorCount++;
+                log.Error($"Failed to process message row {rowNumber} (incident_id='{targetIncidentId}', incident_number='{incidentNumberRaw}'): {buildError}");
+                continue;
+              }
+
+              var messagesWriteResource = $"{requestsResource}/{targetIncidentId}/messages?locale=en";
+              var requestPayload = JsonConvert.SerializeObject(new
+              {
+                data = messageAttributes
+              });
+
+              var response = samedisClient.Post(messagesWriteResource, requestPayload);
+
+              if (samedisClient.StatusCode < 200 || samedisClient.StatusCode >= 300)
+              {
+                errorCount++;
+                log.Error($"Failed to create message (incident_id='{targetIncidentId}', incident_number='{incidentNumberRaw}', status={samedisClient.StatusCode}). Response: {response}");
+                continue;
+              }
+
+              createdCount++;
+              var resultingMessageId = JsonApi.ExtractDataId(response) ?? string.Empty;
+              log.Debug($"Message created (incident_id='{targetIncidentId}', incident_number='{incidentNumberRaw}', id='{resultingMessageId}').");
+
+              // Optional asset attached to this message.
+              if (!hasFilenameColumn)
+                continue;
+
+              var filename = Rows.Value(row, "filename");
+              if (string.IsNullOrWhiteSpace(filename))
+                continue;
+
+              var documentPath = Requests.ResolveRequestDocumentPath(uploadRoot, filename);
+              if (string.IsNullOrWhiteSpace(documentPath))
+              {
+                documentsSkippedCount++;
+                log.Warn($"Skipped asset for message row {rowNumber} because file '{filename}' was not found under {uploadRoot}/request_documents/.");
+                continue;
+              }
+
+              if (string.IsNullOrWhiteSpace(resultingMessageId))
+              {
+                documentsErrorCount++;
+                log.Error($"Asset upload failed because resulting message id is empty (incident_id='{targetIncidentId}', file='{filename}').");
+                continue;
+              }
+
+              var assetResource = $"{requestsResource}/{targetIncidentId}/messages/{resultingMessageId}/uploads";
+              var assetResponse = samedisClient.PostDocument(assetResource, documentPath, Path.GetFileName(documentPath));
+              if (samedisClient.StatusCode >= 200 && samedisClient.StatusCode < 300)
+              {
+                documentsUploadedCount++;
+                log.Debug($"Message asset uploaded (incident_id='{targetIncidentId}', message_id='{resultingMessageId}', file='{Path.GetFileName(documentPath)}').");
+              }
+              else
+              {
+                documentsErrorCount++;
+                log.Error($"Failed to upload message asset (incident_id='{targetIncidentId}', message_id='{resultingMessageId}', file='{Path.GetFileName(documentPath)}', status={samedisClient.StatusCode}). Response: {assetResponse}");
+              }
             }
-
-            var incidentIdRaw = Rows.Value(row, "incident_id");
-            var incidentNumberRaw = Rows.Value(row, "incident_number");
-
-            var targetIncidentId = incidentIdRaw;
-            if (string.IsNullOrWhiteSpace(targetIncidentId) && !string.IsNullOrWhiteSpace(incidentNumberRaw))
-            {
-              targetIncidentId = Requests.ResolveIncidentIdByIncidentNumber(
-                incidentLookup,
-                incidentNumberRaw
-              );
-            }
-
-            if (string.IsNullOrWhiteSpace(targetIncidentId))
-            {
-              skippedCount++;
-              log.Warn($"Skipped message row {rowNumber} because parent request could not be resolved (incident_id='{incidentIdRaw}', incident_number='{incidentNumberRaw}').");
-              continue;
-            }
-
-            var messageAttributes = Requests.BuildMessageCreateAttributes(row, out var buildError);
-            if (messageAttributes == null)
-            {
-              errorCount++;
-              log.Error($"Failed to process message row {rowNumber} (incident_id='{targetIncidentId}', incident_number='{incidentNumberRaw}'): {buildError}");
-              continue;
-            }
-
-            var messagesWriteResource = $"{requestsResource}/{targetIncidentId}/messages?locale=en";
-            var requestPayload = JsonConvert.SerializeObject(new
-            {
-              data = messageAttributes
-            });
-
-            var response = samedisClient.Post(messagesWriteResource, requestPayload);
-
-            if (samedisClient.StatusCode < 200 || samedisClient.StatusCode >= 300)
-            {
-              errorCount++;
-              log.Error($"Failed to create message (incident_id='{targetIncidentId}', incident_number='{incidentNumberRaw}', status={samedisClient.StatusCode}). Response: {response}");
-              continue;
-            }
-
-            createdCount++;
-            var resultingMessageId = JsonApi.ExtractDataId(response) ?? string.Empty;
-            log.Debug($"Message created (incident_id='{targetIncidentId}', incident_number='{incidentNumberRaw}', id='{resultingMessageId}').");
-
-            // Optional asset attached to this message.
-            if (!hasFilenameColumn)
-              continue;
-
-            var filename = Rows.Value(row, "filename");
-            if (string.IsNullOrWhiteSpace(filename))
-              continue;
-
-            var documentPath = Requests.ResolveRequestDocumentPath(uploadRoot, filename);
-            if (string.IsNullOrWhiteSpace(documentPath))
-            {
-              documentsSkippedCount++;
-              log.Warn($"Skipped asset for message row {rowNumber} because file '{filename}' was not found under {uploadRoot}/request_documents/.");
-              continue;
-            }
-
-            if (string.IsNullOrWhiteSpace(resultingMessageId))
-            {
-              documentsErrorCount++;
-              log.Error($"Asset upload failed because resulting message id is empty (incident_id='{targetIncidentId}', file='{filename}').");
-              continue;
-            }
-
-            var assetResource = $"{requestsResource}/{targetIncidentId}/messages/{resultingMessageId}/uploads";
-            var assetResponse = samedisClient.PostDocument(assetResource, documentPath, Path.GetFileName(documentPath));
-            if (samedisClient.StatusCode >= 200 && samedisClient.StatusCode < 300)
-            {
-              documentsUploadedCount++;
-              log.Debug($"Message asset uploaded (incident_id='{targetIncidentId}', message_id='{resultingMessageId}', file='{Path.GetFileName(documentPath)}').");
-            }
+            completed = true;
+          }
+          finally
+          {
+            // In a finally so the counts survive an abnormal exit. A lookup that cannot be answered
+            // throws LookupUnavailableException straight out of Main (samedis-care-issues#3013); before
+            // this the log simply stopped at the last row it had written, with no summary and -- stderr
+            // is not captured where this runs -- no reason either. The exception still propagates, so
+            // the exit code stays non-zero and lastrun.txt is still not advanced.
+            var summary = $"Created: {createdCount}, Skipped: {skippedCount}, Errors: {errorCount}, Assets Uploaded: {documentsUploadedCount}, Assets Skipped: {documentsSkippedCount}, Asset Errors: {documentsErrorCount}";
+            if (completed)
+              log.Info($"Requests Upload (messages) finished. {summary}");
             else
-            {
-              documentsErrorCount++;
-              log.Error($"Failed to upload message asset (incident_id='{targetIncidentId}', message_id='{resultingMessageId}', file='{Path.GetFileName(documentPath)}', status={samedisClient.StatusCode}). Response: {assetResponse}");
-            }
+              log.Error($"Requests Upload (messages) ABORTED at row {rowNumber} of {messagesTable.Rows.Count}. {summary}");
           }
 
-          log.Info($"Requests Upload finished (messages). Created: {createdCount}, Skipped: {skippedCount}, Errors: {errorCount}, Assets Uploaded: {documentsUploadedCount}, Assets Skipped: {documentsSkippedCount}, Asset Errors: {documentsErrorCount}");
         }
       }
     }

@@ -103,6 +103,16 @@ public class InventoryAttributeTests
     public void The_source_catalog_id_is_used_when_there_is_no_override()
         => Build(Row(("catalog_id", "from-source")))["catalog_id"].Should().Be("from-source");
 
+    // Empty is a decision, not the absence of one: the resolver drops an id that resolves to
+    // nothing on an update, and falling back to the column here resurrected it -- the write
+    // then failed with "Device model does not exist" on every run.
+    [Fact]
+    public void An_empty_override_leaves_the_catalog_id_out_entirely()
+        => Inventories.BuildInventoryAttributes(Row(("catalog_id", "from-source"), ("inventory_number", "INV-1")),
+                                                null, null, NumberFormat.Comma,
+                                                catalogIdOverride: "")
+            .Should().NotContainKey("catalog_id");
+
     [Fact]
     public void A_missing_column_is_simply_absent()
         => ((Action)(() => Build(Row(("inventory_number", "INV-1")))))

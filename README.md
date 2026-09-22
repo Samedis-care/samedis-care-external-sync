@@ -56,7 +56,7 @@ dotnet run
 dotnet test -c Release
 ```
 
-164 tests over the parts that can be checked without a server: which key a record is resolved
+Tests over the parts that can be checked without a server: which key a record is resolved
 by and in what order, what the hierarchy resolvers write, the value maps, date normalisation,
 and the fixtures themselves. `tests/fixtures/` holds an anonymised source data set — three
 buildings, fifteen floors, forty-five rooms, eight departments, fifty inventories, twenty
@@ -158,6 +158,56 @@ Configuration keys are deserialized in snake_case (YAML) to C# classes.
 | `logging.mode` | int | `0` | `0=none`, `1=console`, `2=file`, `3=console+file`. |
 
 When logfile mode is active, logs are written to `log/Logfile_<date>.log`.
+
+### `inventories`
+
+| Key | Type | Default | Description |
+|---|---|---|---|
+| `inventories.catalog_lookup.enabled` | bool | `false` | Resolve `catalog_id` for **new** inventories from a key the source carries in a column of its own. |
+| `inventories.catalog_lookup.mappings[].column` | string | none | Column in `inventories.csv` the key is read from. |
+| `inventories.catalog_lookup.mappings[].field` | string | none | Device model field to match. Only `external_id`. Mutually exclusive with `regulatory`. |
+| `inventories.catalog_lookup.mappings[].regulatory` | string | none | Key inside the device model's `regulatory` hash. One of `udi_id`, `eudamed_id`, `eudamed_di`, `emtec_id`, `emtec_code`, `emdn_code`, `gmdn_code`. Mutually exclusive with `field`. |
+| `inventories.catalog_lookup.mappings[].upcase` | bool | `false` | Upper-case the CSV value before sending it. The server matches exactly and case-sensitively, and emtec codes are stored upper-cased. |
+
+Without this block an inventory row with no `catalog_id` is resolved by its title and
+manufacturer, and **skipped entirely** when that misses — the backend requires a device
+model on create. A source system that carries its own article number, or a regulatory code
+that travels with the device, can name the model instead of describing it.
+
+Resolution order for a row being created:
+
+1. `catalog_id` from the CSV, if it resolves.
+2. `external_id`, if a mapping names it — always before the regulatory keys, whatever its
+   position in the list.
+3. Each regulatory key, in the order the mappings list them. Every one is asked together
+   with the row's title first, then on its own: a regulatory identifier is not unique in
+   production (one `eudamed_id` covers both "Perfusor Space" and "Perfusor Space PCA").
+4. Title + type-plate manufacturer, then title + responsible manufacturer.
+
+Two limits worth knowing:
+
+- **Create only.** An inventory that already exists keeps the device model it has. Replacing
+  it from a key would undo curation and, where a model was merged away, re-attach the device
+  to the wrong record (samedis-care-issues#2347).
+- **`external_id` resolves through a gridfilter, not through `via/external_id`.** The via
+  route is mounted on the tenant `device_models` endpoint only on `develop`, not in
+  production; the gridfilter works on both and in enterprise scope. Regulatory keys have no
+  via route at all — they are a filtered search (`filter[regulatory][<key>]`) by design.
+
+Each key is asked twice per row that carries it: once narrowed by the row's title, then
+once on its own. `ResourceLookup` caches both, hits and misses alike — but the narrowed
+request has the title in its cache key, so it is shared only between rows whose title is
+identical. On an export where every row has its own title, budget roughly one request per
+row for the narrowed step plus one per run per distinct value for the unnarrowed one. A mapping naming
+a field the server does not treat as a key stops the run at startup: the server answers an
+unknown key with an empty result set, which is indistinguishable from "this device model
+does not exist" — the one answer that makes a sync create a duplicate.
+
+**Licensing.** Several of the identifier systems these keys refer to are licensed products of
+the organisations that issue them — EMTEC, GMDN and ECRI/UMDNS among them. Configuring a
+lookup on one of them means holding and using that data in your own export, so make sure the
+required licence covers it before switching the lookup on. This tool neither checks for a
+licence nor provides one.
 
 ### `http`
 
@@ -368,8 +418,15 @@ Device models and merges ([samedis-care-issues#2347](https://github.com/Samedis-
   cannot tell you. Once #2347 is live the same call answers with the model that absorbed
   it, and that current id is written instead, logged as `Device model 'X' was merged into
   'Y'`. The check costs one request per *distinct* id per run, not one per row.
-- An id that resolves to nothing is sent unchanged, with a warning. Substituting a
-  title-based guess would attach the device to a different model than the source asked for.
+- An id that resolves to nothing is never swapped for a title-based guess — that would
+  attach the device to a different model than the source asked for. What happens instead
+  depends on the operation. On an **update** the attribute is left out and the device keeps
+  the model it has, so the rest of the row still lands; sending the dead id failed the whole
+  write, every run, with nothing able to break the cycle. On a **create** it is sent
+  unchanged and the backend rejects the row, which is the diagnosis — unless
+  `inventories.catalog_lookup` is configured and one of its keys resolves, in which case that
+  model is written and the substitution is logged with the key that found it. Only the keys
+  are consulted there, never the title.
 - Creating a facility-local device model (`sync.create_local_device_models_on_inventory_lookup`)
   happens on **create only**. An existing inventory always has a device model already, and a
   title that no longer resolves usually means somebody merged that model away: creating it
