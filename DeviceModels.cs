@@ -104,6 +104,12 @@ namespace SamedisExternalSync
     /// Whether this row has no inventory in samedis yet. Load-bearing: creating a device
     /// model is a create-only step -- see the comment on that branch.
     /// </param>
+    /// <param name="keys">
+    /// The device-model keys <c>inventories.catalog_lookup</c> read from this row, if any.
+    /// Used only when the row is being created: on an update the inventory already has a
+    /// model, and replacing it from a key would undo curation -- the same reasoning that
+    /// keeps local model creation create-only.
+    /// </param>
     /// <returns>
     /// The catalog id to write, or an empty string when none could be established. Empty is
     /// not an error on an update -- the attribute is then simply left out and the inventory
@@ -118,8 +124,11 @@ namespace SamedisExternalSync
       bool isCreateOperation,
       bool isPlaceholder,
       string rowId = "",
-      string inventoryNumber = "")
+      string inventoryNumber = "",
+      CatalogLookup.Keys? keys = null)
     {
+      // Create-only, see the parameter doc.
+      var lookupKeys = isCreateOperation ? keys : null;
       var catalogId = sourceCatalogId ?? string.Empty;
 
       if (string.IsNullOrWhiteSpace(catalogId))
@@ -130,15 +139,31 @@ namespace SamedisExternalSync
         }
         else
         {
-          catalogId = DeviceModels.ResolveCatalogId(
-            ctx.DeviceModelLookup,
-            title,
-            manufacturer
-          ) ?? string.Empty;
+          // Keys first and on their own, so the log can say which of the two answered. Asking
+          // the full cascade and then reporting "from the configured lookup keys" whenever a
+          // key column happened to be filled claimed a key had decided rows the title
+          // resolved. The second call repeats the key steps, but they are cached by then, so
+          // this costs no extra requests.
+          catalogId = DeviceModels.ResolveCatalogIdByKeys(ctx.DeviceModelLookup, title, lookupKeys)
+                      ?? string.Empty;
+          var resolvedByKey = !string.IsNullOrWhiteSpace(catalogId);
+
+          if (!resolvedByKey)
+            catalogId = DeviceModels.ResolveCatalogId(
+              ctx.DeviceModelLookup,
+              title,
+              manufacturer
+            ) ?? string.Empty;
 
           if (!string.IsNullOrWhiteSpace(catalogId))
           {
-            ctx.Log.Debug($"Resolved catalog_id '{catalogId}' via device model lookup (title='{title}', manufacturer='{manufacturer}').");
+            // Info rather than debug for the key path: it is the reason the row is no longer
+            // skipped, and a run has to be able to show which key decided it without being
+            // switched to debug.
+            if (resolvedByKey)
+              ctx.Log.Info($"Resolved catalog_id '{catalogId}' for a new inventory from the configured lookup keys ({lookupKeys!.Describe()}, title='{title}', manufacturer='{manufacturer}', inventory_number='{inventoryNumber}').");
+            else
+              ctx.Log.Debug($"Resolved catalog_id '{catalogId}' via device model lookup (title='{title}', manufacturer='{manufacturer}').");
           }
           else if (ctx.MayCreateLocalDeviceModels && isCreateOperation)
           {
@@ -221,7 +246,36 @@ namespace SamedisExternalSync
 
         if (string.IsNullOrWhiteSpace(resolvedCatalogId))
         {
-          ctx.Log.Warn($"catalog_id '{catalogId}' from the source resolves to no device model this facility can see (inventory_number='{inventoryNumber}', title='{title}'). Sending it unchanged; the backend will reject the row with 'Device model can't be blank'. Either the id never existed here, or the model was merged away -- a merge destroys the record and today leaves nothing to resolve it by (samedis-care-issues#2347).");
+          // A configured key is a second chance, and only on a create. The alternative is a
+          // write the backend is certain to reject, so trying the key costs a request on a
+          // row that was going to fail anyway. Not done on an update: there the device keeps
+          // the model it has, and a key pointing somewhere else would move it silently.
+          // Keys only, never the title tail: substituting a title-based guess for an id the
+          // source got wrong would attach the device to a different model than it asked for,
+          // and would do so only at facilities that happen to have a key configured.
+          var rescued = DeviceModels.ResolveCatalogIdByKeys(ctx.DeviceModelLookup, title, lookupKeys);
+
+          if (!string.IsNullOrWhiteSpace(rescued))
+          {
+            ctx.Log.Warn($"catalog_id '{catalogId}' from the source resolves to no device model this facility can see; writing '{rescued}' found from the configured lookup keys instead ({lookupKeys!.Describe()}, inventory_number='{inventoryNumber}', title='{title}'). Not reported in device_model_merges.csv -- that file records merges the backend resolved, and this is a client-side substitution the source system cannot act on.");
+            catalogId = rescued!;
+          }
+          else if (!isCreateOperation)
+          {
+            // Dropped rather than sent, and only on an update. The device already has a
+            // model -- catalog is a required belongs_to -- so leaving the attribute out
+            // keeps exactly that and lets the rest of the row through. Sending the id
+            // instead fails the whole write with "Device model does not exist", every run,
+            // taking the year, the location and the status down with it, and it cannot
+            // come right on its own: the source keeps sending the same dead reference.
+            // The warning still names the id, so the stale reference stays visible.
+            ctx.Log.Warn($"catalog_id '{catalogId}' from the source resolves to no device model this facility can see (inventory_number='{inventoryNumber}', title='{title}'). Leaving it out of the update; the device keeps the model it has and the rest of the row is written. Either the id never existed here, or the model was merged away (samedis-care-issues#2347) -- the source system is sending a reference it should update.");
+            catalogId = string.Empty;
+          }
+          else
+          {
+            ctx.Log.Warn($"catalog_id '{catalogId}' from the source resolves to no device model this facility can see (inventory_number='{inventoryNumber}', title='{title}'). Sending it unchanged; the backend will reject the row with 'Device model can't be blank'. Either the id never existed here, or the model was merged away -- a merge destroys the record and today leaves nothing to resolve it by (samedis-care-issues#2347).");
+          }
         }
         else if (!string.Equals(resolvedCatalogId, catalogId, StringComparison.Ordinal))
         {
@@ -813,8 +867,13 @@ namespace SamedisExternalSync
       }
     }
     /// <summary>
-    /// Resolves a device model by title and manufacturer.
+    /// Resolves a device model by the keys the source row carries, then by title and
+    /// manufacturer.
     /// </summary>
+    /// <param name="keys">
+    /// What <c>inventories.catalog_lookup</c> read from the row. Empty unless configured, in
+    /// which case this is the title-and-manufacturer lookup it has always been.
+    /// </param>
     /// <remarks>
     /// The manufacturer is tried against two fields because source systems use them
     /// interchangeably: the type-plate manufacturer first, then the currently responsible
@@ -828,8 +887,76 @@ namespace SamedisExternalSync
     /// code.
     /// </para>
     /// </remarks>
-    public static string? ResolveCatalogId(ResourceLookup lookup, string title, string manufacturer)
-      => Cascades.DeviceModel(lookup, null, title, manufacturer, caseInsensitiveTitleMatch: false);
+    public static string? ResolveCatalogId(ResourceLookup lookup, string title, string manufacturer,
+                                           CatalogLookup.Keys? keys = null)
+      => Cascades.DeviceModel(lookup, null, title, manufacturer,
+                              keys?.Regulatory, keys?.ExternalId,
+                              caseInsensitiveTitleMatch: false);
+
+    /// <summary>
+    /// The scope every device model query carries. Spelled out here because
+    /// <c>Cascades</c> keeps its own copy private; the two must stay identical, or the steps
+    /// below stop sharing <see cref="ResourceLookup"/>'s cache with the full cascade and ask
+    /// the same question twice.
+    /// </summary>
+    /// <remarks>
+    /// Omitting it is not a smaller search, it is the wrong one: without the parameter the
+    /// endpoint answers with the tenant's own catalogs only and misses every public
+    /// master-data record.
+    /// </remarks>
+    private const string BothScopes = "filter[scope]=public_and_tenant";
+
+    /// <summary>
+    /// Resolves a device model from the configured lookup keys alone, with <b>no fallback to
+    /// the title</b>.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Separate from <see cref="ResolveCatalogId"/> because that one ends in
+    /// <c>Cascades.DeviceModel</c>'s title and manufacturer steps. Reaching those through a
+    /// path that reports "resolved from the configured lookup keys" would name a key that had
+    /// no part in the answer -- and on the rescue path it would substitute a title-based guess
+    /// for a <c>catalog_id</c> the source got wrong, which is the one thing the resolution
+    /// rules rule out: the same row resolves differently depending on whether a key column is
+    /// configured somewhere else in the file.
+    /// </para>
+    /// <para>
+    /// The steps mirror the key half of <c>Cascades.DeviceModel</c> exactly -- same fields,
+    /// same comparator, same scope -- so a later full-cascade call for the same row is
+    /// answered from the cache rather than repeating these requests.
+    /// </para>
+    /// </remarks>
+    public static string? ResolveCatalogIdByKeys(ResourceLookup lookup, string title,
+                                                 CatalogLookup.Keys? keys)
+    {
+      if (keys is not { Any: true }) return null;
+
+      var steps = new List<Func<string?>>();
+
+      if (!string.IsNullOrWhiteSpace(keys.ExternalId))
+        steps.Add(() => lookup.ByField("external_id", keys.ExternalId,
+                                       FilterBuilder.FilterType.Equals, BothScopes));
+
+      foreach (var (label, value) in keys.Regulatory)
+      {
+        // Captured per iteration: the delegates run later, inside First.
+        var l = label;
+        var v = value;
+
+        // Narrowed by the title first -- a regulatory identifier is not unique in production,
+        // one eudamed_id covers both "Perfusor Space" and "Perfusor Space PCA". Then
+        // unnarrowed, because the source's wording of the title often differs from the
+        // catalog's and a matching identifier is still better evidence than no answer.
+        if (!string.IsNullOrWhiteSpace(title))
+          steps.Add(() => lookup.ByRegulatory(l, v, BothScopes,
+                                              new (string, string?)[] { ("title", title) },
+                                              FilterBuilder.FilterType.Equals));
+
+        steps.Add(() => lookup.ByRegulatory(l, v, BothScopes));
+      }
+
+      return lookup.First(steps.ToArray());
+    }
   }
 
   public class WithServiceInterval

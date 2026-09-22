@@ -560,6 +560,18 @@ namespace SamedisExternalSync
       => Cascades.Inventory(lookup, inventoryId, null, deviceNumber, query: "variant=regular")
          ?? string.Empty;
 
+    /// <param name="catalogIdOverride">
+    /// The device model the caller resolved for this row, which is the authority:
+    /// <c>null</c> means it did not decide and the row's own <c>catalog_id</c> column is
+    /// used, an empty string means it decided there is none and the attribute is left out.
+    /// <para>
+    /// The distinction is load-bearing. Treating empty as "not decided" made this fall back
+    /// to the column -- so an update whose resolver had deliberately dropped an unresolvable
+    /// id still sent that id, and the write failed with "Device model does not exist" on
+    /// every run. Found by the integration test against the test stack, not by a unit test:
+    /// the resolver returned the right answer, and this undid it one call later.
+    /// </para>
+    /// </param>
     public static Dictionary<string, object> BuildInventoryAttributes(
       DataRow row,
       string? departmentId,
@@ -598,7 +610,7 @@ namespace SamedisExternalSync
       JsonApi.AddStringAttribute(attributes, "external_id", Rows.Value(row, "external_id"));
       JsonApi.AddStringAttribute(attributes, "device_number", Rows.Value(row, "inventory_number"));
       JsonApi.AddStringAttribute(attributes, "serial_number", Rows.Value(row, "serial_number"));
-      var catalogId = string.IsNullOrWhiteSpace(catalogIdOverride) ? Rows.Value(row, "catalog_id") : catalogIdOverride;
+      var catalogId = catalogIdOverride ?? Rows.Value(row, "catalog_id");
       JsonApi.AddStringAttribute(attributes, "catalog_id", catalogId);
       JsonApi.AddStringAttribute(attributes, "commissioning_at", Helper.NormalizeDate(Rows.Value(row, "commissioning_at")));
       JsonApi.AddStringAttribute(attributes, "service_partner", Rows.Value(row, "service_partner"));
