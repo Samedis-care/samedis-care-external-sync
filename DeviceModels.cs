@@ -250,6 +250,18 @@ namespace SamedisExternalSync
             ctx.Log.Warn($"catalog_id '{catalogId}' from the source resolves to no device model this facility can see; writing '{rescued}' found from the configured lookup keys instead ({lookupKeys!.Describe()}, inventory_number='{inventoryNumber}', title='{title}'). Not reported in device_model_merges.csv -- that file records merges the backend resolved, and this is a client-side substitution the source system cannot act on.");
             catalogId = rescued!;
           }
+          else if (!isCreateOperation)
+          {
+            // Dropped rather than sent, and only on an update. The device already has a
+            // model -- catalog is a required belongs_to -- so leaving the attribute out
+            // keeps exactly that and lets the rest of the row through. Sending the id
+            // instead fails the whole write with "Device model does not exist", every run,
+            // taking the year, the location and the status down with it, and it cannot
+            // come right on its own: the source keeps sending the same dead reference.
+            // The warning still names the id, so the stale reference stays visible.
+            ctx.Log.Warn($"catalog_id '{catalogId}' from the source resolves to no device model this facility can see (inventory_number='{inventoryNumber}', title='{title}'). Leaving it out of the update; the device keeps the model it has and the rest of the row is written. Either the id never existed here, or the model was merged away (samedis-care-issues#2347) -- the source system is sending a reference it should update.");
+            catalogId = string.Empty;
+          }
           else
           {
             ctx.Log.Warn($"catalog_id '{catalogId}' from the source resolves to no device model this facility can see (inventory_number='{inventoryNumber}', title='{title}'). Sending it unchanged; the backend will reject the row with 'Device model can't be blank'. Either the id never existed here, or the model was merged away -- a merge destroys the record and today leaves nothing to resolve it by (samedis-care-issues#2347).");

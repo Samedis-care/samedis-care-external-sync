@@ -352,10 +352,33 @@ public class CatalogLookupResolutionTests
     {
         var api = FakeApi.Answering(("filter[regulatory][emtec_code]", "by-emtec"));
 
-        Resolve(Context(api), EmtecCode(), sourceCatalogId: Unknown, isCreateOperation: false)
-            .Should().Be(Unknown);
+        Resolve(Context(api), EmtecCode(), sourceCatalogId: Unknown, isCreateOperation: false);
 
         api.Requests.Should().NotContain(r => r.Contains("regulatory"));
+    }
+
+    // Found by the integration test against the test stack: a row rescued on create failed
+    // on EVERY later run, because the source keeps sending the same dead id and the update
+    // sent it on. An empty result leaves the attribute out of the payload, so the device
+    // keeps the model it already has and the year, location and status still land.
+    [Fact]
+    public void An_unresolvable_catalog_id_is_left_out_of_an_update()
+    {
+        var api = FakeApi.NotFound();
+
+        Resolve(Context(api), EmtecCode(), sourceCatalogId: Unknown, isCreateOperation: false)
+            .Should().BeEmpty();
+    }
+
+    // On a create the opposite: there is no device yet, so nothing is protected by dropping
+    // the id, and the backend's rejection stays the diagnosis. Pinned by
+    // MergedCatalogTests.An_unknown_catalog_id_is_sent_unchanged_with_a_warning as well.
+    [Fact]
+    public void An_unresolvable_catalog_id_is_still_sent_on_a_create()
+    {
+        var api = FakeApi.NotFound();
+
+        Resolve(Context(api), keys: null, sourceCatalogId: Unknown).Should().Be(Unknown);
     }
 
     // A key repeated across rows costs one request per run, not one per row.
