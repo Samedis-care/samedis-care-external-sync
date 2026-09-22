@@ -54,6 +54,31 @@ sync:
   # optional filename must exist in <to_samedis>/request_documents/<filename> (or .pdf added)
   requests_upload: false
   trainings: false
+inventories:
+  # Resolves catalog_id for NEW inventories from a key the source system carries in a column
+  # of its own, before falling back to the title and manufacturer. Without it a row whose
+  # title does not match the catalog's wording is skipped on create.
+  catalog_lookup:
+    enabled: false
+    # Each entry names exactly one of field: or regulatory:.
+    #   field:      a plain device model field -- only external_id
+    #   regulatory: a key inside the model's regulatory hash -- udi_id, eudamed_id,
+    #               eudamed_di, emtec_id, emtec_code, emdn_code, gmdn_code
+    #   upcase:     upper-case the CSV value first; the server matches exactly and
+    #               case-sensitively, and emtec codes are stored upper-cased
+    # LICENSING: several of these identifier systems are licensed products of the
+    # organisations that issue them -- EMTEC, GMDN and ECRI/UMDNS among them. Using one as a
+    # lookup key means holding that data in your own export; make sure your licence covers
+    # it before switching this on. This tool neither checks for a licence nor provides one.
+    # The order below is the order they are tried in, except that external_id always goes
+    # first. See "inventories" in the README.
+    mappings: []
+    # mappings:
+    #   - column: quell_artikelnummer
+    #     field: external_id
+    #   - column: emtec_code
+    #     regulatory: emtec_code
+    #     upcase: true
 formatting:
   # decimal separator used when reading/writing numeric fields in CSV
   # (e.g. purchase_price). Default "," matches German locale; use "." for
