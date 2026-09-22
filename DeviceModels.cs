@@ -139,20 +139,29 @@ namespace SamedisExternalSync
         }
         else
         {
-          catalogId = DeviceModels.ResolveCatalogId(
-            ctx.DeviceModelLookup,
-            title,
-            manufacturer,
-            lookupKeys
-          ) ?? string.Empty;
+          // Keys first and on their own, so the log can say which of the two answered. Asking
+          // the full cascade and then reporting "from the configured lookup keys" whenever a
+          // key column happened to be filled claimed a key had decided rows the title
+          // resolved. The second call repeats the key steps, but they are cached by then, so
+          // this costs no extra requests.
+          catalogId = DeviceModels.ResolveCatalogIdByKeys(ctx.DeviceModelLookup, title, lookupKeys)
+                      ?? string.Empty;
+          var resolvedByKey = !string.IsNullOrWhiteSpace(catalogId);
+
+          if (!resolvedByKey)
+            catalogId = DeviceModels.ResolveCatalogId(
+              ctx.DeviceModelLookup,
+              title,
+              manufacturer
+            ) ?? string.Empty;
 
           if (!string.IsNullOrWhiteSpace(catalogId))
           {
-            // Logged at info rather than debug when a configured key was in play: that path
-            // is the reason the row is no longer skipped, and a run has to be able to show
-            // which key decided it without being switched to debug.
-            if (lookupKeys is { Any: true })
-              ctx.Log.Info($"Resolved catalog_id '{catalogId}' for a new inventory from the configured lookup keys ({lookupKeys.Describe()}, title='{title}', manufacturer='{manufacturer}', inventory_number='{inventoryNumber}').");
+            // Info rather than debug for the key path: it is the reason the row is no longer
+            // skipped, and a run has to be able to show which key decided it without being
+            // switched to debug.
+            if (resolvedByKey)
+              ctx.Log.Info($"Resolved catalog_id '{catalogId}' for a new inventory from the configured lookup keys ({lookupKeys!.Describe()}, title='{title}', manufacturer='{manufacturer}', inventory_number='{inventoryNumber}').");
             else
               ctx.Log.Debug($"Resolved catalog_id '{catalogId}' via device model lookup (title='{title}', manufacturer='{manufacturer}').");
           }
@@ -241,9 +250,10 @@ namespace SamedisExternalSync
           // write the backend is certain to reject, so trying the key costs a request on a
           // row that was going to fail anyway. Not done on an update: there the device keeps
           // the model it has, and a key pointing somewhere else would move it silently.
-          var rescued = lookupKeys is { Any: true }
-            ? DeviceModels.ResolveCatalogId(ctx.DeviceModelLookup, title, manufacturer, lookupKeys)
-            : null;
+          // Keys only, never the title tail: substituting a title-based guess for an id the
+          // source got wrong would attach the device to a different model than it asked for,
+          // and would do so only at facilities that happen to have a key configured.
+          var rescued = DeviceModels.ResolveCatalogIdByKeys(ctx.DeviceModelLookup, title, lookupKeys);
 
           if (!string.IsNullOrWhiteSpace(rescued))
           {
@@ -882,6 +892,71 @@ namespace SamedisExternalSync
       => Cascades.DeviceModel(lookup, null, title, manufacturer,
                               keys?.Regulatory, keys?.ExternalId,
                               caseInsensitiveTitleMatch: false);
+
+    /// <summary>
+    /// The scope every device model query carries. Spelled out here because
+    /// <c>Cascades</c> keeps its own copy private; the two must stay identical, or the steps
+    /// below stop sharing <see cref="ResourceLookup"/>'s cache with the full cascade and ask
+    /// the same question twice.
+    /// </summary>
+    /// <remarks>
+    /// Omitting it is not a smaller search, it is the wrong one: without the parameter the
+    /// endpoint answers with the tenant's own catalogs only and misses every public
+    /// master-data record.
+    /// </remarks>
+    private const string BothScopes = "filter[scope]=public_and_tenant";
+
+    /// <summary>
+    /// Resolves a device model from the configured lookup keys alone, with <b>no fallback to
+    /// the title</b>.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Separate from <see cref="ResolveCatalogId"/> because that one ends in
+    /// <c>Cascades.DeviceModel</c>'s title and manufacturer steps. Reaching those through a
+    /// path that reports "resolved from the configured lookup keys" would name a key that had
+    /// no part in the answer -- and on the rescue path it would substitute a title-based guess
+    /// for a <c>catalog_id</c> the source got wrong, which is the one thing the resolution
+    /// rules rule out: the same row resolves differently depending on whether a key column is
+    /// configured somewhere else in the file.
+    /// </para>
+    /// <para>
+    /// The steps mirror the key half of <c>Cascades.DeviceModel</c> exactly -- same fields,
+    /// same comparator, same scope -- so a later full-cascade call for the same row is
+    /// answered from the cache rather than repeating these requests.
+    /// </para>
+    /// </remarks>
+    public static string? ResolveCatalogIdByKeys(ResourceLookup lookup, string title,
+                                                 CatalogLookup.Keys? keys)
+    {
+      if (keys is not { Any: true }) return null;
+
+      var steps = new List<Func<string?>>();
+
+      if (!string.IsNullOrWhiteSpace(keys.ExternalId))
+        steps.Add(() => lookup.ByField("external_id", keys.ExternalId,
+                                       FilterBuilder.FilterType.Equals, BothScopes));
+
+      foreach (var (label, value) in keys.Regulatory)
+      {
+        // Captured per iteration: the delegates run later, inside First.
+        var l = label;
+        var v = value;
+
+        // Narrowed by the title first -- a regulatory identifier is not unique in production,
+        // one eudamed_id covers both "Perfusor Space" and "Perfusor Space PCA". Then
+        // unnarrowed, because the source's wording of the title often differs from the
+        // catalog's and a matching identifier is still better evidence than no answer.
+        if (!string.IsNullOrWhiteSpace(title))
+          steps.Add(() => lookup.ByRegulatory(l, v, BothScopes,
+                                              new (string, string?)[] { ("title", title) },
+                                              FilterBuilder.FilterType.Equals));
+
+        steps.Add(() => lookup.ByRegulatory(l, v, BothScopes));
+      }
+
+      return lookup.First(steps.ToArray());
+    }
   }
 
   public class WithServiceInterval

@@ -264,13 +264,13 @@ public class CatalogLookupResolutionTests
     private const string Unknown = "507f1f77bcf86cd799439011";
     private static readonly ISyncLog Silent = new NullSyncLog();
 
-    private static DeviceModels.InventoryCatalogContext Context(IApiClient api)
+    private static DeviceModels.InventoryCatalogContext Context(IApiClient api, ISyncLog? log = null)
         => new(api, TenantId,
                new ResourceLookup(api, "device_models"),
                new ResourceLookup(api, "device_types"),
                new ResourceLookup(api, "contacts"),
                new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase),
-               MayCreateLocalDeviceModels: false, Silent);
+               MayCreateLocalDeviceModels: false, log ?? Silent);
 
     private static CatalogLookup.Keys EmtecCode(string value = "EC-9")
         => new(null, new[] { ("emtec_code", (string?)value) });
@@ -379,6 +379,102 @@ public class CatalogLookupResolutionTests
         var api = FakeApi.NotFound();
 
         Resolve(Context(api), keys: null, sourceCatalogId: Unknown).Should().Be(Unknown);
+    }
+
+    // The finding from review round 1 of PR #15. The rescue used to run the whole cascade,
+    // whose last two steps are title + manufacturer -- so a row with a dead catalog_id, a key
+    // that matched nothing and a title that happened to match was written against the
+    // title-matched model, and logged as "found from the configured lookup keys". Two things
+    // wrong at once: the substitution the resolution rules rule out, and a log line naming a
+    // key that had no part in the answer.
+    [Fact]
+    public void A_rescue_never_falls_back_to_the_title()
+    {
+        // The key matches nothing; the title/manufacturer step WOULD match.
+        var api = FakeApi.Answering(("manufacturer_according_to_type_plate", "by-title"));
+
+        Resolve(Context(api), EmtecCode(), sourceCatalogId: Unknown).Should().Be(Unknown);
+
+        api.Requests.Should().NotContain(r => r.Contains("manufacturer_according_to_type_plate"));
+    }
+
+    // Same row without the dead id: the title step is still allowed to answer, because
+    // nothing here contradicts what the source asked for.
+    [Fact]
+    public void A_blank_catalog_id_still_falls_back_to_the_title()
+    {
+        var api = FakeApi.Answering(("manufacturer_according_to_type_plate", "by-title"));
+
+        Resolve(Context(api), EmtecCode()).Should().Be("by-title");
+    }
+
+    // The log has to say which of the two answered, not merely that a key column was filled.
+    [Fact]
+    public void Only_a_key_hit_is_reported_as_a_key_hit()
+    {
+        var log = new RecordingSyncLog();
+        var api = FakeApi.Answering(("manufacturer_according_to_type_plate", "by-title"));
+
+        DeviceModels.ResolveCatalogIdForInventoryRow(
+            Context(api, log), "", "Perfusor Space", "B. Braun", "Spritzenpumpe",
+            isCreateOperation: true, isPlaceholder: false, keys: EmtecCode());
+
+        log.Entries.Should().NotContain(e => e.Message.Contains("from the configured lookup keys"));
+    }
+
+    [Fact]
+    public void A_key_hit_is_reported_with_the_key_that_found_it()
+    {
+        var log = new RecordingSyncLog();
+        var api = FakeApi.Answering(("filter[regulatory][emtec_code]", "by-emtec"));
+
+        DeviceModels.ResolveCatalogIdForInventoryRow(
+            Context(api, log), "", "Perfusor Space", "B. Braun", "Spritzenpumpe",
+            isCreateOperation: true, isPlaceholder: false, keys: EmtecCode());
+
+        log.Entries.Should().Contain(e => e.Severity == "INFO"
+                                       && e.Message.Contains("from the configured lookup keys")
+                                       && e.Message.Contains("emtec_code='EC-9'"));
+    }
+
+    // The key-only entry point on its own: keys, and nothing else.
+    [Fact]
+    public void The_key_lookup_asks_for_no_title_or_manufacturer_field()
+    {
+        var api = FakeApi.NotFound();
+
+        DeviceModels.ResolveCatalogIdByKeys(new ResourceLookup(api, "device_models"),
+                                            "Perfusor Space", EmtecCode())
+                    .Should().BeNull();
+
+        api.Requests.Should().NotBeEmpty();
+        api.Requests.Should().OnlyContain(r => r.Contains("filter[regulatory][emtec_code]"));
+    }
+
+    [Fact]
+    public void Without_keys_the_key_lookup_asks_nothing()
+    {
+        var api = FakeApi.NotFound();
+
+        DeviceModels.ResolveCatalogIdByKeys(new ResourceLookup(api, "device_models"),
+                                            "Perfusor Space", null).Should().BeNull();
+
+        api.Requests.Should().BeEmpty();
+    }
+
+    // Resolving in two phases asks the key steps twice, so the claim that it costs nothing
+    // rests entirely on ResourceLookup caching the miss. Pinned here because a cache key that
+    // drifts apart from the cascade's would double the request count for every row, silently.
+    [Fact]
+    public void Falling_back_to_the_title_does_not_repeat_the_key_requests()
+    {
+        var api = FakeApi.Answering(("manufacturer_according_to_type_plate", "by-title"));
+
+        Resolve(Context(api), EmtecCode()).Should().Be("by-title");
+
+        // emtec_code narrowed by the title, emtec_code on its own, then title+manufacturer.
+        api.Requests.Should().HaveCount(3);
+        api.Requests.Count(r => r.Contains("filter[regulatory]")).Should().Be(2);
     }
 
     // A key repeated across rows costs one request per run, not one per row.
