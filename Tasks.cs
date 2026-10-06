@@ -478,7 +478,7 @@ namespace SamedisExternalSync
       }
       else if (!TryNormalizeIssueType(issueTypeRaw, out issueType))
       {
-        errorMessage = $"Unsupported issue_type '{issueTypeRaw}'. Allowed: malfunction, maintenance, security_message, occurrence, device_retired, recommission_device.";
+        errorMessage = $"Unsupported issue_type '{issueTypeRaw}'. Allowed: malfunction, maintenance, security_message, occurrence, device_retired, recommission_device, commissioning.";
         return null;
       }
 
@@ -690,6 +690,11 @@ namespace SamedisExternalSync
         "recommissiondevice" => "recommission_device",
         "recommission" => "recommission_device",
         "wiederinbetriebnahme" => "recommission_device",
+        "wieder_inbetriebnahme" => "recommission_device",
+
+        "commissioning" => "commissioning",
+        "inbetriebnahme" => "commissioning",
+        "erstinbetriebnahme" => "commissioning",
         _ => string.Empty
       };
 
