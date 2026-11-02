@@ -63,6 +63,17 @@ internal class Program
       return;
     }
 
+    OwnershipMapping ownershipMapping;
+    try
+    {
+      ownershipMapping = OwnershipMapping.Validate(config.Inventories?.OwnershipMapping);
+    }
+    catch (ArgumentException ex)
+    {
+      Abort(log, $"inventories.ownership_mapping in config.yml is invalid: {ex.Message}");
+      return;
+    }
+
     log.Info("Sync started.");
 
     // last run handler (supports legacy date formats and writes ISO datetime with timezone)
@@ -1263,7 +1274,7 @@ internal class Program
                 }
               }
 
-              var attributes = Inventories.BuildInventoryAttributes(row, departmentId, locationId, numberFormat, catalogId, isCreateOperation);
+              var attributes = Inventories.BuildInventoryAttributes(row, departmentId, locationId, numberFormat, catalogId, isCreateOperation, ownershipMapping);
               if (!isCreateOperation)
                 attributes.Remove("comments_field");
 
@@ -1583,6 +1594,12 @@ internal class Program
               log.Info($"Inventories Upload finished. {summary}");
             else
               log.Error($"Inventories Upload ABORTED at row {rowNumber} of {uploadTable.Rows.Count}. {summary}");
+
+            // Named once per value rather than per row: the value was left out of the payload so
+            // the rest of the row could still be written, and a source that exports a new label
+            // would otherwise flood the log with one line per device.
+            foreach (var (value, count) in ownershipMapping.Unmapped)
+              log.Warn($"Inventories Upload: ownership '{value}' is not mapped and was left out on {count} row(s). Add it to inventories.ownership_mapping in config.yml.");
 
             // Reported because nothing else can: ResourceLookup takes the first of several
             // matching device models so the run can proceed, and only records the key it was
