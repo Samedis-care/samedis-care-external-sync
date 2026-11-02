@@ -209,6 +209,40 @@ lookup on one of them means holding and using that data in your own export, so m
 required licence covers it before switching the lookup on. This tool neither checks for a
 licence nor provides one.
 
+#### `inventories.ownership_mapping`
+
+| Key | Type | Default | Description |
+|---|---|---|---|
+| `inventories.ownership_mapping[].source` | string | none | Ownership label as the source exports it. Matched case-insensitively against the trimmed cell. |
+| `inventories.ownership_mapping[].target` | string | none | Value sent to the API: `owned`, `rental-leasing`, `pay-per-use`, `loaner-device` or `patient`. Empty leaves the field out, so the record keeps what it holds. |
+
+The API rejects an ownership outside its enum with HTTP 400, which fails the **whole row**
+(samedis-care-issues#3601). Sources export their own labels, so they have to be translated:
+
+```yaml
+inventories:
+  ownership_mapping:
+    - source: "Eigen"
+      target: "owned"
+    - source: "Leihe"
+      target: "loaner-device"
+    - source: "Miete"
+      target: "rental-leasing"
+    - source: "NN"
+      target: ""
+```
+
+How a cell is resolved:
+
+1. A configured `source` wins.
+2. A value that already is an API value is sent unchanged.
+3. Anything else is left out of the payload so the rest of the row is still written. At the
+   end of the upload the log names each such value once, with the number of rows that
+   carried it.
+
+A target the API does not accept, an entry without `source`, or a source listed twice stops
+the run at startup.
+
 ### `http`
 
 | Key | Type | Default | Description |
