@@ -90,6 +90,21 @@ namespace SamedisExternalSync
   public class InventoriesConfig
   {
     public CatalogLookupConfig CatalogLookup { get; set; } = new CatalogLookupConfig();
+
+    /// <summary>
+    /// Source ownership labels and the API value each stands for. See <see cref="SamedisExternalSync.OwnershipMapping"/>.
+    /// </summary>
+    public List<OwnershipMappingEntry> OwnershipMapping { get; set; } = new List<OwnershipMappingEntry>();
+  }
+
+  /// <summary>
+  /// One source label and the ownership value it is sent as. An empty <see cref="Target"/>
+  /// leaves the field out of the payload, so the record keeps what it holds.
+  /// </summary>
+  public class OwnershipMappingEntry
+  {
+    public string? Source { get; set; }
+    public string? Target { get; set; }
   }
 
   /// <summary>
