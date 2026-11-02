@@ -572,13 +572,18 @@ namespace SamedisExternalSync
     /// the resolver returned the right answer, and this undid it one call later.
     /// </para>
     /// </param>
+    /// <param name="ownership">
+    /// The configured ownership translation. <c>null</c> passes API values through and leaves
+    /// everything else out.
+    /// </param>
     public static Dictionary<string, object> BuildInventoryAttributes(
       DataRow row,
       string? departmentId,
       string? locationId,
       NumberFormat numbers,
       string? catalogIdOverride = null,
-      bool applyCreateDefaults = false)
+      bool applyCreateDefaults = false,
+      OwnershipMapping? ownership = null)
     {
       var attributes = new Dictionary<string, object>();
       var modelTitle = Rows.Value(row, "device_model_title");
@@ -626,7 +631,7 @@ namespace SamedisExternalSync
       // exclusively through device_retired / recommission_device issues; the CSV value is
       // only used as the issue date (see PostDeviceRetiredIssue callers).
       JsonApi.AddStringAttribute(attributes, "status", NormalizeStatus(Rows.Value(row, "status")));
-      JsonApi.AddStringAttribute(attributes, "ownership", NormalizeOwnership(Rows.Value(row, "ownership")));
+      JsonApi.AddStringAttribute(attributes, "ownership", (ownership ?? OwnershipMapping.Validate(null)).Resolve(Rows.Value(row, "ownership")));
       JsonApi.AddStringAttribute(attributes, "currency_code", NormalizeCurrency(Rows.Value(row, "currency_code")));
       JsonApi.AddStringAttribute(attributes, "date_of_acquisition", Helper.NormalizeDate(Rows.Value(row, "date_of_acquisition")));
       JsonApi.AddStringAttribute(attributes, "delivered_at", Helper.NormalizeDate(Rows.Value(row, "delivered_at")));
@@ -923,14 +928,6 @@ namespace SamedisExternalSync
         "finalise_creation" => "finalize_creation",
         _ => normalized
       };
-    }
-
-    private static string NormalizeOwnership(string value)
-    {
-      if (string.IsNullOrWhiteSpace(value))
-        return string.Empty;
-
-      return value.Trim().ToLowerInvariant().Replace("-", "_").Replace(" ", "_");
     }
 
     private static string NormalizeCurrency(string value)
