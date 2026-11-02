@@ -79,6 +79,20 @@ inventories:
     #   - column: emtec_code
     #     regulatory: emtec_code
     #     upcase: true
+  # Source ownership labels and the API value each is sent as. The API rejects anything
+  # outside owned, rental-leasing, pay-per-use, loaner-device, patient with HTTP 400 for the
+  # whole row. Matched case-insensitively; an empty target leaves the field out. A value that
+  # is already an API value passes unchanged; anything else is left out and named in the log.
+  ownership_mapping: []
+  # ownership_mapping:
+  #   - source: "Eigen"
+  #     target: "owned"
+  #   - source: "Leihe"
+  #     target: "loaner-device"
+  #   - source: "Miete"
+  #     target: "rental-leasing"
+  #   - source: "NN"
+  #     target: ""
 formatting:
   # decimal separator used when reading/writing numeric fields in CSV
   # (e.g. purchase_price). Default "," matches German locale; use "." for
