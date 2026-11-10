@@ -20,7 +20,10 @@ internal class Program
     // th-TH, at which point the monitor falls back to the file's LastWriteTime and goes
     // blind to a stale run. This is also what samedis-care-requests-to-mail already does.
     var logFile = Path.Combine("log", LogFormat.FileName(DateTime.Now));
-    ISyncLog log = new FileSyncLog(1, LogMode.Both, logFile);
+    // The console only gets a copy of each line, never in the way of the file or the run:
+    // a clicked-into console window froze the UKT sync for days. See RunLog.
+    RunLog.DisableQuickEdit();
+    ISyncLog log = RunLog.Create(1, LogMode.Both, logFile);
 
     // Anything nobody catches still ends up in the log. Reads `log` at crash time, so it
     // follows the swap to the configured logger below.
@@ -38,7 +41,7 @@ internal class Program
     AppConfig config = loadedConfig;
 
     // Now with the configured level and mode.
-    log = new FileSyncLog(config.Logging.Level, (LogMode)config.Logging.Mode, logFile);
+    log = RunLog.Create(config.Logging.Level, (LogMode)config.Logging.Mode, logFile);
 
     // Passed explicitly wherever numbers are parsed. The version this replaces kept the
     // separator in a mutable static, so the meaning of a parse depended on load order.
