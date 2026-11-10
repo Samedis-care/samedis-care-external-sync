@@ -627,7 +627,7 @@ namespace SamedisExternalSync
       // set_operation_status_on_retire forcing operation_status='retired'). Sending the
       // CSV value therefore RE-RETIRES the device on every successful update -- including
       // the retry right after a recommission -- which is what produced the endless
-      // active <-> retired oscillation on the UKT tenant. Retirement is expressed
+      // active <-> retired oscillation on a customer tenant. Retirement is expressed
       // exclusively through device_retired / recommission_device issues; the CSV value is
       // only used as the issue date (see PostDeviceRetiredIssue callers).
       JsonApi.AddStringAttribute(attributes, "status", NormalizeStatus(Rows.Value(row, "status")));

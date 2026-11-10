@@ -21,7 +21,7 @@ internal class Program
     // blind to a stale run. This is also what samedis-care-requests-to-mail already does.
     var logFile = Path.Combine("log", LogFormat.FileName(DateTime.Now));
     // The console only gets a copy of each line, never in the way of the file or the run:
-    // a clicked-into console window froze the UKT sync for days. See RunLog.
+    // a clicked-into console window froze a customer sync for days. See RunLog.
     RunLog.DisableQuickEdit();
     ISyncLog log = RunLog.Create(1, LogMode.Both, logFile);
 

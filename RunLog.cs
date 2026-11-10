@@ -11,7 +11,7 @@ namespace SamedisExternalSync;
 /// A console that does not take output blocks that write: on Windows a click into the window
 /// (QuickEdit selection) or the Pause key freezes the process at its next line. Run from the
 /// task scheduler with "do not start a new instance", one frozen run then silently skips every
-/// later one -- UKT stood still from 2026-11-04 11:45 with not even "Sync started." in the log,
+/// later one -- one installation stood still for days with not even "Sync started." in the log,
 /// because that line was the one waiting for the console.
 /// Here the file is written on the calling thread and the console only gets a copy through a
 /// background queue, which drops lines rather than wait.

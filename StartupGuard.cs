@@ -6,7 +6,7 @@ namespace SamedisExternalSync;
 /// <remarks>
 /// The log is the only thing the customer and samedis-care-log-monitor look at. A run that
 /// throws before "Sync started." leaves no line and not even a file, so a broken config.yml
-/// read as "the sync is not running" for days (UKT, 2026-11-04 to 2026-11-10) while the real
+/// read as "the sync is not running" for days at one installation while the real
 /// reason sat in the Windows event log.
 /// </remarks>
 public static class StartupGuard

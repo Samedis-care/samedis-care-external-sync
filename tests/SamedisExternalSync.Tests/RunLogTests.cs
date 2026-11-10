@@ -7,7 +7,7 @@ using Xunit;
 namespace SamedisExternalSync.Tests;
 
 /// <summary>
-/// A console that stops taking output (a click into the window on Windows) froze the UKT
+/// A console that stops taking output (a click into the window on Windows) froze a customer
 /// sync at its first log line, and the scheduler then skipped every later run for days.
 /// These pin that the file log and the run go on whatever the console does.
 /// </summary>

@@ -429,7 +429,7 @@ Retired devices (`operation_status` resolved to `retired`, e.g. `Ausgemustert`):
 
 `retirement_date` is **never** part of an inventory create/update payload:
 - It is *not* read-only on the inventory API. The backend re-derives the retirement flag from it on every save (`Inventory#update_reference_columns`: `self.device_retired = retirement_date.present?`, then `set_operation_status_on_retire` forces `operation_status='retired'`).
-- Sending the CSV value therefore silently re-retires the device on every successful update — including the retry directly after a recommission, which produced an endless active ↔ retired oscillation (and matching changelog spam) on the UKT tenant.
+- Sending the CSV value therefore silently re-retires the device on every successful update — including the retry directly after a recommission, which produced an endless active ↔ retired oscillation (and matching changelog spam) on a customer tenant.
 - The CSV value is only used as the date of the `device_retired` issue.
 
 Recommission (re-activation):

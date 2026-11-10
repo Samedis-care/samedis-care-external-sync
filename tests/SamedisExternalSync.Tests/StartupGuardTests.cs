@@ -5,8 +5,8 @@ using Xunit;
 namespace SamedisExternalSync.Tests;
 
 /// <summary>
-/// A run that dies before its first log line looks like a run that never started: the UKT
-/// sync stood still for six days on that (2026-11-04), with only the Windows event log
+/// A run that dies before its first log line looks like a run that never started: a customer
+/// sync stood still for six days on that, with only the Windows event log
 /// knowing why. These pin that a broken config.yml and an uncaught exception are logged.
 /// </summary>
 public class StartupGuardTests : IDisposable
